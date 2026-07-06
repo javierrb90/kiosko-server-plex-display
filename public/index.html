@@ -8,13 +8,10 @@
 </head>
 <body>
   <main id="app" aria-live="polite">
-    <section class="view view--active" data-view="idle" aria-hidden="false">
-      <div class="idle-orb"></div>
-      <div class="idle-content"><p class="eyebrow">KIOSKO MEDIA CENTER</p><h1>Esperando actividad</h1><p>Las reproducciones y notificaciones aparecerán aquí.</p></div>
-    </section>
     <section class="view view--render-hidden" data-view="plex-now-playing" aria-hidden="true"></section>
-    <section class="view view--render-hidden" data-view="notifications" aria-hidden="true"></section>
+    <section class="view view--active" data-view="notifications" aria-hidden="false"></section>
   </main>
+  <button id="sleep-overlay" class="sleep-overlay sleep-overlay--active" type="button" aria-label="Tocar para encender pantalla" aria-hidden="false"><span>TOCA PARA ENCENDER</span></button>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

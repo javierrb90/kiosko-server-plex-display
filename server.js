@@ -22,7 +22,7 @@ await store.init();
 const plex = new PlexService({ url: process.env.PLEX_URL, token: process.env.PLEX_TOKEN });
 
 const runtime = {
-  activeView: "idle",
+  activeView: "notifications",
   plex: { event: "idle", title: "Esperando actividad", subtitle: "", year: "", posterUrl: null, backdropUrl: null, type: "" },
   playbackActive: false
 };
@@ -47,15 +47,20 @@ const wss = new WebSocketServer({ server });
 const hub = new RealtimeHub(wss);
 
 function snapshot() {
-  return { type: "state:snapshot", payload: { activeView: runtime.activeView, plex: runtime.plex, notifications: store.list({ page: 1, limit: 5 }) } };
+  return { type: "state:snapshot", payload: { activeView: runtime.activeView, playbackActive: runtime.playbackActive, plex: runtime.plex, notifications: store.list({ page: 1, limit: 5 }) } };
 }
 function broadcastState() { hub.broadcast(snapshot()); }
+function publishActiveView() {
+  console.log(`Vista activa solicitada: ${runtime.activeView}`);
+  hub.broadcast({ type: "view:show", payload: { id: runtime.activeView } });
+}
 async function publishNotification(notification) {
   hub.broadcast({ type: "notification:new", payload: notification });
   broadcastState();
 }
 function chooseActiveView() {
-  runtime.activeView = runtime.playbackActive ? "plex-now-playing" : (store.list({ page: 1, limit: 1 }).total ? "notifications" : "idle");
+  // El centro de notificaciones es siempre el dashboard principal, incluso vacío.
+  runtime.activeView = runtime.playbackActive ? "plex-now-playing" : "notifications";
 }
 
 wss.on("connection", ws => {
@@ -84,7 +89,19 @@ async function handleTautulliWebhook(req, res) {
     const event = normalizeTautulliEvent(req.body, metadata);
 
     runtime.plex = event.plex;
-    if (event.isPlayback) runtime.playbackActive = event.event !== "stop";
+    console.log("Evento Tautulli normalizado", {
+      rawEvent: event.rawEvent,
+      event: event.event,
+      startsPlayback: event.startsPlayback,
+      endsPlayback: event.endsPlayback,
+      isLibraryAdded: event.isLibraryAdded,
+      title: runtime.plex.title
+    });
+
+    // Sólo play/start abren el popup temporal de Plex.
+    // Resume, pause y stop no lo abren; el dashboard sigue siendo la vista principal.
+    if (event.startsPlayback) runtime.playbackActive = true;
+    if (event.endsPlayback) runtime.playbackActive = false;
 
     if (event.isLibraryAdded) {
       const notification = await store.add({
@@ -99,12 +116,16 @@ async function handleTautulliWebhook(req, res) {
       });
       chooseActiveView();
       await publishNotification(notification);
+      publishActiveView();
     } else {
       chooseActiveView();
+      console.log("Emitiendo plex:update y view:show", { activeView: runtime.activeView, title: runtime.plex.title });
+      hub.broadcast({ type: "plex:update", payload: runtime.plex });
+      publishActiveView();
       broadcastState();
     }
 
-    res.status(200).json({ ok: true, event: event.event, activeView: runtime.activeView });
+    res.status(200).json({ ok: true, event: event.event, rawEvent: event.rawEvent, activeView: runtime.activeView });
   } catch (error) {
     console.error("Error en webhook Tautulli:", error);
     res.status(500).json({ error: error.message });
@@ -115,21 +136,69 @@ async function handleTautulliWebhook(req, res) {
 app.post("/webhook", handleTautulliWebhook);
 app.post("/webhook/tautulli", handleTautulliWebhook);
 
-app.post("/webhook/arr/:source", async (req, res) => {
-  const source = String(req.params.source || "arr").toLowerCase();
-  console.log(`Webhook ARR recibido (${source})`);
+function detectArrSource(payload, routeSource = "") {
+  const requested = String(routeSource || "").toLowerCase();
+  if (["sonarr", "radarr"].includes(requested)) return requested;
+
+  const eventType = String(payload?.eventType || payload?.event || payload?.type || "").toLowerCase();
+  if (payload?.movie || eventType.includes("movie")) return "radarr";
+  if (payload?.series || payload?.episode || Array.isArray(payload?.episodes) || eventType.includes("series")) return "sonarr";
+
+  // En eventos Grab, la presencia de movie/series es la forma fiable de distinguirlos.
+  return "";
+}
+
+async function handleArrWebhook(req, res) {
+  const requestedSource = req.params?.source || "";
+  const source = detectArrSource(req.body, requestedSource);
+  const eventType = String(req.body?.eventType || req.body?.event || req.body?.type || "").trim();
+  const compactEventType = eventType.toLowerCase().replace(/[\s_-]+/g, "");
+  const sourceLabel = source || (requestedSource ? String(requestedSource).toLowerCase() : "arr");
+
+  console.log(`Webhook ARR recibido (${sourceLabel})`, { eventType: eventType || "desconocido" });
+
+  // Sonarr y Radarr envían este evento al pulsar "Test" en la conexión.
+  // En la ruta común no hay datos suficientes para saber qué aplicación lo envió,
+  // pero basta con responder 200 para validar la conexión.
+  if (compactEventType === "test") {
+    console.log(`Webhook ARR de prueba correcto (${sourceLabel}).`);
+    return res.status(200).json({ ok: true, test: true, source: source || "arr", message: "Webhook ARR operativo" });
+  }
+
+  if (!source) {
+    console.warn("Webhook ARR ignorado: no se pudo identificar Sonarr o Radarr.");
+    return res.status(200).json({
+      ok: true,
+      ignored: true,
+      reason: "No se pudo identificar el origen. Usa un payload nativo de Sonarr/Radarr."
+    });
+  }
+
   try {
-    if (!["sonarr", "radarr", "arr"].includes(source)) return res.status(400).json({ error: "Source no soportado." });
     const normalized = normalizeArrEvent(req.body, source);
+    console.log(`Evento ARR aceptado: ${source} · ${normalized.type} · ${normalized.title}`);
     const notification = await store.add(normalized);
     chooseActiveView();
     await publishNotification(notification);
-    res.status(200).json({ ok: true, id: notification.id });
+    return res.status(200).json({ ok: true, id: notification.id, source });
   } catch (error) {
-    console.error("Error en webhook ARR:", error);
-    res.status(500).json({ error: error.message });
+    // Los demás eventos se aceptan para que Arr no marque la conexión como fallida,
+    // pero se ignoran porque no pertenecen al alcance actual.
+    console.log(`Evento ARR ignorado (${source}): ${eventType || "sin eventType"}. ${error.message}`);
+    return res.status(200).json({
+      ok: true,
+      ignored: true,
+      reason: "Evento no configurado",
+      source,
+      supported: source === "radarr" ? ["Grab", "MovieAdded"] : ["Grab", "SeriesAdded"]
+    });
   }
-});
+}
+
+// Ruta unificada recomendada para Sonarr y Radarr.
+app.post("/webhook/arr", handleArrWebhook);
+// Rutas anteriores conservadas para compatibilidad.
+app.post("/webhook/arr/:source", handleArrWebhook);
 
 app.post("/api/notifications/test", async (req, res) => {
   const notification = await store.add({ source: "system", type: "test", title: req.body.title || "Notificación de prueba", subtitle: req.body.subtitle || "Centro de notificaciones activo" });
