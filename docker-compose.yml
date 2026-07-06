@@ -1,29 +1,15 @@
 services:
-
-  plex-display:
-
-    container_name: kiosko-server-plex-display
-
+  kiosko-media-center:
+    container_name: kiosko-media-center
     build:
       context: .
       dockerfile: Dockerfile
-
     restart: unless-stopped
-
     ports:
       - "3000:3000"
-
+    env_file:
+      - .env
     environment:
-      PLEX_URL: ${PLEX_URL}
-      PLEX_TOKEN: ${PLEX_TOKEN}
-
-    networks:
-      arrnet:
-        aliases:
-          - plex-display
-          - kiosko
-
-networks:
-
-  arrnet:
-    external: true
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data

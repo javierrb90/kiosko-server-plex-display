@@ -1,40 +1,20 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
-
-<meta charset="UTF-8">
-
-<title>Plex Display</title>
-
-<link rel="stylesheet" href="style.css">
-
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Kiosko Media Center</title>
+  <link rel="stylesheet" href="/style.css" />
 </head>
-
 <body>
-
-<div id="background"></div>
-
-<div id="overlay"></div>
-
-<div id="container">
-
-    <img id="poster">
-
-    <div id="info">
-
-        <div id="event"></div>
-
-        <div id="title"></div>
-
-        <div id="subtitle"></div>
-
-    </div>
-
-</div>
-
-<script src="app.js"></script>
-
+  <main id="app" aria-live="polite">
+    <section class="view view--active" data-view="idle" aria-hidden="false">
+      <div class="idle-orb"></div>
+      <div class="idle-content"><p class="eyebrow">KIOSKO MEDIA CENTER</p><h1>Esperando actividad</h1><p>Las reproducciones y notificaciones aparecerán aquí.</p></div>
+    </section>
+    <section class="view view--render-hidden" data-view="plex-now-playing" aria-hidden="true"></section>
+    <section class="view view--render-hidden" data-view="notifications" aria-hidden="true"></section>
+  </main>
+  <script type="module" src="/app.js"></script>
 </body>
-
 </html>

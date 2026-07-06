@@ -1,54 +1,22 @@
-const ws = new WebSocket(`ws://${location.host}`);
+import { ViewManager } from "/core/view-manager.js";
+import { SocketClient } from "/core/socket-client.js";
+import { createPlexView } from "/views/plex-now-playing.js";
+import { createNotificationsView } from "/views/notifications.js";
+import { createIdleView } from "/views/idle.js";
 
-const poster = document.getElementById("poster");
-const background = document.getElementById("background");
+const views = new ViewManager(document.getElementById("app"));
+views.register(createIdleView());
+views.register(createPlexView());
+views.register(createNotificationsView());
 
-const title = document.getElementById("title");
-const subtitle = document.getElementById("subtitle");
-const event = document.getElementById("event");
-
-function formatEvent(event){
-
-    switch(event){
-
-        case "play":
-        case "resume":
-
-            return "▶ REPRODUCIENDO";
-
-        case "pause":
-
-            return "⏸ PAUSADO";
-
-        case "stop":
-
-            return "■ DETENIDO";
-
-        case "recently_added":
-
-            return "🆕 AÑADIDO";
-
-        default:
-
-            return event.toUpperCase();
-
+const socket = new SocketClient({
+  onMessage(message) {
+    if (message.type === "state:snapshot") {
+      views.update("plex-now-playing", message.payload.plex);
+      views.update("notifications", message.payload.notifications);
+      views.show(message.payload.activeView);
     }
-
-}
-
-ws.onmessage = ({data})=>{
-
-    const state = JSON.parse(data);
-
-    title.textContent = state.title;
-
-    subtitle.textContent = state.subtitle;
-
-    event.textContent = formatEvent(state.event);
-
-    poster.src = `/poster?t=${Date.now()}`;
-
-    background.style.backgroundImage =
-        `url('/backdrop?t=${Date.now()}')`;
-
-};
+    if (message.type === "notification:new") views.notify("notifications", message.payload);
+  }
+});
+socket.connect();

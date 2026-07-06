@@ -1,222 +1,139 @@
 import express from "express";
 import { WebSocketServer } from "ws";
-import { XMLParser } from "fast-xml-parser";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { EventStore } from "./src/event-store.js";
+import { RealtimeHub } from "./src/realtime-hub.js";
+import { PlexService } from "./src/services/plex-service.js";
+import { normalizeTautulliEvent } from "./src/adapters/tautulli.js";
+import { normalizeArrEvent } from "./src/adapters/arr.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.PORT || 3000);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 
 const app = express();
-
 app.use(express.json({ limit: "10mb" }));
-app.use(express.static("public"));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.static(path.join(__dirname, "public")));
 
-const PLEX_URL = "http://192.168.1.50:32400";
-const PLEX_TOKEN = "ZisgLgiJX9erEB8zyg2S";
+const store = new EventStore(DATA_DIR);
+await store.init();
+const plex = new PlexService({ url: process.env.PLEX_URL, token: process.env.PLEX_TOKEN });
 
-//const PLEX_URL = process.env.PLEX_URL;
-//const PLEX_TOKEN = process.env.PLEX_TOKEN;
-
-if (!PLEX_URL || !PLEX_TOKEN) {
-    throw new Error("PLEX_URL y PLEX_TOKEN son obligatorios.");
-}
-
-const parser = new XMLParser({
-    ignoreAttributes: false,
-    attributeNamePrefix: ""
-});
-
-const server = app.listen(3000, () => {
-    console.log("Listening on :3000");
-});
-
-const wss = new WebSocketServer({ server });
-
-let state = {
-    event: "idle",
-    title: "Esperando...",
-    subtitle: "",
-    year: "",
-    poster: false,
-    backdrop: false
+const runtime = {
+  activeView: "idle",
+  plex: { event: "idle", title: "Esperando actividad", subtitle: "", year: "", posterUrl: null, backdropUrl: null, type: "" },
+  playbackActive: false
 };
 
-let posterBuffer = null;
-let posterContentType = "image/jpeg";
+function configStatus() {
+  return {
+    plexConfigured: plex.isConfigured(),
+    plexUrlConfigured: Boolean(process.env.PLEX_URL),
+    plexTokenConfigured: Boolean(process.env.PLEX_TOKEN),
+    dataDir: DATA_DIR
+  };
+}
 
-let backdropBuffer = null;
-let backdropContentType = "image/jpeg";
+const server = app.listen(PORT, () => {
+  const status = configStatus();
+  console.log(`Kiosko Media Center escuchando en puerto ${PORT}`);
+  console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
+  console.log(`Datos persistentes: ${status.dataDir}`);
+  if (!status.plexConfigured) console.warn("ATENCIÓN: define PLEX_URL y PLEX_TOKEN en el archivo .env o en las variables de entorno del stack de Portainer.");
+});
+const wss = new WebSocketServer({ server });
+const hub = new RealtimeHub(wss);
 
-function broadcast() {
-
-    const json = JSON.stringify(state);
-
-    wss.clients.forEach(client => {
-
-        if (client.readyState === 1) {
-
-            client.send(json);
-
-        }
-
-    });
-
+function snapshot() {
+  return { type: "state:snapshot", payload: { activeView: runtime.activeView, plex: runtime.plex, notifications: store.list({ page: 1, limit: 5 }) } };
+}
+function broadcastState() { hub.broadcast(snapshot()); }
+async function publishNotification(notification) {
+  hub.broadcast({ type: "notification:new", payload: notification });
+  broadcastState();
+}
+function chooseActiveView() {
+  runtime.activeView = runtime.playbackActive ? "plex-now-playing" : (store.list({ page: 1, limit: 1 }).total ? "notifications" : "idle");
 }
 
 wss.on("connection", ws => {
-
-    ws.send(JSON.stringify(state));
-
+  console.log("WebSocket conectado");
+  hub.send(ws, snapshot());
 });
 
-async function downloadImage(url){
+app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total }));
+app.get("/api/notifications", (req, res) => res.json(store.list(req.query)));
 
-    const response = await fetch(url);
+async function handleTautulliWebhook(req, res) {
+  console.log("Webhook Tautulli recibido", {
+    path: req.path,
+    event: req.body?.event || req.body?.event_type || "desconocido",
+    ratingKey: req.body?.ratingKey || req.body?.rating_key || null
+  });
 
-    if(!response.ok){
-
-        throw new Error("No se pudo descargar la imagen");
-
+  try {
+    const ratingKey = req.body.ratingKey || req.body.rating_key;
+    if (!ratingKey) {
+      console.warn("Webhook Tautulli sin ratingKey. Campos recibidos:", Object.keys(req.body || {}));
+      return res.status(400).json({ error: "Falta ratingKey.", receivedKeys: Object.keys(req.body || {}) });
     }
 
-    return {
+    const metadata = await plex.getMetadata(ratingKey);
+    const event = normalizeTautulliEvent(req.body, metadata);
 
-        buffer: Buffer.from(await response.arrayBuffer()),
+    runtime.plex = event.plex;
+    if (event.isPlayback) runtime.playbackActive = event.event !== "stop";
 
-        contentType:
-            response.headers.get("content-type") || "image/jpeg"
+    if (event.isLibraryAdded) {
+      const notification = await store.add({
+        source: "plex",
+        type: "library_added",
+        priority: "normal",
+        title: `${metadata.title} añadido a Plex`,
+        subtitle: metadata.subtitle || metadata.year,
+        image: metadata.posterUrl,
+        backdrop: metadata.backdropUrl,
+        meta: { ratingKey: metadata.ratingKey, plexType: metadata.type }
+      });
+      chooseActiveView();
+      await publishNotification(notification);
+    } else {
+      chooseActiveView();
+      broadcastState();
+    }
 
-    };
-
+    res.status(200).json({ ok: true, event: event.event, activeView: runtime.activeView });
+  } catch (error) {
+    console.error("Error en webhook Tautulli:", error);
+    res.status(500).json({ error: error.message });
+  }
 }
 
-async function getMetadata(ratingKey){
+// Compatibilidad con la URL usada por el prototipo anterior.
+app.post("/webhook", handleTautulliWebhook);
+app.post("/webhook/tautulli", handleTautulliWebhook);
 
-    const url =
-        `${PLEX_URL}/library/metadata/${ratingKey}?X-Plex-Token=${PLEX_TOKEN}`;
-
-    const response = await fetch(url);
-
-    if(!response.ok){
-
-        throw new Error("No se pudo consultar Plex");
-
-    }
-
-    const xml = await response.text();
-
-    const data = parser.parse(xml);
-
-    const video = data.MediaContainer.Video;
-
-    // Poster
-    const poster =
-        `${PLEX_URL}${video.thumb}?X-Plex-Token=${PLEX_TOKEN}`;
-
-    // Episodios -> usar el thumb como fondo
-    // Películas -> usar el art
-    const backdropPath =
-        video.type === "episode"
-            ? video.thumb
-            : video.art;
-
-    const backdrop =
-        `${PLEX_URL}${backdropPath}?X-Plex-Token=${PLEX_TOKEN}`;
-
-    const posterImage = await downloadImage(poster);
-
-    posterBuffer = posterImage.buffer;
-    posterContentType = posterImage.contentType;
-
-    const backdropImage = await downloadImage(backdrop);
-
-    backdropBuffer = backdropImage.buffer;
-    backdropContentType = backdropImage.contentType;
-
-    return {
-
-        title: video.title,
-
-        subtitle:
-            video.type === "episode"
-                ? `${video.grandparentTitle} · S${String(video.parentIndex).padStart(2,"0")}E${String(video.index).padStart(2,"0")}`
-                : (video.tagline || ""),
-
-        year: video.year,
-
-        type: video.type,
-
-        ratingKey
-
-    };
-
-}
-
-app.get("/poster",(req,res)=>{
-
-    if(!posterBuffer){
-
-        return res.sendStatus(404);
-
-    }
-
-    res.setHeader("Content-Type",posterContentType);
-
-    res.send(posterBuffer);
-
+app.post("/webhook/arr/:source", async (req, res) => {
+  const source = String(req.params.source || "arr").toLowerCase();
+  console.log(`Webhook ARR recibido (${source})`);
+  try {
+    if (!["sonarr", "radarr", "arr"].includes(source)) return res.status(400).json({ error: "Source no soportado." });
+    const normalized = normalizeArrEvent(req.body, source);
+    const notification = await store.add(normalized);
+    chooseActiveView();
+    await publishNotification(notification);
+    res.status(200).json({ ok: true, id: notification.id });
+  } catch (error) {
+    console.error("Error en webhook ARR:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.get("/backdrop",(req,res)=>{
-
-    if(!backdropBuffer){
-
-        return res.sendStatus(404);
-
-    }
-
-    res.setHeader("Content-Type",backdropContentType);
-
-    res.send(backdropBuffer);
-
-});
-
-app.post("/webhook", async(req,res)=>{
-
-    try{
-
-        console.log(req.body);
-
-        const metadata =
-            await getMetadata(req.body.ratingKey);
-
-state = {
-
-    event:req.body.event,
-
-    title:metadata.title,
-
-    subtitle:metadata.subtitle,
-
-    year:metadata.year,
-
-    type:metadata.type,
-
-    ratingKey:metadata.ratingKey,
-
-    poster:true,
-
-    backdrop:true
-
-};
-
-        broadcast();
-
-        res.sendStatus(200);
-
-    }
-
-    catch(err){
-
-        console.error(err);
-
-        res.sendStatus(500);
-
-    }
-
+app.post("/api/notifications/test", async (req, res) => {
+  const notification = await store.add({ source: "system", type: "test", title: req.body.title || "Notificación de prueba", subtitle: req.body.subtitle || "Centro de notificaciones activo" });
+  chooseActiveView();
+  await publishNotification(notification);
+  res.status(201).json(notification);
 });
