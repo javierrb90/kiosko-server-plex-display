@@ -1,0 +1,22 @@
+services:
+
+  plex-display:
+
+    container_name: kiosko-server-plex-display
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"
+
+    networks:
+      - arrnet
+
+networks:
+
+  arrnet:
+    external: true
