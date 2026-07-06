@@ -7,6 +7,9 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static("public"));
 
+//const PLEX_URL = "http://192.168.1.50:32400";
+//const PLEX_TOKEN = "ZisgLgiJX9erEB8zyg2S";
+
 const PLEX_URL = process.env.PLEX_URL;
 const PLEX_TOKEN = process.env.PLEX_TOKEN;
 
