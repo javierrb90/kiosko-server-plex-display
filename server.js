@@ -7,14 +7,15 @@ import { RealtimeHub } from "./src/realtime-hub.js";
 import { PlexService } from "./src/services/plex-service.js";
 import { normalizeTautulliEvent } from "./src/adapters/tautulli.js";
 import { normalizeArrEvent } from "./src/adapters/arr.js";
+import { normalizePlayniteEvent } from "./src/adapters/playnite.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "35mb" }));
+app.use(express.urlencoded({ extended: true, limit: "35mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 const store = new EventStore(DATA_DIR);
@@ -24,6 +25,7 @@ const plex = new PlexService({ url: process.env.PLEX_URL, token: process.env.PLE
 const runtime = {
   activeView: "notifications",
   plex: { event: "idle", title: "Esperando actividad", subtitle: "", year: "", posterUrl: null, backdropUrl: null, type: "" },
+  game: null,
   playbackActive: false
 };
 
@@ -47,7 +49,7 @@ const wss = new WebSocketServer({ server });
 const hub = new RealtimeHub(wss);
 
 function snapshot() {
-  return { type: "state:snapshot", payload: { activeView: runtime.activeView, playbackActive: runtime.playbackActive, plex: runtime.plex, notifications: store.list({ page: 1, limit: 5 }) } };
+  return { type: "state:snapshot", payload: { activeView: runtime.activeView, playbackActive: runtime.playbackActive, plex: runtime.plex, game: runtime.game, notifications: store.list({ page: 1, limit: 5 }) } };
 }
 function broadcastState() { hub.broadcast(snapshot()); }
 function publishActiveView() {
@@ -161,8 +163,19 @@ async function handleArrWebhook(req, res) {
   // En la ruta común no hay datos suficientes para saber qué aplicación lo envió,
   // pero basta con responder 200 para validar la conexión.
   if (compactEventType === "test") {
+    const testSource = source || "arr";
+    const label = testSource === "sonarr" ? "Sonarr" : testSource === "radarr" ? "Radarr" : "ARR";
     console.log(`Webhook ARR de prueba correcto (${sourceLabel}).`);
-    return res.status(200).json({ ok: true, test: true, source: source || "arr", message: "Webhook ARR operativo" });
+    const notification = await store.add({
+      source: testSource,
+      type: "test",
+      priority: "low",
+      title: `Prueba de webhook · ${label}`,
+      subtitle: "Conexión verificada correctamente"
+    });
+    runtime.activeView = "notifications";
+    await publishNotification(notification);
+    return res.status(200).json({ ok: true, test: true, source: testSource, id: notification.id, message: "Webhook ARR operativo" });
   }
 
   if (!source) {
@@ -194,6 +207,36 @@ async function handleArrWebhook(req, res) {
     });
   }
 }
+
+
+async function handlePlayniteWebhook(req, res) {
+  try {
+    const game = normalizePlayniteEvent(req.body);
+    runtime.game = game;
+    // El dashboard sigue siendo el estado base; el juego es una vista temporal.
+    runtime.activeView = "notifications";
+
+    console.log("Webhook Playnite recibido", {
+      title: game.title,
+      platforms: game.platforms,
+      hasCover: Boolean(game.cover),
+      hasBackground: Boolean(game.background),
+      payloadBytes: Number(req.headers["content-length"] || 0)
+    });
+
+    hub.broadcast({ type: "game:update", payload: game });
+    console.log("Emitiendo game:update y view:show", { activeView: "game-now-playing", title: game.title });
+    hub.broadcast({ type: "view:show", payload: { id: "game-now-playing" } });
+    broadcastState();
+
+    return res.status(200).json({ ok: true, event: game.event, title: game.title });
+  } catch (error) {
+    console.error("Error en webhook Playnite:", error);
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+app.post("/webhook/playnite", handlePlayniteWebhook);
 
 // Ruta unificada recomendada para Sonarr y Radarr.
 app.post("/webhook/arr", handleArrWebhook);

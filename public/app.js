@@ -1,10 +1,10 @@
 import { ViewManager } from "/core/view-manager.js";
 import { SocketClient } from "/core/socket-client.js";
 import { createPlexView } from "/views/plex-now-playing.js";
+import { createGameView } from "/views/game-now-playing.js";
 import { createNotificationsView } from "/views/notifications.js";
 
-const PLEX_POPUP_DURATION_MS = 5000;
-// Tiempo visible del centro tras una notificación. Ajustable sin tocar el resto del flujo.
+const TEMPORARY_VIEW_DURATION_MS = 5000;
 const DASHBOARD_AWAKE_DURATION_MS = 30000;
 const DEBUG_PREFIX = "[Kiosko UI]";
 
@@ -12,7 +12,8 @@ const debug = (...args) => console.log(DEBUG_PREFIX, ...args);
 const debugError = (...args) => console.error(DEBUG_PREFIX, ...args);
 
 const views = new ViewManager(document.getElementById("app"), { debug });
-let plexPopupTimer = null;
+let temporaryViewTimer = null;
+let temporaryViewId = null;
 
 const sleepOverlay = document.getElementById("sleep-overlay");
 let asleep = true;
@@ -23,9 +24,14 @@ function clearSleepTimer() {
   sleepTimer = null;
 }
 
+function clearTemporaryViewTimer() {
+  clearTimeout(temporaryViewTimer);
+  temporaryViewTimer = null;
+  if (temporaryViewId) views.call(temporaryViewId, "stopTimer");
+  temporaryViewId = null;
+}
+
 function waitForSleepFade() {
-  // En algunos navegadores Android antiguos transitionend puede no dispararse.
-  // El fallback mantiene el flujo estable aunque ocurra eso.
   if (!sleepOverlay.classList.contains("sleep-overlay--active")) return Promise.resolve();
 
   return new Promise(resolve => {
@@ -39,9 +45,7 @@ function waitForSleepFade() {
       resolve();
     };
     const onTransitionEnd = event => {
-      if (event.target === sleepOverlay && event.propertyName === "opacity") {
-        finish("transitionend");
-      }
+      if (event.target === sleepOverlay && event.propertyName === "opacity") finish("transitionend");
     };
     const fallback = setTimeout(() => finish("fallback"), 850);
     sleepOverlay.addEventListener("transitionend", onTransitionEnd);
@@ -56,9 +60,7 @@ function sleep(reason = "sin motivo") {
   debug("Pantalla en reposo AMOLED", { reason });
 }
 
-async function closePlexToSleep(reason = "fin de reproducción temporal") {
-  // Primero cubrimos Plex por completo. Sólo después cambiamos de vista,
-  // evitando que el dashboard aparezca durante el fundido negro.
+async function closeTemporaryViewToSleep(reason = "fin de vista temporal") {
   sleep(reason);
   await waitForSleepFade();
   showDashboard("fundido AMOLED terminado");
@@ -80,29 +82,33 @@ function wake(reason = "sin motivo", duration = DASHBOARD_AWAKE_DURATION_MS) {
 }
 
 function showDashboard(reason = "sin motivo") {
-  clearTimeout(plexPopupTimer);
-  plexPopupTimer = null;
+  clearTemporaryViewTimer();
   debug("Mostrando dashboard de notificaciones", { reason });
   views.show("notifications");
 }
 
-function showTemporaryPlex(reason = "evento de reproducción") {
-  clearTimeout(plexPopupTimer);
+function showTemporaryView(id, reason = "evento temporal") {
+  clearTemporaryViewTimer();
   clearSleepTimer();
   wake(reason, 0);
 
-  debug("Abriendo popup temporal de Plex", { reason, durationMs: PLEX_POPUP_DURATION_MS });
-  views.show("plex-now-playing");
-  views.call("plex-now-playing", "startTimer", PLEX_POPUP_DURATION_MS);
+  debug("Abriendo vista temporal", { id, reason, durationMs: TEMPORARY_VIEW_DURATION_MS });
+  views.show(id);
+  views.call(id, "startTimer", TEMPORARY_VIEW_DURATION_MS);
+  temporaryViewId = id;
 
-  plexPopupTimer = setTimeout(() => {
-    debug("Temporizador de Plex finalizado; iniciando fundido AMOLED antes de volver al dashboard");
-    views.call("plex-now-playing", "stopTimer");
-    closePlexToSleep("fin de reproducción temporal");
-  }, PLEX_POPUP_DURATION_MS);
+  temporaryViewTimer = setTimeout(() => {
+    const closingId = temporaryViewId;
+    debug("Temporizador de vista temporal finalizado; iniciando fundido AMOLED", { id: closingId });
+    if (closingId) views.call(closingId, "stopTimer");
+    temporaryViewTimer = null;
+    temporaryViewId = null;
+    closeTemporaryViewToSleep(`fin de ${closingId || "vista temporal"}`);
+  }, TEMPORARY_VIEW_DURATION_MS);
 }
 
 views.register(createPlexView());
+views.register(createGameView());
 views.register(createNotificationsView({
   onSleep() {
     showDashboard("apagado manual");
@@ -118,13 +124,15 @@ function applyState(payload) {
     activeView: payload?.activeView,
     playbackActive: payload?.playbackActive,
     plexTitle: payload?.plex?.title,
+    gameTitle: payload?.game?.title,
     notificationCount: payload?.notifications?.total
   });
 
   views.update("plex-now-playing", payload?.plex);
+  views.update("game-now-playing", payload?.game);
   views.update("notifications", payload?.notifications);
 
-  // Los snapshots sólo sincronizan contenido. Nunca despiertan el kiosko.
+  // Al recargar, el centro sigue siendo la vista base: nunca reabre popups antiguos.
   if (!views.activeId) showDashboard("snapshot inicial");
 }
 
@@ -138,16 +146,21 @@ const socket = new SocketClient({
     }
 
     if (message.type === "plex:update") {
-      debug("Actualizando datos de Plex", message.payload);
       views.update("plex-now-playing", message.payload);
+      return;
+    }
+
+    if (message.type === "game:update") {
+      views.update("game-now-playing", message.payload);
       return;
     }
 
     if (message.type === "view:show") {
       const id = message.payload?.id || "notifications";
       debug("Orden de cambio de vista recibida", { id });
-      if (id === "plex-now-playing") showTemporaryPlex("orden view:show del servidor");
-      else {
+      if (id === "plex-now-playing" || id === "game-now-playing") {
+        showTemporaryView(id, "orden view:show del servidor");
+      } else {
         showDashboard("orden view:show del servidor");
         wake("orden dashboard del servidor");
       }
@@ -155,7 +168,6 @@ const socket = new SocketClient({
     }
 
     if (message.type === "notification:new") {
-      debug("Nueva notificación recibida", message.payload);
       views.notify("notifications", message.payload);
       showDashboard("nueva notificación");
       wake("nueva notificación");

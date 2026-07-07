@@ -1,5 +1,5 @@
 const esc = value => String(value ?? "").replace(/[&<>"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[char]));
-function icon(source) { return ({ plex: "▶", sonarr: "S", radarr: "R", system: "•" }[source] || "•"); }
+function icon(source) { return ({ plex: "▶", sonarr: "S", radarr: "R", arr: "A", playnite: "🎮", system: "•" }[source] || "•"); }
 function render(el, data) {
   const { items = [], page = 1, totalPages = 1, total = 0 } = data || {};
   el.querySelector(".notification-count").textContent = `${total} EVENTOS`;

@@ -8,7 +8,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background:
 .eyebrow { margin:0; font-size:20px; font-weight:800; letter-spacing:.13em; color:#95b9ff; }
 
 /* Plex popup */
-.plex-bg { position:absolute; inset:-30px; background:center / cover no-repeat; filter:blur(20px); opacity:.46; transform:scale(1.1); }
+.plex-bg { position:absolute; inset:-30px; background:center / cover no-repeat; filter:blur(10px); opacity:.46; transform:scale(1.1); }
 .plex-overlay { position:absolute; inset:0; background:linear-gradient(90deg, rgba(5,6,10,.94) 0%, rgba(5,6,10,.68) 48%, rgba(5,6,10,.30)); }
 .plex-layout { position:relative; z-index:1; height:100%; display:flex; align-items:center; gap:30px; padding:18px 28px 22px; }
 .plex-poster { width:auto; height:calc(100vh - 44px); max-width:38vw; object-fit:cover; border-radius:15px; box-shadow:0 20px 50px rgba(0,0,0,.72); flex:0 0 auto; }
@@ -59,3 +59,24 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background:
 .notifications-header-meta { display:flex; align-items:center; gap:12px; }
 .sleep-btn { width:34px; height:34px; display:grid; place-items:center; flex:0 0 34px; padding:0; border:1px solid rgba(255,255,255,.16); border-radius:9px; background:rgba(26,34,52,.88); color:#c6d4ef; font-size:22px; line-height:1; -webkit-tap-highlight-color:transparent; }
 .sleep-btn:active { transform:scale(.92); }
+
+/* Playnite popup: misma jerarquía visual y temporizador que Plex. */
+.game-bg { position:absolute; inset:-30px; background:center / cover no-repeat; filter:blur(5px); opacity:.48; transform:scale(1.1); }
+.game-overlay { position:absolute; inset:0; background:linear-gradient(90deg, rgba(5,6,10,.95) 0%, rgba(5,6,10,.70) 50%, rgba(5,6,10,.34)); }
+.game-layout { position:relative; z-index:1; height:100%; display:flex; align-items:center; gap:30px; padding:18px 28px 22px; }
+.game-cover { width:auto; height:calc(100vh - 44px); max-width:38vw; object-fit:cover; border-radius:15px; box-shadow:0 20px 50px rgba(0,0,0,.72); flex:0 0 auto; background:#151923; }
+.game-info { min-width:0; flex:1; color:#fff; padding-right:8px; }
+.game-event { display:inline-block; padding:8px 14px; border-radius:999px; background:#7d53ea; font-size:18px; font-weight:800; letter-spacing:.11em; }
+.game-title { margin:18px 0 0; font-size:clamp(46px, 7.2vw, 72px); line-height:1; overflow-wrap:anywhere; }
+.game-platforms { margin:13px 0 0; color:#cdbdff; font-size:clamp(26px, 3.5vw, 35px); line-height:1.12; }
+.game-developer, .game-publisher, .game-year, .game-genres { margin:9px 0 0; color:#d9ddea; font-size:clamp(18px, 2.45vw, 25px); line-height:1.1; }
+.game-popup-timer { position:absolute; z-index:3; left:0; right:0; bottom:0; height:6px; background:rgba(255,255,255,.16); overflow:hidden; }
+.game-popup-timer span { display:block; width:100%; height:100%; transform-origin:left center; transform:scaleX(0); background:#7d53ea; will-change:transform; }
+@media (max-height: 500px) {
+  .game-layout { gap:22px; padding:14px 20px 18px; }
+  .game-cover { height:calc(100vh - 36px); }
+  .game-event { font-size:16px; padding:7px 12px; }
+  .game-title { margin-top:12px; font-size:clamp(40px, 6.8vw, 64px); }
+  .game-platforms { margin-top:9px; font-size:clamp(22px, 3.1vw, 30px); }
+  .game-developer, .game-publisher, .game-year, .game-genres { margin-top:7px; font-size:17px; }
+}
