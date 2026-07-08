@@ -1,76 +1,105 @@
 function label(event) {
-  return ({
-    play: "▶ REPRODUCIENDO",
-    pause: "⏸ PAUSADO",
-    stop: "■ DETENIDO",
-    recently_added: "🆕 AÑADIDO"
-  }[event] || String(event || "PLEX").toUpperCase());
+  return ({ play: "REPRODUCIENDO", pause: "PAUSADO", stop: "DETENIDO", recently_added: "AÑADIDO" }[event] || "PLEX");
 }
 
-export function createPlexView() {
-  let el;
-  let progress;
-  let timerEl;
-  let config = { showProgressBar: true };
+async function resolveCollection({ api, ui }) {
+  const collections = await api("/api/collections");
+  const choice = await ui.chooseCollection(collections);
+  if (!choice) return null;
+  if (choice.newName) return api("/api/collections", { method: "POST", body: JSON.stringify({ name: choice.newName }) });
+  return collections.find(c => c.id === choice.selectedId) || null;
+}
+
+export function createPlexView({ api, ui } = {}) {
+  let el, current = null;
+
+  async function addWallpaper() {
+    if (!current?.backdropUrl) return ui.alert("No hay backdrop disponible.");
+    await api("/api/wallpapers", {
+      method: "POST",
+      body: JSON.stringify({
+        title: current.title || "Plex backdrop",
+        source: "plex",
+        image: current.backdropUrl,
+        meta: { type: current.type, ratingKey: current.ratingKey }
+      })
+    });
+    ui.toast("Backdrop añadido a wallpapers");
+  }
+
+  async function addPosterToCollection() {
+    if (!current?.posterUrl) return ui.alert("No hay póster disponible.");
+    const collection = await resolveCollection({ api, ui });
+    if (!collection) return;
+    await api(`/api/collections/${collection.id}/items`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: current.title || "Póster Plex",
+        source: "plex",
+        image: current.posterUrl,
+        meta: { type: current.type, ratingKey: current.ratingKey }
+      })
+    });
+    ui.toast("Póster añadido a colección", { detail: collection.name });
+  }
+
+  function openActions() {
+    ui.actionSheet({
+      title: current?.title || "Acciones de Plex",
+      actions: [
+        {
+          id: "wallpaper",
+          label: "Añadir backdrop a wallpapers",
+          description: current?.backdropUrl ? "Usar el fondo actual en el Dashboard" : "No hay fondo disponible",
+          disabled: !current?.backdropUrl,
+          run: addWallpaper
+        },
+        {
+          id: "collection",
+          label: "Añadir póster a colección",
+          description: current?.posterUrl ? "Guardar el póster en una galería" : "No hay póster disponible",
+          disabled: !current?.posterUrl,
+          run: addPosterToCollection
+        }
+      ]
+    });
+  }
 
   return {
     id: "plex-now-playing",
     mount(target) {
       el = target;
-      el.innerHTML = `
-        <div class="plex-bg"></div>
-        <div class="plex-overlay"></div>
-        <div class="plex-layout">
-          <img class="plex-poster" alt="">
-          <div class="plex-info">
-            <span class="plex-event"></span>
-            <h1 class="plex-title"></h1>
-            <p class="plex-subtitle"></p>
-            <p class="plex-year"></p>
+      el.innerHTML = `<div class="media-view media-view--plex">
+        <img class="media-bg-img" alt="">
+        <div class="media-overlay"></div>
+        <button class="media-menu-button" type="button" data-actions aria-label="Acciones">...</button>
+        <div class="media-layout">
+          <img class="media-poster" alt="">
+          <div class="media-info">
+            <span class="media-event"></span>
+            <h1 class="media-title"></h1>
+            <p class="media-subtitle"></p>
+            <p class="media-year"></p>
           </div>
         </div>
-        <div class="plex-popup-timer" aria-hidden="true"><span></span></div>`;
-      timerEl = el.querySelector(".plex-popup-timer");
-      progress = el.querySelector(".plex-popup-timer span");
+      </div>`;
+      el.querySelector("[data-actions]").addEventListener("click", openActions);
     },
-    show() {
-      el.classList.add("view--active");
-      el.setAttribute("aria-hidden", "false");
-    },
-    hide() {
-      el.classList.remove("view--active");
-      el.setAttribute("aria-hidden", "true");
-      this.stopTimer();
-    },
-    configure(nextConfig = {}) {
-      config = { ...config, ...nextConfig };
-      if (timerEl) timerEl.style.display = config.showProgressBar ? "block" : "none";
-    },
-    startTimer(durationMs) {
-      if (!config.showProgressBar) return;
-      if (!progress) return;
-      progress.style.transition = "none";
-      progress.style.transform = "scaleX(1)";
-      // Fuerza un frame para reiniciar correctamente la animación en WebView antiguo.
-      progress.offsetWidth;
-      progress.style.transition = `transform ${durationMs}ms linear`;
-      progress.style.transform = "scaleX(0)";
-    },
-    stopTimer() {
-      if (!progress) return;
-      progress.style.transition = "none";
-      progress.style.transform = "scaleX(0)";
-    },
+    show() { el.classList.add("view--active"); el.setAttribute("aria-hidden", "false"); },
+    hide() { el.classList.remove("view--active"); el.setAttribute("aria-hidden", "true"); },
     update(data) {
       if (!data) return;
-      el.querySelector(".plex-event").textContent = label(data.event);
-      el.querySelector(".plex-title").textContent = data.title || "Sin título";
-      el.querySelector(".plex-subtitle").textContent = data.subtitle || "";
-      el.querySelector(".plex-year").textContent = data.year || "";
-      const poster = el.querySelector(".plex-poster");
+      current = data;
+      el.querySelector(".media-event").textContent = label(data.event);
+      el.querySelector(".media-title").textContent = data.title || "Sin reproducción";
+      el.querySelector(".media-subtitle").textContent = data.subtitle || "";
+      el.querySelector(".media-year").textContent = data.year || "";
+      const poster = el.querySelector(".media-poster");
       poster.src = data.posterUrl || "";
       poster.style.visibility = data.posterUrl ? "visible" : "hidden";
-      el.querySelector(".plex-bg").style.backgroundImage = data.backdropUrl ? `url("${data.backdropUrl}")` : "none";
+      const bg = el.querySelector(".media-bg-img");
+      bg.src = data.backdropUrl || "";
+      bg.classList.toggle("media-bg-img--visible", Boolean(data.backdropUrl));
     }
   };
 }

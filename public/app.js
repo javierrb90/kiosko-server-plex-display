@@ -1,282 +1,194 @@
 import { ViewManager } from "/core/view-manager.js";
 import { SocketClient } from "/core/socket-client.js";
+import { createUi } from "/core/ui.js";
+import { createDashboardView } from "/views/dashboard.js";
+import { createNotificationsView } from "/views/notifications.js";
 import { createPlexView } from "/views/plex-now-playing.js";
 import { createGameView } from "/views/game-now-playing.js";
-import { createNotificationsView } from "/views/notifications.js";
+import { createCollectionsView } from "/views/collections.js";
+import { createSettingsView } from "/views/settings.js";
 
 const DEBUG_PREFIX = "[Kiosko UI]";
 const debug = (...args) => console.log(DEBUG_PREFIX, ...args);
 const debugError = (...args) => console.error(DEBUG_PREFIX, ...args);
 
-const DEFAULT_SETTINGS = {
-  display: { fadeToBlackEnabled: true, dashboardIdleTimeoutSeconds: 30, wakeOnAnyTouch: true },
-  views: {
-    notifications: { itemsPerPage: 5, showManualPowerButton: true, showSettingsButton: true },
-    plex: { enabled: true, popupDurationSeconds: 5, showProgressBar: true },
-    playnite: { enabled: true, popupDurationSeconds: 5, showProgressBar: true }
-  }
+const appRoot = document.getElementById("app");
+const dock = document.getElementById("dock");
+const toast = document.getElementById("toast");
+const dimOverlay = document.getElementById("dim-overlay");
+const modalRoot = document.getElementById("modal-root");
+const uiToastRoot = document.getElementById("ui-toast-root");
+const ui = createUi({ modalRoot, toastRoot: uiToastRoot });
+
+const state = {
+  settings: null,
+  activeView: "dashboard",
+  dimTimer: null,
+  toastTimer: null,
+  dockTimer: null,
+  latestNotification: null
 };
 
-function clone(value) { return JSON.parse(JSON.stringify(value)); }
-let settings = clone(DEFAULT_SETTINGS);
+const views = new ViewManager(appRoot, { debug });
 
-function merge(base, override) {
-  if (!override || typeof override !== "object") return base;
-  const output = Array.isArray(base) ? [...base] : { ...base };
-  for (const [key, value] of Object.entries(override)) {
-    if (value && typeof value === "object" && !Array.isArray(value) && output[key] && typeof output[key] === "object" && !Array.isArray(output[key])) output[key] = merge(output[key], value);
-    else output[key] = value;
-  }
-  return output;
-}
-
-function applySettings(nextSettings = {}) {
-  settings = merge(clone(DEFAULT_SETTINGS), nextSettings);
-  debug("Configuración aplicada", settings);
-  views.call("notifications", "configure", {
-    ...settings.views.notifications,
-    showManualPowerButton: settings.display?.fadeToBlackEnabled && settings.views.notifications?.showManualPowerButton
-  });
-  views.call("plex-now-playing", "configure", settings.views.plex);
-  views.call("game-now-playing", "configure", settings.views.playnite);
-}
-
-function getNotificationLimit() {
-  return Number(settings.views?.notifications?.itemsPerPage) || 5;
-}
-
-function dashboardAwakeDurationMs() {
-  if (!settings.display?.fadeToBlackEnabled) return 0;
-  const seconds = Number(settings.display?.dashboardIdleTimeoutSeconds);
-  return seconds > 0 ? seconds * 1000 : 0;
-}
-
-function temporaryDurationMs(id) {
-  const seconds = id === "game-now-playing"
-    ? Number(settings.views?.playnite?.popupDurationSeconds)
-    : Number(settings.views?.plex?.popupDurationSeconds);
-  return Math.max(1000, (seconds || 5) * 1000);
-}
-
-function customCssLinks() {
-  return [...document.querySelectorAll('link[href^="/custom-css/"]')];
-}
-
-function refreshCustomCss() {
-  const stamp = Date.now();
-  for (const link of customCssLinks()) {
-    const base = link.href.split("?")[0];
-    link.href = `${base}?v=${stamp}`;
-  }
-}
-
-const views = new ViewManager(document.getElementById("app"), { debug });
-let temporaryViewTimer = null;
-let temporaryViewId = null;
-
-const sleepOverlay = document.getElementById("sleep-overlay");
-let asleep = true;
-let sleepTimer = null;
-
-function clearSleepTimer() {
-  clearTimeout(sleepTimer);
-  sleepTimer = null;
-}
-
-function clearTemporaryViewTimer() {
-  clearTimeout(temporaryViewTimer);
-  temporaryViewTimer = null;
-  if (temporaryViewId) views.call(temporaryViewId, "stopTimer");
-  temporaryViewId = null;
-}
-
-function waitForSleepFade() {
-  if (!settings.display?.fadeToBlackEnabled || !sleepOverlay.classList.contains("sleep-overlay--active")) return Promise.resolve();
-
-  return new Promise(resolve => {
-    let settled = false;
-    const finish = source => {
-      if (settled) return;
-      settled = true;
-      sleepOverlay.removeEventListener("transitionend", onTransitionEnd);
-      clearTimeout(fallback);
-      debug("Fundido AMOLED terminado", { source });
-      resolve();
-    };
-    const onTransitionEnd = event => {
-      if (event.target === sleepOverlay && event.propertyName === "opacity") finish("transitionend");
-    };
-    const fallback = setTimeout(() => finish("fallback"), 850);
-    sleepOverlay.addEventListener("transitionend", onTransitionEnd);
+function api(path, options = {}) {
+  const headers = options.body && !(options.body instanceof FormData) && !options.headers?.["Content-Type"]
+    ? { "Content-Type": "application/json", ...(options.headers || {}) }
+    : options.headers || {};
+  return fetch(path, { ...options, headers }).then(async res => {
+    const isJson = String(res.headers.get("content-type") || "").includes("application/json");
+    const data = isJson ? await res.json() : await res.text();
+    if (!res.ok) throw new Error(data?.error || data || `HTTP ${res.status}`);
+    return data;
   });
 }
 
-function sleep(reason = "sin motivo") {
-  clearSleepTimer();
-  if (!settings.display?.fadeToBlackEnabled) {
-    asleep = false;
-    sleepOverlay.classList.remove("sleep-overlay--active");
-    sleepOverlay.setAttribute("aria-hidden", "true");
-    debug("Reposo AMOLED omitido por configuración", { reason });
-    return;
-  }
-
-  asleep = true;
-  sleepOverlay.classList.add("sleep-overlay--active");
-  sleepOverlay.setAttribute("aria-hidden", "false");
-  debug("Pantalla en reposo AMOLED", { reason });
-}
-
-async function closeTemporaryView(reason = "fin de vista temporal") {
-  if (settings.display?.fadeToBlackEnabled) {
-    sleep(reason);
-    await waitForSleepFade();
-    showDashboard("fundido AMOLED terminado");
-  } else {
-    showDashboard(reason);
-    wake("vuelta al dashboard", dashboardAwakeDurationMs());
+function refreshCustomCss(name) {
+  const links = name ? [...document.querySelectorAll(`[data-custom-css="${name}"]`)] : [...document.querySelectorAll("[data-custom-css]")];
+  for (const link of links) {
+    const base = link.getAttribute("href").split("?")[0];
+    link.setAttribute("href", `${base}?v=${Date.now()}`);
   }
 }
 
-function wake(reason = "sin motivo", duration = dashboardAwakeDurationMs()) {
-  clearSleepTimer();
-  asleep = false;
-  sleepOverlay.classList.remove("sleep-overlay--active");
-  sleepOverlay.setAttribute("aria-hidden", "true");
-  debug("Despertando pantalla", { reason, duration });
 
-  if (duration > 0) {
-    sleepTimer = setTimeout(() => {
-      showDashboard("fin de tiempo visible");
-      sleep("inactividad");
-    }, duration);
-  }
+function isCompatMode() {
+  const params = new URLSearchParams(window.location.search);
+  return params.has("compat") || params.has("wallpaperEngine") || params.has("safe");
 }
 
-function showDashboard(reason = "sin motivo") {
-  clearTemporaryViewTimer();
-  debug("Mostrando dashboard de notificaciones", { reason });
-  views.show("notifications");
+function applyDisplaySettings() {
+  document.body.classList.toggle("compat-mode", isCompatMode());
+  document.body.classList.toggle("dock-autohide", state.settings?.display?.dockAutoHide !== false);
 }
 
-function showTemporaryView(id, reason = "evento temporal") {
-  clearTemporaryViewTimer();
-  clearSleepTimer();
-  wake(reason, 0);
-
-  const durationMs = temporaryDurationMs(id);
-  debug("Abriendo vista temporal", { id, reason, durationMs });
-  views.show(id);
-  views.call(id, "startTimer", durationMs);
-  temporaryViewId = id;
-
-  temporaryViewTimer = setTimeout(() => {
-    const closingId = temporaryViewId;
-    debug("Temporizador de vista temporal finalizado", { id: closingId });
-    if (closingId) views.call(closingId, "stopTimer");
-    temporaryViewTimer = null;
-    temporaryViewId = null;
-    closeTemporaryView(`fin de ${closingId || "vista temporal"}`);
-  }, durationMs);
+function clearDockTimer() {
+  clearTimeout(state.dockTimer);
+  state.dockTimer = null;
 }
 
-views.register(createPlexView());
-views.register(createGameView());
-views.register(createNotificationsView({
-  getLimit: getNotificationLimit,
-  onSleep() {
-    showDashboard("apagado manual");
-    sleep("apagado manual");
-  },
-  onInteraction() {
-    if (!asleep) wake("interacción en dashboard", dashboardAwakeDurationMs());
-  }
-}));
-applySettings(settings);
+function hideDock() {
+  if (state.settings?.display?.dockAutoHide === false) return;
+  document.body.classList.remove("dock-visible");
+}
 
-function applyState(payload) {
-  debug("Snapshot recibido", {
-    activeView: payload?.activeView,
-    playbackActive: payload?.playbackActive,
-    plexTitle: payload?.plex?.title,
-    gameTitle: payload?.game?.title,
-    notificationCount: payload?.notifications?.total
-  });
+function showDock({ temporary = true } = {}) {
+  document.body.classList.add("dock-visible");
+  clearDockTimer();
+  if (!temporary || state.settings?.display?.dockAutoHide === false) return;
+  const seconds = Number(state.settings?.display?.dockAutoHideSeconds || 4);
+  state.dockTimer = setTimeout(hideDock, Math.max(1, seconds) * 1000);
+}
 
-  if (payload?.settings) applySettings(payload.settings);
-  views.update("plex-now-playing", payload?.plex);
-  views.update("game-now-playing", payload?.game);
-  views.update("notifications", payload?.notifications);
+function dimmableView(id = state.activeView) {
+  return ["notifications", "plex-now-playing", "game-now-playing"].includes(id);
+}
+function clearDimTimer() { clearTimeout(state.dimTimer); state.dimTimer = null; }
+function setDimmed(dimmed) { dimOverlay.classList.toggle("dim-overlay--active", Boolean(dimmed)); }
+function resetDimTimer(reason = "interacción") {
+  clearDimTimer();
+  setDimmed(false);
+  const settings = state.settings || {};
+  if (!settings.display?.dimEnabled || !dimmableView()) return;
+  const seconds = Number(settings.display?.dimTimeoutSeconds || 10);
+  const opacity = Number(settings.display?.dimOpacity ?? 0.5);
+  dimOverlay.style.setProperty("--dim-opacity", String(opacity));
+  state.dimTimer = setTimeout(() => {
+    debug("Atenuando vista", { view: state.activeView, reason });
+    setDimmed(true);
+  }, Math.max(1, seconds) * 1000);
+}
+function navigate(id, { persist = true, reason = "dock" } = {}) {
+  if (!id) return;
+  showDock();
+  state.activeView = id;
+  views.show(id, { reason });
+  dock.querySelectorAll("button").forEach(btn => btn.classList.toggle("dock__item--active", btn.dataset.nav === id));
+  setDimmed(false);
+  resetDimTimer(`navegación: ${reason}`);
+  if (persist) api("/api/state", { method: "PUT", body: JSON.stringify({ activeView: id }) }).catch(debugError);
+}
+function showToast(notification) {
+  if (!state.settings?.notifications?.toastEnabled) return;
+  state.latestNotification = notification;
+  clearTimeout(state.toastTimer);
+  toast.hidden = false;
+  toast.innerHTML = `<strong>${notification.title || "Nueva notificación"}</strong><span>${notification.subtitle || notification.source || ""}</span>`;
+  toast.classList.add("event-toast--visible");
+  const seconds = Number(state.settings?.notifications?.toastDurationSeconds || 6);
+  state.toastTimer = setTimeout(() => toast.classList.remove("event-toast--visible"), seconds * 1000);
+}
 
-  if (!views.activeId) showDashboard("snapshot inicial");
+views.register(createDashboardView({ api, debug }));
+views.register(createNotificationsView({ api, debug }));
+views.register(createPlexView({ api, debug, ui }));
+views.register(createGameView({ api, debug, ui }));
+views.register(createCollectionsView({ api, debug, ui }));
+views.register(createSettingsView({ api, debug, refreshCustomCss, ui }));
+
+function applyState(payload = {}) {
+  debug("Snapshot recibido", payload);
+  state.settings = payload.settings || state.settings;
+  applyDisplaySettings();
+  views.update("dashboard", { wallpapers: payload.wallpapers || [], settings: state.settings });
+  views.update("notifications", { notifications: payload.notifications, settings: state.settings });
+  views.update("plex-now-playing", payload.plex);
+  views.update("game-now-playing", payload.game);
+  views.update("collections", { collections: payload.collections || [], state: payload.state });
+  views.update("settings", { settings: state.settings, wallpapers: payload.wallpapers || [], collections: payload.collections || [] });
+  const initial = "dashboard";
+  if (!views.activeId) navigate(initial, { persist: false, reason: "snapshot inicial" });
+  resetDimTimer("snapshot");
 }
 
 const socket = new SocketClient({
   onMessage(message) {
     debug("Mensaje WebSocket recibido", message?.type, message?.payload);
-
-    if (message.type === "state:snapshot") {
-      applyState(message.payload);
-      return;
-    }
-
-    if (message.type === "settings:update") {
-      applySettings(message.payload);
-      views.notify("notifications");
-      return;
-    }
-
-    if (message.type === "custom-css:update") {
-      refreshCustomCss();
-      return;
-    }
-
-    if (message.type === "plex:update") {
-      views.update("plex-now-playing", message.payload);
-      return;
-    }
-
-    if (message.type === "game:update") {
-      views.update("game-now-playing", message.payload);
-      return;
-    }
-
-    if (message.type === "view:show") {
-      const id = message.payload?.id || "notifications";
-      debug("Orden de cambio de vista recibida", { id });
-      if (id === "plex-now-playing" || id === "game-now-playing") {
-        showTemporaryView(id, "orden view:show del servidor");
-      } else {
-        showDashboard("orden view:show del servidor");
-        wake("orden dashboard del servidor", dashboardAwakeDurationMs());
-      }
-      return;
-    }
-
+    if (message.type === "state:snapshot") return applyState(message.payload);
+    if (message.type === "settings:update") { state.settings = message.payload; applyDisplaySettings(); views.update("dashboard", { settings: state.settings }); views.update("settings", { settings: state.settings }); resetDimTimer("settings update"); showDock(); return; }
+    if (message.type === "wallpapers:update") { views.update("dashboard", { wallpapers: message.payload || [], settings: state.settings }); views.update("settings", { wallpapers: message.payload || [] }); return; }
+    if (message.type === "collections:update") { views.update("collections", { collections: message.payload || [] }); views.update("settings", { collections: message.payload || [] }); return; }
+    if (message.type === "custom-css:update") { refreshCustomCss(message.payload?.name); return; }
+    if (message.type === "plex:update") { views.update("plex-now-playing", message.payload); resetDimTimer("plex update"); return; }
+    if (message.type === "game:update") { views.update("game-now-playing", message.payload); resetDimTimer("game update"); return; }
     if (message.type === "notification:new") {
       views.notify("notifications", message.payload);
-      showDashboard("nueva notificación");
-      wake("nueva notificación", dashboardAwakeDurationMs());
+      showToast(message.payload);
+      resetDimTimer("nueva notificación");
       return;
     }
-
-    debug("Mensaje WebSocket no gestionado", message);
+    if (message.type === "view:show") {
+      const id = message.payload?.id || "dashboard";
+      navigate(id, { persist: false, reason: message.payload?.reason || "servidor" });
+      return;
+    }
   },
   onOpen() { debug("WebSocket conectado"); },
   onClose() { debug("WebSocket desconectado; se reintentará la conexión"); },
   onError(event) { debugError("Error de WebSocket", event); }
 });
 
-sleepOverlay.addEventListener("click", () => {
-  if (!asleep || !settings.display?.wakeOnAnyTouch) return;
-  showDashboard("toque para despertar");
-  wake("toque en pantalla apagada", dashboardAwakeDurationMs());
+dock.addEventListener("pointerdown", event => {
+  event.stopPropagation();
+  showDock();
 });
-
-window.addEventListener("error", event => {
-  debugError("Error no controlado en frontend", { message: event.message, filename: event.filename, line: event.lineno });
+dock.addEventListener("click", event => {
+  const btn = event.target.closest("button[data-nav]");
+  if (!btn) return;
+  navigate(btn.dataset.nav, { reason: "dock" });
 });
+toast.addEventListener("click", () => {
+  toast.classList.remove("event-toast--visible");
+  navigate("notifications", { reason: "toast" });
+});
+window.addEventListener("pointerdown", event => {
+  resetDimTimer("pointerdown");
+  if (!event.target.closest("#dock")) showDock();
+}, { passive: true });
+window.addEventListener("keydown", () => { resetDimTimer("keydown"); showDock(); });
+window.addEventListener("error", event => debugError("Error no controlado", { message: event.message, filename: event.filename, line: event.lineno }));
 
-showDashboard("arranque inicial");
-sleep("arranque inicial");
+applyDisplaySettings();
+// El dock flota oculto por defecto; un toque/clic en cualquier punto lo muestra.
+if (state.settings?.display?.dockAutoHide === false) showDock({ temporary: false });
 socket.connect();

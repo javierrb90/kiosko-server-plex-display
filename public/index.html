@@ -1,22 +1,39 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Kiosko Media Center</title>
-  <link rel="stylesheet" href="/style.css" />
-  <link rel="stylesheet" href="/custom-css/global.css" />
-  <link rel="stylesheet" href="/custom-css/notifications.css" />
-  <link rel="stylesheet" href="/custom-css/plex.css" />
-  <link rel="stylesheet" href="/custom-css/playnite.css" />
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/api/custom-css/global" data-custom-css="global">
+  <link rel="stylesheet" href="/api/custom-css/dashboard" data-custom-css="dashboard">
+  <link rel="stylesheet" href="/api/custom-css/notifications" data-custom-css="notifications">
+  <link rel="stylesheet" href="/api/custom-css/plex" data-custom-css="plex">
+  <link rel="stylesheet" href="/api/custom-css/game" data-custom-css="game">
+  <link rel="stylesheet" href="/api/custom-css/collections" data-custom-css="collections">
+  <link rel="stylesheet" href="/api/custom-css/settings" data-custom-css="settings">
 </head>
 <body>
   <main id="app" aria-live="polite">
-    <section class="view view--render-hidden" data-view="plex-now-playing" aria-hidden="true"></section>
-    <section class="view view--render-hidden" data-view="game-now-playing" aria-hidden="true"></section>
-    <section class="view view--active" data-view="notifications" aria-hidden="false"></section>
+    <section class="view" data-view="dashboard" aria-hidden="true"></section>
+    <section class="view" data-view="notifications" aria-hidden="true"></section>
+    <section class="view" data-view="plex-now-playing" aria-hidden="true"></section>
+    <section class="view" data-view="game-now-playing" aria-hidden="true"></section>
+    <section class="view" data-view="collections" aria-hidden="true"></section>
+    <section class="view" data-view="settings" aria-hidden="true"></section>
   </main>
-  <button id="sleep-overlay" class="sleep-overlay sleep-overlay--active" type="button" aria-label="Tocar para encender pantalla" aria-hidden="false"><span>TOCA PARA ENCENDER</span></button>
+  <div id="dim-overlay" class="dim-overlay" aria-hidden="true"></div>
+  <button id="toast" class="event-toast" type="button" hidden></button>
+  <div id="modal-root" class="ui-modal-root" hidden></div>
+  <div id="ui-toast-root" class="ui-toast-root" aria-live="polite"></div>
+  <nav id="dock" class="dock" aria-label="Navegación principal">
+    <button type="button" data-nav="dashboard" title="Dashboard"><span>D</span><small>Inicio</small></button>
+    <button type="button" data-nav="notifications" title="Notificaciones"><span>N</span><small>Eventos</small></button>
+    <button type="button" data-nav="plex-now-playing" title="Plex"><span>P</span><small>Plex</small></button>
+    <button type="button" data-nav="game-now-playing" title="Game"><span>G</span><small>Game</small></button>
+    <button type="button" data-nav="collections" title="Colecciones"><span>C</span><small>Galería</small></button>
+    <button type="button" data-nav="settings" title="Settings"><span>S</span><small>Ajustes</small></button>
+  </nav>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

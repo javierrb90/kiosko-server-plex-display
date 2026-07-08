@@ -3,17 +3,16 @@ import { XMLParser } from "fast-xml-parser";
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
 
 export class PlexService {
-  constructor({ url, token, enabled = true } = {}) {
-    this.updateConfig({ url, token, enabled });
+  constructor({ url, token }) {
+    this.setConfig({ url, token });
   }
 
-  updateConfig({ url, token, enabled = true } = {}) {
-    this.enabled = enabled !== false;
-    this.url = url?.replace(/\/$/, "");
-    this.token = token;
+  setConfig({ url, token }) {
+    this.url = url?.replace(/\/$/, "") || "";
+    this.token = token || "";
   }
 
-  isConfigured() { return Boolean(this.enabled && this.url && this.token); }
+  isConfigured() { return Boolean(this.url && this.token); }
 
   assetUrl(path) {
     return path ? `${this.url}${path}${path.includes("?") ? "&" : "?"}X-Plex-Token=${this.token}` : null;

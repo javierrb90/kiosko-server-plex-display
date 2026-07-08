@@ -1,3 +1,5 @@
-node_modules/
 .env
-data/notifications.json
+node_modules/
+data/*.json
+data/assets/
+data/custom-css/

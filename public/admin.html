@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kiosko Admin</title>
+  <link rel="stylesheet" href="/admin.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Kiosko Admin</h1>
+      <p>Panel auxiliar para usar desde un navegador normal de la LAN. No lo abras dentro de Wallpaper Engine.</p>
+      <a href="/">Volver al kiosko</a>
+    </header>
+
+    <section>
+      <h2>Subir wallpaper</h2>
+      <input id="wallpaper-file" type="file" accept="image/*">
+      <button id="upload-wallpaper">Subir wallpaper</button>
+      <p id="wallpaper-status"></p>
+    </section>
+
+    <section>
+      <h2>Subir imagen a colección</h2>
+      <label>Colección <select id="collection-select"></select></label>
+      <input id="collection-file" type="file" accept="image/*">
+      <button id="upload-collection">Subir a colección</button>
+      <p id="collection-status"></p>
+    </section>
+
+    <section>
+      <h2>CSS personalizado avanzado</h2>
+      <label>Archivo
+        <select id="css-name">
+          <option value="global">global</option>
+          <option value="dashboard">dashboard</option>
+          <option value="notifications">notifications</option>
+          <option value="plex">plex</option>
+          <option value="game">game</option>
+          <option value="collections">collections</option>
+          <option value="settings">settings</option>
+        </select>
+      </label>
+      <textarea id="css-editor" spellcheck="false"></textarea>
+      <button id="save-css">Guardar CSS</button>
+      <p id="css-status"></p>
+    </section>
+  </main>
+  <script type="module" src="/admin.js"></script>
+</body>
+</html>
