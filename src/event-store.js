@@ -3,10 +3,19 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 export class EventStore {
-  constructor(dataDir) {
+  constructor(dataDir, { maxStored = 200 } = {}) {
     this.filePath = path.join(dataDir, "notifications.json");
     this.notifications = [];
+    this.maxStored = Number(maxStored) || 0;
     this.writeQueue = Promise.resolve();
+  }
+
+  setMaxStored(maxStored) {
+    this.maxStored = Number(maxStored) || 0;
+    if (this.maxStored > 0 && this.notifications.length > this.maxStored) {
+      this.notifications = this.notifications.slice(0, this.maxStored);
+      this.persist().catch(error => console.error("No se pudo aplicar maxStored:", error));
+    }
   }
 
   async init() {
@@ -50,6 +59,9 @@ export class EventStore {
       meta: input.meta || {}
     };
     this.notifications.unshift(notification);
+    if (this.maxStored > 0 && this.notifications.length > this.maxStored) {
+      this.notifications = this.notifications.slice(0, this.maxStored);
+    }
     await this.persist();
     return notification;
   }

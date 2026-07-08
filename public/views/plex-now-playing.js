@@ -10,6 +10,8 @@ function label(event) {
 export function createPlexView() {
   let el;
   let progress;
+  let timerEl;
+  let config = { showProgressBar: true };
 
   return {
     id: "plex-now-playing",
@@ -28,6 +30,7 @@ export function createPlexView() {
           </div>
         </div>
         <div class="plex-popup-timer" aria-hidden="true"><span></span></div>`;
+      timerEl = el.querySelector(".plex-popup-timer");
       progress = el.querySelector(".plex-popup-timer span");
     },
     show() {
@@ -39,7 +42,12 @@ export function createPlexView() {
       el.setAttribute("aria-hidden", "true");
       this.stopTimer();
     },
+    configure(nextConfig = {}) {
+      config = { ...config, ...nextConfig };
+      if (timerEl) timerEl.style.display = config.showProgressBar ? "block" : "none";
+    },
     startTimer(durationMs) {
+      if (!config.showProgressBar) return;
       if (!progress) return;
       progress.style.transition = "none";
       progress.style.transform = "scaleX(1)";

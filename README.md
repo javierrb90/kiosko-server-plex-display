@@ -1,50 +1,63 @@
-# Kiosko Media Center · integración Playnite
+# Kiosko Media Center
 
-Esta versión incorpora Playnite como fuente de eventos temporales, con la misma lógica visual que Plex: al iniciar un juego, el kiosko se despierta, muestra la ficha durante 5 segundos con barra de progreso, se funde a negro y vuelve internamente al Centro de notificaciones.
+Centro visual para eventos multimedia en red local. Recibe webhooks de Tautulli/Plex, Sonarr/Radarr y Playnite, los normaliza y los muestra en un dispositivo Android en modo kiosko.
 
-## Endpoint
+## Endpoints principales
 
-Configura el script **Before Game Starts** de Playnite para enviar al MiniPC:
+- `POST /webhook/tautulli` — eventos de Tautulli/Plex.
+- `POST /webhook` — compatibilidad con la ruta antigua de Tautulli.
+- `POST /webhook/arr` — ruta única para Sonarr y Radarr.
+- `POST /webhook/playnite` — lanzamientos de juegos desde Playnite.
+- `GET /settings.html` — panel local de configuración.
+- `GET /api/health` — diagnóstico rápido.
+
+## Configuración persistente
+
+La configuración vive en `data/settings.json`. Si no existe, se crea automáticamente con valores por defecto.
+
+Desde `/settings.html` se puede editar:
+
+- URL y token de Plex.
+- Activación del fundido AMOLED.
+- Tiempo visible del dashboard antes de apagarse.
+- Número de notificaciones por página.
+- Duración de las vistas temporales de Plex y Playnite.
+- Activación de integraciones.
+- Eventos que disparan vistas o notificaciones.
+- CSS personalizado por vista.
+
+Los CSS personalizados se guardan en:
 
 ```text
-http://IP_DEL_MINIPC:3000/webhook/playnite
+data/custom-css/global.css
+data/custom-css/notifications.css
+data/custom-css/plex.css
+data/custom-css/playnite.css
 ```
 
-El script incluido se llama `playnite-before-game-start.ps1`. Modifica únicamente `$serverUrl` con la IP real del MiniPC antes de pegarlo/configurarlo en Playnite.
+Estos archivos se cargan después del CSS base, por lo que sirven como overrides persistentes.
 
-## Datos recibidos
+## Docker / Portainer
 
-El endpoint acepta el payload del prototipo:
+```bash
+docker compose up -d --build
+```
 
-- `title`
-- `platforms`
-- `developers`
-- `publishers`
-- `genres`
-- `releaseYear`
-- `playtime`
-- `cover` (Data URI Base64)
-- `background` (Data URI Base64)
+El volumen importante es:
 
-El límite de JSON se ha ampliado a **35 MB** para admitir carátula y fondo embebidos. Las imágenes sólo se mantienen en RAM como parte del último evento y no se guardan en el histórico de notificaciones.
+```text
+./data:/app/data
+```
 
-## Comportamiento visual
+Ahí se conservan:
 
-1. Playnite realiza `POST /webhook/playnite` antes de abrir el juego.
-2. El servidor normaliza los datos y envía `game:update` + `view:show` por WebSocket.
-3. El frontend muestra `game-now-playing` durante 5 segundos.
-4. La barra inferior indica el tiempo restante.
-5. Se aplica fundido AMOLED a negro; cuando termina, vuelve internamente al dashboard.
-6. Un refresco manual siempre arranca en el Centro de notificaciones, no reabre un popup previo.
+- `settings.json`
+- `notifications.json`
+- CSS personalizado
+- futuros assets/cache
 
-## Rutas principales
+## Notas
 
-- `POST /webhook/playnite` — inicio de un juego Playnite.
-- `POST /webhook` y `POST /webhook/tautulli` — Tautulli.
-- `POST /webhook/arr` — Sonarr/Radarr unificado.
-- `GET /api/health` — diagnóstico.
-- `GET /api/notifications?page=1&limit=5` — histórico persistente.
-
-## Despliegue
-
-No añade dependencias NPM nuevas. Puedes sustituir el proyecto actual, conservar `.env` y el directorio `data/`, y reconstruir el contenedor en Portainer.
+- El proyecto está pensado para red local y HTTP.
+- `.env` queda como compatibilidad inicial, pero Plex puede configurarse desde el panel.
+- Si `settings.json` no tiene Plex configurado y `.env` contiene `PLEX_URL`/`PLEX_TOKEN`, se importarán en el primer arranque.

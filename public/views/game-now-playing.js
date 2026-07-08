@@ -12,6 +12,8 @@ function setOptional(el, label, value) {
 export function createGameView() {
   let el;
   let progress;
+  let timerEl;
+  let config = { showProgressBar: true };
 
   return {
     id: "game-now-playing",
@@ -33,6 +35,7 @@ export function createGameView() {
           </div>
         </div>
         <div class="game-popup-timer" aria-hidden="true"><span></span></div>`;
+      timerEl = el.querySelector(".game-popup-timer");
       progress = el.querySelector(".game-popup-timer span");
     },
     show() {
@@ -44,7 +47,12 @@ export function createGameView() {
       el.setAttribute("aria-hidden", "true");
       this.stopTimer();
     },
+    configure(nextConfig = {}) {
+      config = { ...config, ...nextConfig };
+      if (timerEl) timerEl.style.display = config.showProgressBar ? "block" : "none";
+    },
     startTimer(durationMs) {
+      if (!config.showProgressBar) return;
       if (!progress) return;
       progress.style.transition = "none";
       progress.style.transform = "scaleX(1)";
