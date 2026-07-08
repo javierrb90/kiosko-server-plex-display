@@ -5,6 +5,7 @@ export function createCollectionsView({ api, ui } = {}) {
   let isVisible = false;
   let mode = "presentation";
   let itemSize = "xl";
+  let layout = "masonry"; // masonry | square
 
   const sizeBase = { l: 120, xl: 165, xxl: 230, all: 76 };
 
@@ -26,18 +27,28 @@ export function createCollectionsView({ api, ui } = {}) {
     return cols;
   }
 
+  function updateSquareSize() {
+    const grid = el?.querySelector('.collections-grid');
+    if (!grid) return;
+    const count = getColumnCount();
+    const gap = itemSize === 'all' ? 8 : 12;
+    const width = grid.clientWidth || 960;
+    const size = Math.max(42, Math.floor((width - gap * (count - 1)) / count));
+    grid.style.setProperty('--collection-square-size', `${size}px`);
+  }
+
   async function refresh() {
     collections = await api("/api/collections");
     if (!selectedId || !selected()) selectedId = collections[0]?.id;
     render();
   }
 
-  function applySizeClass() {
+  function applyClasses() {
     const grid = el?.querySelector(".collections-grid");
     if (!grid) return;
-    grid.classList.remove("collections-grid--l", "collections-grid--xl", "collections-grid--xxl", "collections-grid--all");
-    grid.classList.add(`collections-grid--${itemSize}`);
-    el.querySelectorAll("[data-size]").forEach(btn => btn.classList.toggle("is-active", btn.dataset.size === itemSize));
+    grid.classList.remove("collections-grid--l", "collections-grid--xl", "collections-grid--xxl", "collections-grid--all", "collections-grid--masonry", "collections-grid--square");
+    grid.classList.add(`collections-grid--${itemSize}`, `collections-grid--${layout}`);
+    updateSquareSize();
   }
 
   function render() {
@@ -45,10 +56,9 @@ export function createCollectionsView({ api, ui } = {}) {
     const c = selected();
     el.querySelector(".collection-title").textContent = c?.name || "Colecciones";
     el.querySelector(".collection-count").textContent = c ? `${c.items?.length || 0} imágenes` : "0 imágenes";
-    el.querySelector(".collection-mode").textContent = mode === "manage" ? "Modo gestión" : "Modo presentación";
     el.classList.toggle("collections--manage", mode === "manage");
     const grid = el.querySelector(".collections-grid");
-    applySizeClass();
+    applyClasses();
 
     if (!c?.items?.length) {
       grid.innerHTML = `<div class="collections-empty">Esta colección todavía no tiene imágenes.</div>`;
@@ -66,6 +76,60 @@ export function createCollectionsView({ api, ui } = {}) {
     </article>`).join("")}</div>`).join("")}</div>`;
   }
 
+  function changeCollection(delta) {
+    if (!collections.length) return;
+    const current = Math.max(0, collections.findIndex(c => c.id === selectedId));
+    selectedId = collections[(current + delta + collections.length) % collections.length].id;
+    render();
+  }
+
+  async function createCollection() {
+    const name = await ui.prompt({ title: "Nueva colección", placeholder: "Nombre", defaultValue: "Nueva colección" });
+    if (!name) return;
+    const c = await api("/api/collections", { method: "POST", body: JSON.stringify({ name }) });
+    selectedId = c.id;
+    await refresh();
+  }
+
+  async function renameCollection() {
+    const c = selected();
+    if (!c) return;
+    const name = await ui.prompt({ title: "Renombrar colección", placeholder: "Nombre", defaultValue: c.name });
+    if (!name) return;
+    await api(`/api/collections/${c.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    await refresh();
+  }
+
+  async function deleteCollection() {
+    const c = selected();
+    if (!c) return;
+    const ok = await ui.confirm({ title: "Eliminar colección", message: `¿Eliminar ${c.name}? También se borrarán sus imágenes.`, confirmText: "Eliminar", danger: true });
+    if (!ok) return;
+    await api(`/api/collections/${c.id}`, { method: "DELETE" });
+    selectedId = null;
+    await refresh();
+  }
+
+  function openMenu() {
+    const c = selected();
+    ui.actionSheet({
+      title: c?.name || 'Colecciones',
+      actions: [
+        { id: 'prev', label: 'Colección anterior', description: 'Cambiar a la colección previa', disabled: collections.length < 2, run: () => changeCollection(-1) },
+        { id: 'next', label: 'Colección siguiente', description: 'Cambiar a la siguiente colección', disabled: collections.length < 2, run: () => changeCollection(1) },
+        { id: 'mode', label: mode === 'manage' ? 'Modo presentación' : 'Modo gestión', description: mode === 'manage' ? 'Ocultar controles de items' : 'Mostrar mover/eliminar items', run: () => { mode = mode === 'manage' ? 'presentation' : 'manage'; render(); } },
+        { id: 'layout', label: layout === 'masonry' ? 'Cuadrícula cuadrada' : 'Masonry ratio original', description: layout === 'masonry' ? 'Mostrar todos los items en cuadrados' : 'Preservar formato original de portadas/fondos', run: () => { layout = layout === 'masonry' ? 'square' : 'masonry'; render(); } },
+        { id: 'size-l', label: 'Tamaño L', description: 'Más columnas', run: () => { itemSize = 'l'; render(); } },
+        { id: 'size-xl', label: 'Tamaño XL', description: 'Tamaño medio', run: () => { itemSize = 'xl'; render(); } },
+        { id: 'size-xxl', label: 'Tamaño XXL', description: 'Piezas grandes', run: () => { itemSize = 'xxl'; render(); } },
+        { id: 'size-all', label: 'Ver todos', description: 'Miniaturas pequeñas para maximizar cantidad visible', run: () => { itemSize = 'all'; render(); } },
+        { id: 'new', label: 'Nueva colección', description: 'Crear una colección vacía', run: createCollection },
+        { id: 'rename', label: 'Renombrar colección', description: 'Cambiar el nombre actual', disabled: !c, run: renameCollection },
+        { id: 'delete', label: 'Eliminar colección', description: 'Borrar colección e imágenes', disabled: !c, run: deleteCollection }
+      ]
+    });
+  }
+
   return {
     id: "collections",
     mount(target) {
@@ -75,67 +139,13 @@ export function createCollectionsView({ api, ui } = {}) {
           <div>
             <p class="eyebrow">COLECCIONES</p>
             <h1 class="collection-title">Colecciones</h1>
-            <div class="collection-meta"><span class="collection-mode">Modo presentación</span><span class="collection-count">0 imágenes</span></div>
+            <div class="collection-meta"><span class="collection-count">0 imágenes</span></div>
           </div>
-          <div class="collection-toolbar">
-            <button data-prev-collection>Anterior</button>
-            <button data-next-collection>Siguiente</button>
-            <div class="collection-size-controls" aria-label="Tamaño de miniaturas">
-              <button data-size="l" title="Tamaño L">L</button>
-              <button data-size="xl" title="Tamaño XL">XL</button>
-              <button data-size="xxl" title="Tamaño XXL">XXL</button>
-              <button data-size="all" title="Mostrar todo">Todos</button>
-            </div>
-            <button data-mode>Cambiar modo</button>
-            <button data-new>Nueva</button>
-            <button data-rename>Renombrar</button>
-            <button data-delete-collection>Eliminar</button>
-          </div>
+          <button class="collection-menu-button" type="button" data-menu aria-label="Acciones">...</button>
         </header>
         <section class="collections-grid"></section>
       </div>`;
-
-      el.querySelector("[data-prev-collection]").addEventListener("click", () => {
-        if (!collections.length) return;
-        const current = Math.max(0, collections.findIndex(c => c.id === selectedId));
-        selectedId = collections[(current - 1 + collections.length) % collections.length].id;
-        render();
-      });
-      el.querySelector("[data-next-collection]").addEventListener("click", () => {
-        if (!collections.length) return;
-        const current = Math.max(0, collections.findIndex(c => c.id === selectedId));
-        selectedId = collections[(current + 1) % collections.length].id;
-        render();
-      });
-      el.querySelector("[data-mode]").addEventListener("click", () => { mode = mode === "manage" ? "presentation" : "manage"; render(); });
-      el.querySelectorAll("[data-size]").forEach(btn => btn.addEventListener("click", () => {
-        itemSize = btn.dataset.size;
-        render();
-      }));
-      el.querySelector("[data-new]").addEventListener("click", async () => {
-        const name = await ui.prompt({ title: "Nueva colección", placeholder: "Nombre", defaultValue: "Nueva colección" });
-        if (!name) return;
-        const c = await api("/api/collections", { method: "POST", body: JSON.stringify({ name }) });
-        selectedId = c.id;
-        await refresh();
-      });
-      el.querySelector("[data-rename]").addEventListener("click", async () => {
-        const c = selected();
-        if (!c) return;
-        const name = await ui.prompt({ title: "Renombrar colección", placeholder: "Nombre", defaultValue: c.name });
-        if (!name) return;
-        await api(`/api/collections/${c.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
-        await refresh();
-      });
-      el.querySelector("[data-delete-collection]").addEventListener("click", async () => {
-        const c = selected();
-        if (!c) return;
-        const ok = await ui.confirm({ title: "Eliminar colección", message: `¿Eliminar ${c.name}? También se borrarán sus imágenes.`, confirmText: "Eliminar", danger: true });
-        if (!ok) return;
-        await api(`/api/collections/${c.id}`, { method: "DELETE" });
-        selectedId = null;
-        await refresh();
-      });
+      el.querySelector('[data-menu]').addEventListener('click', openMenu);
       el.querySelector(".collections-grid").addEventListener("click", async e => {
         const del = e.target.closest("[data-delete]");
         const move = e.target.closest("[data-move]");

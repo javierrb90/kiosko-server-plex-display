@@ -10,9 +10,43 @@
   <main>
     <header>
       <h1>Kiosko Admin</h1>
-      <p>Panel auxiliar para usar desde un navegador normal de la LAN. No lo abras dentro de Wallpaper Engine.</p>
+      <p>Panel auxiliar para usar desde un navegador normal de la LAN. La app visual de Wallpaper Engine se mantiene ligera.</p>
       <a href="/">Volver al kiosko</a>
     </header>
+
+    <section>
+      <h2>Ajustes generales</h2>
+      <div class="admin-grid">
+        <label>Plex URL <input id="plex-url" type="text" placeholder="http://192.168.1.50:32400"></label>
+        <label>Plex Token <input id="plex-token" type="password" placeholder="Token de Plex"></label>
+        <label>Intervalo wallpapers (s) <input id="wallpaper-interval" type="number" min="5"></label>
+        <label><input id="dim-enabled" type="checkbox"> Atenuación activa</label>
+        <label>Tiempo atenuación (s) <input id="dim-timeout" type="number" min="2"></label>
+        <label>Opacidad atenuación <input id="dim-opacity" type="number" min="0" max="0.95" step="0.05"></label>
+        <label><input id="dock-autohide" type="checkbox"> Auto-ocultar dock</label>
+        <label>Dock visible (s) <input id="dock-seconds" type="number" min="1"></label>
+        <label>Notificaciones por página <input id="notifications-limit" type="number" min="1" max="20"></label>
+        <label><input id="toast-enabled" type="checkbox"> Toasts activos</label>
+        <label>Duración toast (s) <input id="toast-duration" type="number" min="1"></label>
+        <label><input id="allow-gifs" type="checkbox"> Permitir GIFs como wallpapers</label>
+      </div>
+      <button id="save-settings">Guardar ajustes</button>
+      <button id="reset-settings">Restaurar ajustes</button>
+      <p id="settings-status"></p>
+    </section>
+
+    <section>
+      <h2>Simulación de eventos y notificaciones</h2>
+      <div class="button-row">
+        <button data-simulate="plex">Simular evento Plex</button>
+        <button data-simulate="game">Simular evento Playnite</button>
+        <button data-simulate="grab">Simular descarga iniciada</button>
+        <button data-simulate="movie">Simular película monitorizada</button>
+        <button data-simulate="series">Simular serie monitorizada</button>
+        <button data-simulate="plex_added">Simular añadido a Plex</button>
+      </div>
+      <p id="simulate-status"></p>
+    </section>
 
     <section>
       <h2>Subir wallpaper</h2>
@@ -39,7 +73,6 @@
           <option value="plex">plex</option>
           <option value="game">game</option>
           <option value="collections">collections</option>
-          <option value="settings">settings</option>
         </select>
       </label>
       <textarea id="css-editor" spellcheck="false"></textarea>

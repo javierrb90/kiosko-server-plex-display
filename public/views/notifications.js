@@ -1,7 +1,7 @@
 function icon(source) { return ({ sonarr:"S", radarr:"R", plex:"P", playnite:"G", arr:"A", system:"•" }[source] || String(source || "?").slice(0,1).toUpperCase()); }
 function dateLabel(value) { try { return new Date(value).toLocaleString("es-ES", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }); } catch { return ""; } }
 
-export function createNotificationsView({ api } = {}) {
+export function createNotificationsView({ api, onViewed } = {}) {
   let el, page = 1, limit = 5;
   let data = { items: [], total: 0, totalPages: 1, page: 1 };
   async function load(nextPage = page) {
@@ -11,7 +11,7 @@ export function createNotificationsView({ api } = {}) {
   }
   function render() {
     const list = el.querySelector(".notification-list");
-    el.querySelector(".notifications-count").textContent = `${data.total || 0} eventos`;
+    el.querySelector(".notifications-count").textContent = `${data.total || 0} notificaciones`;
     el.querySelector(".notifications-page").textContent = `${data.page || 1} / ${data.totalPages || 1}`;
     if (!data.items?.length) { list.innerHTML = `<div class="notification-empty">Todavía no hay actividad registrada.</div>`; return; }
     list.innerHTML = data.items.map((item, index) => `<article class="notification-card ${index === 0 ? "notification-card--featured" : ""}">
@@ -27,7 +27,7 @@ export function createNotificationsView({ api } = {}) {
       el.querySelector("[data-prev]").addEventListener("click", () => load(Math.max(1, page - 1)));
       el.querySelector("[data-next]").addEventListener("click", () => load(Math.min(data.totalPages || 1, page + 1)));
     },
-    show() { el.classList.add("view--active"); el.setAttribute("aria-hidden", "false"); load(page).catch(console.error); },
+    show() { el.classList.add("view--active"); el.setAttribute("aria-hidden", "false"); onViewed?.(); load(page).catch(console.error); },
     hide() { el.classList.remove("view--active"); el.setAttribute("aria-hidden", "true"); },
     update(payload = {}) { if (payload.settings?.views?.notifications?.itemsPerPage) limit = payload.settings.views.notifications.itemsPerPage; if (payload.notifications) { data = payload.notifications; limit = payload.notifications.limit || limit; page = payload.notifications.page || page; render(); } },
     notify() { load(1).catch(console.error); }

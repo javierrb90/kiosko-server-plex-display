@@ -11,7 +11,6 @@
   <link rel="stylesheet" href="/api/custom-css/plex" data-custom-css="plex">
   <link rel="stylesheet" href="/api/custom-css/game" data-custom-css="game">
   <link rel="stylesheet" href="/api/custom-css/collections" data-custom-css="collections">
-  <link rel="stylesheet" href="/api/custom-css/settings" data-custom-css="settings">
 </head>
 <body>
   <main id="app" aria-live="polite">
@@ -20,19 +19,17 @@
     <section class="view" data-view="plex-now-playing" aria-hidden="true"></section>
     <section class="view" data-view="game-now-playing" aria-hidden="true"></section>
     <section class="view" data-view="collections" aria-hidden="true"></section>
-    <section class="view" data-view="settings" aria-hidden="true"></section>
   </main>
   <div id="dim-overlay" class="dim-overlay" aria-hidden="true"></div>
   <button id="toast" class="event-toast" type="button" hidden></button>
   <div id="modal-root" class="ui-modal-root" hidden></div>
   <div id="ui-toast-root" class="ui-toast-root" aria-live="polite"></div>
   <nav id="dock" class="dock" aria-label="Navegación principal">
-    <button type="button" data-nav="dashboard" title="Dashboard"><span>D</span><small>Inicio</small></button>
-    <button type="button" data-nav="notifications" title="Notificaciones"><span>N</span><small>Eventos</small></button>
-    <button type="button" data-nav="plex-now-playing" title="Plex"><span>P</span><small>Plex</small></button>
-    <button type="button" data-nav="game-now-playing" title="Game"><span>G</span><small>Game</small></button>
-    <button type="button" data-nav="collections" title="Colecciones"><span>C</span><small>Galería</small></button>
-    <button type="button" data-nav="settings" title="Settings"><span>S</span><small>Ajustes</small></button>
+    <button data-nav="dashboard" class="dock__item--active" type="button"><span>D</span><small>Dashboard</small></button>
+    <button data-nav="notifications" type="button"><span>N</span><small>Actividad</small></button>
+    <button data-nav="plex-now-playing" type="button"><span>P</span><small>Plex</small></button>
+    <button data-nav="game-now-playing" type="button"><span>G</span><small>Game</small></button>
+    <button data-nav="collections" type="button"><span>C</span><small>Colecciones</small></button>
   </nav>
   <script type="module" src="/app.js"></script>
 </body>

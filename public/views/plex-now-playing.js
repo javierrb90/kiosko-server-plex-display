@@ -100,6 +100,32 @@ export function createPlexView({ api, ui } = {}) {
       const bg = el.querySelector(".media-bg-img");
       bg.src = data.backdropUrl || "";
       bg.classList.toggle("media-bg-img--visible", Boolean(data.backdropUrl));
+      applyAccentFromImage(el.querySelector(".media-view"), data.posterUrl || data.backdropUrl);
     }
   };
+}
+
+function applyAccentFromImage(container, src) {
+  if (!container || !src || !String(src).startsWith('/assets/')) return;
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const canvas = document.createElement('canvas');
+      const size = 24;
+      canvas.width = size; canvas.height = size;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, size, size);
+      const data = ctx.getImageData(0, 0, size, size).data;
+      let r = 0, g = 0, b = 0, count = 0;
+      for (let i = 0; i < data.length; i += 16) {
+        const a = data[i + 3];
+        if (a < 160) continue;
+        r += data[i]; g += data[i + 1]; b += data[i + 2]; count++;
+      }
+      if (!count) return;
+      r = Math.round(r / count); g = Math.round(g / count); b = Math.round(b / count);
+      container.style.setProperty('--accent-color', `rgb(${r}, ${g}, ${b})`);
+    } catch {}
+  };
+  img.src = src;
 }

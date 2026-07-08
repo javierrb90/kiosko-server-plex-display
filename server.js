@@ -68,6 +68,10 @@ function listNotifications(limit) {
   return store.list({ page: 1, limit: limit || configuredLimit });
 }
 
+function unreadNotificationCount() {
+  return store.countSince(stateStore.get().lastNotificationsViewedAt);
+}
+
 function snapshot() {
   return {
     type: "state:snapshot",
@@ -76,6 +80,7 @@ function snapshot() {
       plex: runtime.plex,
       game: runtime.game,
       notifications: listNotifications(),
+      unreadCount: unreadNotificationCount(),
       settings: publicSettings(),
       wallpapers: wallpaperStore.list(),
       collections: collectionStore.list(),
@@ -85,11 +90,17 @@ function snapshot() {
 }
 function broadcastState() { hub.broadcast(snapshot()); }
 function publicSettings() { return settingsStore.get(); }
-async function navigate(viewId, reason = "manual") {
+async function navigate(viewId, reason = "manual", { force = false } = {}) {
+  const locked = Boolean(stateStore.get().privacyLocked);
+  if (locked && viewId !== "dashboard" && !force) {
+    console.log(`Navegación bloqueada por privacidad: ${viewId}`, { reason });
+    return false;
+  }
   runtime.activeView = viewId;
   await stateStore.update({ activeView: viewId });
   console.log(`Navegando a vista: ${viewId}`, { reason });
   hub.broadcast({ type: "view:show", payload: { id: viewId, reason } });
+  return true;
 }
 async function publishNotification(notification, { navigateToNotifications = false } = {}) {
   hub.broadcast({ type: "notification:new", payload: notification });
@@ -112,7 +123,17 @@ wss.on("connection", ws => {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, wallpapers: wallpaperStore.list().length, collections: collectionStore.list().length }));
 app.get("/api/state", (_req, res) => res.json(stateStore.get()));
-app.put("/api/state", async (req, res) => { const state = await stateStore.update(req.body || {}); broadcastState(); res.json(state); });
+app.put("/api/state", async (req, res) => {
+  const patch = req.body || {};
+  const state = await stateStore.update(patch);
+  if (patch.privacyLocked === true) {
+    runtime.activeView = "dashboard";
+    await stateStore.update({ activeView: "dashboard" });
+    hub.broadcast({ type: "view:show", payload: { id: "dashboard", reason: "privacy lock" } });
+  }
+  broadcastState();
+  res.json(stateStore.get());
+});
 
 app.get("/api/settings", (_req, res) => res.json(publicSettings()));
 app.put("/api/settings", async (req, res) => {
@@ -153,10 +174,67 @@ app.post("/api/notifications/test", async (req, res) => {
   res.json(notification);
 });
 
+app.post("/api/simulate/:kind", async (req, res) => {
+  const kind = String(req.params.kind || "notification");
+  try {
+    if (kind === "plex") {
+      runtime.plex = {
+        event: "play",
+        title: req.body?.title || "Película de prueba",
+        subtitle: req.body?.subtitle || "Simulación Plex",
+        year: req.body?.year || "2026",
+        posterUrl: req.body?.posterUrl || null,
+        backdropUrl: req.body?.backdropUrl || null,
+        type: "movie",
+        ratingKey: "simulated"
+      };
+      await stateStore.update({ lastPlex: runtime.plex });
+      hub.broadcast({ type: "plex:update", payload: runtime.plex });
+      await navigate("plex-now-playing", "simulación plex");
+      return res.json({ ok: true, kind, view: "plex-now-playing" });
+    }
+    if (kind === "game") {
+      runtime.game = {
+        event: "game_started",
+        title: req.body?.title || "Juego de prueba",
+        platforms: ["PC"],
+        developers: ["Playnite Simulator"],
+        publishers: [],
+        genres: ["Test"],
+        releaseYear: "2026",
+        cover: null,
+        background: null
+      };
+      await stateStore.update({ lastGame: runtime.game });
+      hub.broadcast({ type: "game:update", payload: runtime.game });
+      await navigate("game-now-playing", "simulación playnite");
+      return res.json({ ok: true, kind, view: "game-now-playing" });
+    }
+
+    const samples = {
+      grab: { source: "radarr", type: "grab", title: "Descarga iniciada", subtitle: "Release de prueba capturado" },
+      movie: { source: "radarr", type: "movie_added", title: "Película monitorizada", subtitle: "Radarr · simulación" },
+      series: { source: "sonarr", type: "series_added", title: "Serie monitorizada", subtitle: "Sonarr · simulación" },
+      plex_added: { source: "plex", type: "library_added", title: "Nuevo contenido añadido a Plex", subtitle: "Tautulli · simulación" },
+      notification: { source: "system", type: "test", title: "Notificación de prueba", subtitle: "Simulación desde Admin" }
+    };
+    const base = samples[kind] || samples.notification;
+    const notification = await store.add({ ...base, priority: "normal", ...(req.body || {}) });
+    await publishNotification(notification);
+    return res.json({ ok: true, kind, notification });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
 app.get("/api/wallpapers", (_req, res) => res.json(wallpaperStore.list()));
 app.post("/api/wallpapers", async (req, res) => {
   try {
     const asset = await assetService.saveImage(req.body?.image || req.body?.url || req.body?.dataUri, { bucket: "wallpapers", title: req.body?.title || "wallpaper" });
+    if (asset.mime === "image/gif" && settingsStore.get().wallpapers?.allowGifs === false) {
+      await assetService.removePublicPath(asset.path);
+      return res.status(400).json({ error: "Los GIFs están desactivados en ajustes." });
+    }
     const wallpaper = await wallpaperStore.add({ title: req.body?.title || "Wallpaper", source: req.body?.source || "manual", status: req.body?.status || "active", asset, meta: req.body?.meta || {} });
     hub.broadcast({ type: "wallpapers:update", payload: wallpaperStore.list() });
     broadcastState();

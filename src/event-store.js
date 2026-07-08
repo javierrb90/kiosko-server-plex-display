@@ -36,6 +36,13 @@ export class EventStore {
     };
   }
 
+  countSince(isoDate) {
+    if (!isoDate) return this.notifications.length;
+    const cutoff = Date.parse(isoDate);
+    if (!Number.isFinite(cutoff)) return this.notifications.length;
+    return this.notifications.filter(item => Date.parse(item.createdAt) > cutoff).length;
+  }
+
   async add(input) {
     const notification = {
       id: crypto.randomUUID(),

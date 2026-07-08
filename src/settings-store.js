@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS = {
     playnite: { enabled: true, maxPayloadMb: 35 }
   },
   notifications: { maxStored: 250, toastEnabled: true, toastDurationSeconds: 6 },
+  wallpapers: { allowGifs: true },
   customCss: { enabled: true }
 };
 
