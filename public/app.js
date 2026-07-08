@@ -2,7 +2,6 @@ import { SocketClient } from "/core/socket-client.js";
 import { ViewManager } from "/core/view-manager.js";
 import { createUi } from "/core/ui.js";
 import { createDashboardView } from "/views/dashboard.js";
-import { createNotificationsView } from "/views/notifications.js";
 import { createPlexView } from "/views/plex-now-playing.js";
 import { createGameView } from "/views/game-now-playing.js";
 import { createCollectionsView } from "/views/collections.js";
@@ -14,6 +13,11 @@ const debugError = (...args) => console.error(DEBUG_PREFIX, ...args);
 const appRoot = document.getElementById("app");
 const dock = document.getElementById("dock");
 const toast = document.getElementById("toast");
+const notificationsTrigger = document.getElementById("notifications-trigger");
+const notificationsBadge = document.querySelector("[data-notifications-badge]");
+const notificationsOverlay = document.getElementById("notifications-overlay");
+const notificationsOverlayList = document.querySelector("[data-notifications-overlay-list]");
+const notificationsOverlayCount = document.querySelector("[data-notifications-overlay-count]");
 const dimOverlay = document.getElementById("dim-overlay");
 const modalRoot = document.getElementById("modal-root");
 const uiToastRoot = document.getElementById("ui-toast-root");
@@ -28,7 +32,11 @@ const state = {
   dimTimer: null,
   toastTimer: null,
   dockTimer: null,
-  latestNotification: null
+  latestNotification: null,
+  notificationsOverlayOpen: false,
+  overlayNotifications: [],
+  notificationsPage: 1,
+  notificationsPerPage: 6
 };
 
 const views = new ViewManager(appRoot, { debug });
@@ -53,13 +61,117 @@ function refreshCustomCss(name) {
   }
 }
 
+
+function notificationIcon(item = {}) {
+  const key = String(item.source || item.type || "system").toLowerCase();
+  if (key.includes("sonarr")) return `<svg viewBox="0 0 24 24"><path d="M5 4h14v16H5V4Zm2 2v3h10V6H7Zm0 5v3h10v-3H7Zm0 5v2h10v-2H7Z"/></svg>`;
+  if (key.includes("radarr")) return `<svg viewBox="0 0 24 24"><path d="M4 6h16v12H4V6Zm3 2-1 2h3l1-2H7Zm5 0-1 2h3l1-2h-3Zm5 0-1 2h2v-2h-1ZM7 13v3h10v-3H7Z"/></svg>`;
+  if (key.includes("plex")) return `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5Z"/></svg>`;
+  if (key.includes("grab") || key.includes("download")) return `<svg viewBox="0 0 24 24"><path d="M11 4h2v9l3.5-3.5 1.4 1.4L12 16.8l-5.9-5.9 1.4-1.4L11 13V4ZM5 19h14v2H5v-2Z"/></svg>`;
+  return `<svg viewBox="0 0 24 24"><path d="M12 22a2.4 2.4 0 0 0 2.3-1.7H9.7A2.4 2.4 0 0 0 12 22Zm7-5-1.7-2.2V10a5.3 5.3 0 0 0-4-5.1V3a1.3 1.3 0 1 0-2.6 0v1.9a5.3 5.3 0 0 0-4 5.1v4.8L5 17v1.2h14V17Z"/></svg>`;
+}
+function relativeTime(value) {
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return "";
+  const diff = Math.max(0, Date.now() - t);
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "Ahora";
+  if (min < 60) return `Hace ${min} min`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `Hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `Hace ${days} d`;
+}
+function getNotificationsPerPage() {
+  const width = window.innerWidth || document.documentElement.clientWidth || 960;
+  const height = window.innerHeight || document.documentElement.clientHeight || 540;
+  if (width >= 860) return 6;
+  return 4;
+}
+function renderNotificationsOverlay() {
+  if (!notificationsOverlayList) return;
+  state.notificationsPerPage = getNotificationsPerPage();
+  const items = state.overlayNotifications || [];
+  const totalPages = Math.max(1, Math.ceil(items.length / state.notificationsPerPage));
+  state.notificationsPage = Math.min(Math.max(1, state.notificationsPage || 1), totalPages);
+  const start = (state.notificationsPage - 1) * state.notificationsPerPage;
+  const visible = items.slice(start, start + state.notificationsPerPage);
+  if (notificationsOverlayCount) {
+    notificationsOverlayCount.textContent = items.length
+      ? `${state.notificationsPage} / ${totalPages} · ${items.length} recientes`
+      : "Sin actividad reciente";
+  }
+  const prev = notificationsOverlay?.querySelector('[data-notifications-prev]');
+  const next = notificationsOverlay?.querySelector('[data-notifications-next]');
+  if (prev) prev.disabled = state.notificationsPage <= 1;
+  if (next) next.disabled = state.notificationsPage >= totalPages;
+  if (!visible.length) {
+    notificationsOverlayList.innerHTML = `<div class="notifications-panel__empty">No hay notificaciones recientes.</div>`;
+    return;
+  }
+  notificationsOverlayList.innerHTML = visible.map((item) => `<article class="overlay-notification ${item.unread ? "overlay-notification--unread" : ""}">
+    <div class="overlay-notification__icon" aria-hidden="true">${notificationIcon(item)}</div>
+    <div class="overlay-notification__copy">
+      <h2>${escapeHtml(item.title || "Nueva notificación")}</h2>
+      <p>${escapeHtml(item.subtitle || item.type || item.source || "")}</p>
+      <time>${escapeHtml(relativeTime(item.createdAt))}</time>
+    </div>
+  </article>`).join("");
+}
+async function markNotificationsViewed() {
+  const now = new Date().toISOString();
+  state.runtime = { ...(state.runtime || {}), lastNotificationsViewedAt: now };
+  state.unreadCount = 0;
+  state.overlayNotifications = state.overlayNotifications.map(item => ({ ...item, unread: false }));
+  renderNotificationsOverlay();
+  views.update("dashboard", { unreadCount: 0, privacyLocked: state.privacyLocked });
+  updateNotificationsTrigger();
+  await api("/api/state", { method: "PUT", body: JSON.stringify({ lastNotificationsViewedAt: now }) }).catch(debugError);
+}
+async function loadOverlayNotifications() {
+  const result = await api("/api/notifications?page=1&limit=25");
+  const lastViewed = Date.parse(state.runtime?.lastNotificationsViewedAt || "");
+  state.overlayNotifications = (result.items || []).map(item => ({ ...item, unread: Number.isFinite(lastViewed) ? Date.parse(item.createdAt) > lastViewed : true }));
+  renderNotificationsOverlay();
+}
+async function openNotificationsOverlay({ markViewed = true } = {}) {
+  if (state.privacyLocked) return;
+  state.notificationsPage = 1;
+  await loadOverlayNotifications().catch(debugError);
+  if (markViewed) await markNotificationsViewed();
+  state.notificationsOverlayOpen = true;
+  notificationsOverlay.hidden = false;
+  notificationsOverlay.setAttribute("aria-hidden", "false");
+  document.body.classList.add("notifications-overlay-open");
+  hideDock(true);
+  setDimmed(false);
+}
+function closeNotificationsOverlay() {
+  state.notificationsOverlayOpen = false;
+  notificationsOverlay.hidden = true;
+  notificationsOverlay.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("notifications-overlay-open");
+}
+
+function updateNotificationsTrigger() {
+  if (!notificationsTrigger) return;
+  notificationsTrigger.hidden = Boolean(state.privacyLocked);
+  if (!notificationsBadge) return;
+  const count = Math.max(0, Number(state.unreadCount || 0));
+  notificationsBadge.hidden = count < 1;
+  notificationsBadge.textContent = count > 99 ? "99+" : String(count);
+  notificationsTrigger.classList.toggle("notifications-trigger--unread", count > 0);
+}
+
 function applyDisplaySettings() {
   document.body.classList.toggle("dock-autohide", state.settings?.display?.dockAutoHide !== false);
   document.body.classList.toggle("privacy-locked", Boolean(state.privacyLocked));
   if (state.privacyLocked) {
     hideDock(true);
+    closeNotificationsOverlay();
     setDimmed(false);
   }
+  updateNotificationsTrigger();
 }
 
 function clearDockTimer() { clearTimeout(state.dockTimer); state.dockTimer = null; }
@@ -78,7 +190,7 @@ function showDock({ temporary = true } = {}) {
 
 function dimmableView(id = state.activeView) {
   if (state.privacyLocked) return false;
-  return ["notifications", "plex-now-playing", "game-now-playing"].includes(id);
+  return ["plex-now-playing", "game-now-playing"].includes(id);
 }
 function clearDimTimer() { clearTimeout(state.dimTimer); state.dimTimer = null; }
 function setDimmed(dimmed) { dimOverlay.classList.toggle("dim-overlay--active", Boolean(dimmed)); }
@@ -132,12 +244,6 @@ function showNotificationToast(notification) {
 }
 
 views.register(createDashboardView({ api, debug, onTogglePrivacy: () => setPrivacyLocked(!state.privacyLocked) }));
-views.register(createNotificationsView({ api, debug, onViewed: async () => {
-  const now = new Date().toISOString();
-  state.unreadCount = 0;
-  views.update("dashboard", { unreadCount: 0, privacyLocked: state.privacyLocked });
-  await api("/api/state", { method: "PUT", body: JSON.stringify({ lastNotificationsViewedAt: now }) }).catch(debugError);
-}}));
 views.register(createPlexView({ api, debug, ui }));
 views.register(createGameView({ api, debug, ui }));
 views.register(createCollectionsView({ api, debug, ui }));
@@ -150,7 +256,6 @@ function applyState(payload = {}) {
   state.unreadCount = Number(payload.unreadCount || 0);
   applyDisplaySettings();
   views.update("dashboard", { wallpapers: payload.wallpapers || [], settings: state.settings, unreadCount: state.unreadCount, privacyLocked: state.privacyLocked });
-  views.update("notifications", { notifications: payload.notifications, settings: state.settings });
   views.update("plex-now-playing", payload.plex);
   views.update("game-now-playing", payload.game);
   views.update("collections", { collections: payload.collections || [], state: payload.state });
@@ -171,14 +276,19 @@ const socket = new SocketClient({
     if (message.type === "game:update") { views.update("game-now-playing", message.payload); resetDimTimer("game update"); return; }
     if (message.type === "notification:new") {
       state.unreadCount += 1;
-      views.notify("notifications", message.payload);
+      state.overlayNotifications.unshift({ ...message.payload, unread: true });
+      state.overlayNotifications = state.overlayNotifications.slice(0, 25);
+      renderNotificationsOverlay();
       views.update("dashboard", { unreadCount: state.unreadCount, privacyLocked: state.privacyLocked });
+      updateNotificationsTrigger();
       showNotificationToast(message.payload);
       resetDimTimer("nueva notificación");
       return;
     }
     if (message.type === "view:show") {
       const id = message.payload?.id || "dashboard";
+      if (id === "notifications") { openNotificationsOverlay().catch(debugError); return; }
+      closeNotificationsOverlay();
       navigate(id, { persist: false, reason: message.payload?.reason || "servidor" });
       return;
     }
@@ -195,19 +305,38 @@ dock.addEventListener("pointerdown", event => {
 dock.addEventListener("click", event => {
   const btn = event.target.closest("button[data-nav]");
   if (!btn) return;
+  closeNotificationsOverlay();
   navigate(btn.dataset.nav, { reason: "dock" });
+});
+notificationsTrigger?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  openNotificationsOverlay().catch(debugError);
 });
 toast.addEventListener("click", () => {
   if (state.privacyLocked) return;
   toast.classList.remove("event-toast--visible");
-  navigate("notifications", { reason: "toast" });
+  openNotificationsOverlay().catch(debugError);
 });
 window.addEventListener("pointerdown", event => {
   resetDimTimer("pointerdown");
-  if (!event.target.closest("#dock") && !event.target.closest(".privacy-lock-button")) showDock();
+  if (!state.notificationsOverlayOpen && !event.target.closest("#dock") && !event.target.closest(".privacy-lock-button")) showDock();
 }, { passive: true });
 window.addEventListener("keydown", () => { resetDimTimer("keydown"); showDock(); });
-document.addEventListener("kiosk:navigate", event => navigate(event.detail?.id, { reason: "dashboard" }));
+notificationsOverlay.addEventListener("click", event => {
+  if (event.target.closest("[data-close-notifications]")) closeNotificationsOverlay();
+  if (event.target.closest("[data-notifications-prev]")) { state.notificationsPage -= 1; renderNotificationsOverlay(); }
+  if (event.target.closest("[data-notifications-next]")) { state.notificationsPage += 1; renderNotificationsOverlay(); }
+});
+window.addEventListener("resize", () => {
+  if (state.notificationsOverlayOpen) renderNotificationsOverlay();
+});
+document.addEventListener("kiosk:open-notifications", () => openNotificationsOverlay().catch(debugError));
+document.addEventListener("kiosk:navigate", event => {
+  const id = event.detail?.id;
+  if (id === "notifications") return openNotificationsOverlay().catch(debugError);
+  closeNotificationsOverlay();
+  navigate(id, { reason: "dashboard" });
+});
 window.addEventListener("error", event => debugError("Error no controlado", { message: event.message, filename: event.filename, line: event.lineno }));
 
 applyDisplaySettings();

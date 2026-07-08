@@ -11,25 +11,47 @@
   <link rel="stylesheet" href="/api/custom-css/plex" data-custom-css="plex">
   <link rel="stylesheet" href="/api/custom-css/game" data-custom-css="game">
   <link rel="stylesheet" href="/api/custom-css/collections" data-custom-css="collections">
+  <link rel="stylesheet" href="/notification-overlay-critical.css">
 </head>
 <body>
   <main id="app" aria-live="polite">
     <section class="view" data-view="dashboard" aria-hidden="true"></section>
-    <section class="view" data-view="notifications" aria-hidden="true"></section>
     <section class="view" data-view="plex-now-playing" aria-hidden="true"></section>
     <section class="view" data-view="game-now-playing" aria-hidden="true"></section>
     <section class="view" data-view="collections" aria-hidden="true"></section>
   </main>
   <div id="dim-overlay" class="dim-overlay" aria-hidden="true"></div>
+  <button id="notifications-trigger" class="notifications-trigger" type="button" aria-label="Abrir notificaciones">
+    <span class="notifications-trigger__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22a2.4 2.4 0 0 0 2.3-1.7H9.7A2.4 2.4 0 0 0 12 22Zm7-5-1.7-2.2V10a5.3 5.3 0 0 0-4-5.1V3a1.3 1.3 0 1 0-2.6 0v1.9a5.3 5.3 0 0 0-4 5.1v4.8L5 17v1.2h14V17Z"/></svg></span>
+    <span class="notifications-trigger__badge" data-notifications-badge hidden>0</span>
+  </button>
   <button id="toast" class="event-toast" type="button" hidden></button>
+  <aside id="notifications-overlay" class="notifications-overlay" aria-hidden="true" hidden>
+    <button class="notifications-overlay__scrim" type="button" data-close-notifications aria-label="Cerrar notificaciones"></button>
+    <section class="notifications-panel" role="dialog" aria-modal="false" aria-label="Centro de notificaciones rápido">
+      <header class="notifications-panel__header">
+        <div>
+          <p class="eyebrow">Actividad reciente</p>
+          <h1>Notificaciones</h1>
+        </div>
+        <button class="notifications-panel__close" type="button" data-close-notifications aria-label="Cerrar">×</button>
+      </header>
+      <button class="notifications-panel__pager notifications-panel__pager--prev" type="button" data-notifications-prev aria-label="Página anterior">‹</button>
+      <button class="notifications-panel__pager notifications-panel__pager--next" type="button" data-notifications-next aria-label="Página siguiente">›</button>
+      <div class="notifications-panel__list" data-notifications-overlay-list></div>
+      <footer class="notifications-panel__footer">
+        <span data-notifications-overlay-count>Últimas notificaciones</span>
+        <button type="button" data-close-notifications>Cerrar</button>
+      </footer>
+    </section>
+  </aside>
   <div id="modal-root" class="ui-modal-root" hidden></div>
   <div id="ui-toast-root" class="ui-toast-root" aria-live="polite"></div>
   <nav id="dock" class="dock" aria-label="Navegación principal">
-    <button data-nav="dashboard" class="dock__item--active" type="button"><span>D</span><small>Dashboard</small></button>
-    <button data-nav="notifications" type="button"><span>N</span><small>Actividad</small></button>
-    <button data-nav="plex-now-playing" type="button"><span>P</span><small>Plex</small></button>
-    <button data-nav="game-now-playing" type="button"><span>G</span><small>Game</small></button>
-    <button data-nav="collections" type="button"><span>C</span><small>Colecciones</small></button>
+    <button data-nav="dashboard" class="dock__item--active" type="button" aria-label="Dashboard"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13.2 12 6l8 7.2V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1v-6.8Z"/></svg></span><small>Dashboard</small></button>
+    <button data-nav="plex-now-playing" type="button" aria-label="Plex"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5Z"/></svg></span><small>Plex</small></button>
+    <button data-nav="game-now-playing" type="button" aria-label="Game"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 9h10a5 5 0 0 1 4.6 3.1l1 2.6a3 3 0 0 1-5.1 3l-1.8-1.9H8.3l-1.8 1.9a3 3 0 0 1-5.1-3l1-2.6A5 5 0 0 1 7 9Zm.5 3v2H5v2h2.5v2h2v-2H12v-2H9.5v-2h-2ZM17 13.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm2.6 3a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z"/></svg></span><small>Game</small></button>
+    <button data-nav="collections" type="button" aria-label="Colecciones"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v7H4v-7Zm9 0h7v7h-7v-7Z"/></svg></span><small>Colecciones</small></button>
   </nav>
   <script type="module" src="/app.js"></script>
 </body>

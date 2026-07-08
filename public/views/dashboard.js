@@ -1,5 +1,5 @@
 export function createDashboardView({ api, onTogglePrivacy } = {}) {
-  let el, timer, clockTimer;
+  let el, timer;
   let wallpapers = [];
   let settings = {};
   let currentId = null;
@@ -15,6 +15,11 @@ export function createDashboardView({ api, onTogglePrivacy } = {}) {
 
   function activeWallpapers() {
     return wallpapers.filter(w => (w.status || 'active') === 'active' && w.assetPath);
+  }
+
+  function currentWallpaperStillAvailable() {
+    if (!currentId) return false;
+    return activeWallpapers().some(w => w.id === currentId);
   }
 
   function pickWallpaper() {
@@ -56,12 +61,10 @@ export function createDashboardView({ api, onTogglePrivacy } = {}) {
     timer = setInterval(() => renderWallpaper(true), Math.max(5, seconds) * 1000);
   }
 
-  function updateClock() {
-    if (!el) return;
-    const date = new Date();
-    const text = `${date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })} · ${date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}`;
-    const target = el.querySelector('.dashboard-date');
-    if (target) target.textContent = text;
+  function lockSvg(locked) {
+    return locked
+      ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1Zm2 0h6V8a3 3 0 0 0-6 0v2Z"/></svg>`
+      : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 9h-2V7a3 3 0 0 0-5.6-1.5L7.7 4.4A5 5 0 0 1 17 7v2h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1h11Z"/></svg>`;
   }
 
   function updateOverlay() {
@@ -70,7 +73,7 @@ export function createDashboardView({ api, onTogglePrivacy } = {}) {
     el.querySelector('.dashboard-unread').textContent = unreadCount === 1 ? '1 notificación nueva' : `${unreadCount} notificaciones nuevas`;
     const lock = el.querySelector('.privacy-lock-button');
     lock.classList.toggle('privacy-lock-button--locked', privacyLocked);
-    lock.textContent = privacyLocked ? 'LOCK' : 'OPEN';
+    lock.innerHTML = privacyLocked ? lockSvg(true) : lockSvg(false);
     lock.setAttribute('aria-label', privacyLocked ? 'Desactivar privacidad' : 'Activar privacidad');
     el.classList.toggle('dashboard-view--privacy', privacyLocked);
   }
@@ -83,21 +86,23 @@ export function createDashboardView({ api, onTogglePrivacy } = {}) {
         <img class="dashboard-wallpaper-img dashboard-wallpaper-img--a" alt="">
         <img class="dashboard-wallpaper-img dashboard-wallpaper-img--b" alt="">
         <div class="dashboard-vignette"></div>
-        <div class="dashboard-clock"><div class="dashboard-date"></div><button class="dashboard-unread" type="button" hidden></button></div>
-        <button class="privacy-lock-button" type="button" aria-label="Activar privacidad">OPEN</button>
+        <button class="dashboard-unread" type="button" hidden></button>
+        <button class="privacy-lock-button" type="button" aria-label="Activar privacidad"></button>
         <div class="dashboard-empty">Añade wallpapers desde Admin, Plex o Game.</div>
       </div>`;
-      el.querySelector('.dashboard-unread').addEventListener('click', () => document.dispatchEvent(new CustomEvent('kiosk:navigate', { detail: { id: 'notifications' } })));
+      el.querySelector('.dashboard-unread').addEventListener('click', (event) => {
+        event.stopPropagation();
+        document.dispatchEvent(new CustomEvent('kiosk:navigate', { detail: { id: 'notifications' } }));
+      });
       el.querySelector('.privacy-lock-button').addEventListener('click', (event) => { event.stopPropagation(); onTogglePrivacy?.(); });
-      updateClock();
-      clockTimer = setInterval(updateClock, 1000);
     },
     async show() {
       isVisible = true;
       el.classList.add('view--active');
       el.setAttribute('aria-hidden', 'false');
       await loadWallpapers();
-      renderWallpaper(!currentId);
+      if (!currentWallpaperStillAvailable()) renderWallpaper(true);
+      else updateOverlay();
       schedule();
     },
     hide() {
@@ -107,17 +112,20 @@ export function createDashboardView({ api, onTogglePrivacy } = {}) {
       clearInterval(timer);
     },
     async update(data = {}) {
-      if (data.wallpapers) wallpapers = Array.isArray(data.wallpapers) ? data.wallpapers : [];
+      const hasWallpaperUpdate = Object.prototype.hasOwnProperty.call(data, 'wallpapers');
+      if (hasWallpaperUpdate) wallpapers = Array.isArray(data.wallpapers) ? data.wallpapers : [];
       settings = data.settings ?? settings;
       if (typeof data.unreadCount === 'number') unreadCount = data.unreadCount;
       if (typeof data.privacyLocked === 'boolean') privacyLocked = data.privacyLocked;
       updateOverlay();
-      if (!wallpapers.length) await loadWallpapers();
+      if (!wallpapers.length && !hasWallpaperUpdate) await loadWallpapers();
       if (isVisible) {
-        renderWallpaper(!currentId);
+        const mustPickWallpaper = !currentWallpaperStillAvailable();
+        if (mustPickWallpaper) renderWallpaper(true);
+        else updateOverlay();
         schedule();
       }
     },
-    destroy() { clearInterval(timer); clearInterval(clockTimer); }
+    destroy() { clearInterval(timer); }
   };
 }

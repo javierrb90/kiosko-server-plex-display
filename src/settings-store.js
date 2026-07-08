@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS = {
     arr: { enabled: true, storeTestNotifications: true, enabledEvents: ["grab", "movie_add", "series_add"] },
     playnite: { enabled: true, maxPayloadMb: 35 }
   },
-  notifications: { maxStored: 250, toastEnabled: true, toastDurationSeconds: 6 },
+  notifications: { maxStored: 25, toastEnabled: true, toastDurationSeconds: 6 },
   wallpapers: { allowGifs: true },
   customCss: { enabled: true }
 };
@@ -59,7 +59,7 @@ function sanitize(settings) {
   s.display.wallpaperIntervalSeconds = clampNumber(s.display.wallpaperIntervalSeconds, 5, 3600, 35);
   s.display.dockAutoHideSeconds = clampNumber(s.display.dockAutoHideSeconds, 1, 60, 4);
   s.views.notifications.itemsPerPage = clampNumber(s.views.notifications.itemsPerPage, 1, 20, 5);
-  s.notifications.maxStored = clampNumber(s.notifications.maxStored, 10, 5000, 250);
+  s.notifications.maxStored = clampNumber(s.notifications.maxStored, 1, 25, 25);
   s.notifications.toastDurationSeconds = clampNumber(s.notifications.toastDurationSeconds, 1, 60, 6);
   s.integrations.playnite.maxPayloadMb = clampNumber(s.integrations.playnite.maxPayloadMb, 1, 100, 35);
   if (!Array.isArray(s.integrations.tautulli.showPlaybackOn)) s.integrations.tautulli.showPlaybackOn = ["play", "start"];

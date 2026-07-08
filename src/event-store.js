@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
+const MAX_NOTIFICATIONS = 25;
+
 export class EventStore {
   constructor(dataDir) {
     this.filePath = path.join(dataDir, "notifications.json");
@@ -14,7 +16,7 @@ export class EventStore {
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
-      this.notifications = Array.isArray(parsed) ? parsed : [];
+      this.notifications = Array.isArray(parsed) ? parsed.slice(0, MAX_NOTIFICATIONS) : [];
     } catch (error) {
       if (error.code !== "ENOENT") console.error("No se pudieron cargar notificaciones:", error);
       this.notifications = [];
@@ -23,7 +25,7 @@ export class EventStore {
 
   list({ page = 1, limit = 5 } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
-    const safeLimit = Math.min(50, Math.max(1, Number(limit) || 5));
+    const safeLimit = Math.min(MAX_NOTIFICATIONS, Math.max(1, Number(limit) || 5));
     const total = this.notifications.length;
     const totalPages = Math.max(1, Math.ceil(total / safeLimit));
     const offset = (safePage - 1) * safeLimit;
@@ -57,6 +59,7 @@ export class EventStore {
       meta: input.meta || {}
     };
     this.notifications.unshift(notification);
+    this.notifications = this.notifications.slice(0, MAX_NOTIFICATIONS);
     await this.persist();
     return notification;
   }
