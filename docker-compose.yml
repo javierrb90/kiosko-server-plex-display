@@ -10,8 +10,9 @@ services:
     environment:
       PORT: 3000
       DATA_DIR: /app/data
-      # Opcional: puedes quitarlas si ya configuras Plex desde /admin.html
-      PLEX_URL: ${PLEX_URL}
-      PLEX_TOKEN: ${PLEX_TOKEN}
     volumes:
-      - ./data:/app/data
+      - kiosko_volume:/app/data
+
+volumes:
+  kiosko_volume:
+    external: true
