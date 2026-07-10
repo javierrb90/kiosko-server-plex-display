@@ -8,16 +8,14 @@
   <link rel="stylesheet" href="/api/custom-css/global" data-custom-css="global">
   <link rel="stylesheet" href="/api/custom-css/dashboard" data-custom-css="dashboard">
   <link rel="stylesheet" href="/api/custom-css/notifications" data-custom-css="notifications">
-  <link rel="stylesheet" href="/api/custom-css/plex" data-custom-css="plex">
-  <link rel="stylesheet" href="/api/custom-css/game" data-custom-css="game">
+  <link rel="stylesheet" href="/api/custom-css/current" data-custom-css="current">
   <link rel="stylesheet" href="/api/custom-css/collections" data-custom-css="collections">
   <link rel="stylesheet" href="/notification-overlay-critical.css">
 </head>
 <body>
   <main id="app" aria-live="polite">
     <section class="view" data-view="dashboard" aria-hidden="true"></section>
-    <section class="view" data-view="plex-now-playing" aria-hidden="true"></section>
-    <section class="view" data-view="game-now-playing" aria-hidden="true"></section>
+    <section class="view" data-view="current-content" aria-hidden="true"></section>
     <section class="view" data-view="collections" aria-hidden="true"></section>
   </main>
   <div id="dim-overlay" class="dim-overlay" aria-hidden="true"></div>
@@ -36,12 +34,10 @@
         </div>
         <button class="notifications-panel__close" type="button" data-close-notifications aria-label="Cerrar">×</button>
       </header>
-      <button class="notifications-panel__pager notifications-panel__pager--prev" type="button" data-notifications-prev aria-label="Página anterior">‹</button>
-      <button class="notifications-panel__pager notifications-panel__pager--next" type="button" data-notifications-next aria-label="Página siguiente">›</button>
-      <div class="notifications-panel__list" data-notifications-overlay-list></div>
+      <div class="notifications-panel__list notifications-panel__list--scroll" data-notifications-overlay-list></div>
       <footer class="notifications-panel__footer">
         <span data-notifications-overlay-count>Últimas notificaciones</span>
-        <button type="button" data-close-notifications>Cerrar</button>
+        <button type="button" data-clear-notifications>Limpiar</button>
       </footer>
     </section>
   </aside>
@@ -49,8 +45,7 @@
   <div id="ui-toast-root" class="ui-toast-root" aria-live="polite"></div>
   <nav id="dock" class="dock" aria-label="Navegación principal">
     <button data-nav="dashboard" class="dock__item--active" type="button" aria-label="Dashboard"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13.2 12 6l8 7.2V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1v-6.8Z"/></svg></span><small>Dashboard</small></button>
-    <button data-nav="plex-now-playing" type="button" aria-label="Plex"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5Z"/></svg></span><small>Plex</small></button>
-    <button data-nav="game-now-playing" type="button" aria-label="Game"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 9h10a5 5 0 0 1 4.6 3.1l1 2.6a3 3 0 0 1-5.1 3l-1.8-1.9H8.3l-1.8 1.9a3 3 0 0 1-5.1-3l1-2.6A5 5 0 0 1 7 9Zm.5 3v2H5v2h2.5v2h2v-2H12v-2H9.5v-2h-2ZM17 13.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm2.6 3a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z"/></svg></span><small>Game</small></button>
+    <button data-nav="current-content" type="button" aria-label="Actual"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h12a4 4 0 0 1 0 8H9v6H4V5Zm5 4h6.7a1 1 0 0 0 0-2H9v2Zm7.5 4.2 4.5 3.2-4.5 3.2v-6.4Z"/></svg></span><small>Actual</small></button>
     <button data-nav="collections" type="button" aria-label="Colecciones"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v7H4v-7Zm9 0h7v7h-7v-7Z"/></svg></span><small>Colecciones</small></button>
   </nav>
   <script type="module" src="/app.js"></script>

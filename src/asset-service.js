@@ -7,7 +7,9 @@ const MIME_EXT = {
   "image/jpg": ".jpg",
   "image/png": ".png",
   "image/webp": ".webp",
-  "image/gif": ".gif"
+  "image/gif": ".gif",
+  "video/mp4": ".mp4",
+  "video/webm": ".webm"
 };
 
 function safeName(value = "asset") {
@@ -15,7 +17,7 @@ function safeName(value = "asset") {
 }
 
 function parseDataUri(dataUri) {
-  const match = /^data:(image\/(?:jpeg|jpg|png|webp|gif));base64,(.+)$/i.exec(String(dataUri || ""));
+  const match = /^data:((?:image\/(?:jpeg|jpg|png|webp|gif))|(?:video\/(?:mp4|webm)));base64,(.+)$/i.exec(String(dataUri || ""));
   if (!match) return null;
   return { mime: match[1].toLowerCase(), buffer: Buffer.from(match[2], "base64") };
 }
@@ -24,7 +26,7 @@ function extFromUrl(url) {
   try {
     const pathname = new URL(url).pathname.toLowerCase();
     const ext = path.extname(pathname);
-    return [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? (ext === ".jpeg" ? ".jpg" : ext) : "";
+    return [".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".webm"].includes(ext) ? (ext === ".jpeg" ? ".jpg" : ext) : "";
   } catch { return ""; }
 }
 
@@ -47,7 +49,7 @@ export class AssetService {
 
   async saveDataUri(dataUri, { bucket = "uploads", title = "asset" } = {}) {
     const parsed = parseDataUri(dataUri);
-    if (!parsed) throw new Error("La imagen debe ser una Data URI válida image/*;base64.");
+    if (!parsed) throw new Error("El archivo debe ser una Data URI válida image/* o video/*;base64.");
     const ext = MIME_EXT[parsed.mime] || ".jpg";
     return this.saveBuffer(parsed.buffer, { bucket, title, ext, mime: parsed.mime });
   }
@@ -71,16 +73,16 @@ export class AssetService {
     if (!abs.startsWith(root)) throw new Error("Ruta de asset fuera del directorio permitido.");
     const buffer = await fs.readFile(abs);
     const ext = path.extname(abs).toLowerCase() || ".jpg";
-    const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : "image/jpeg";
+    const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : ext === ".mp4" ? "video/mp4" : ext === ".webm" ? "video/webm" : "image/jpeg";
     return this.saveBuffer(buffer, { bucket, title, ext, mime, originalUrl: value });
   }
 
   async saveImage(input, options = {}) {
     const value = String(input || "");
     if (value.startsWith("/assets/")) return this.saveExistingAsset(value, options);
-    if (value.startsWith("data:image/")) return this.saveDataUri(value, options);
+    if (value.startsWith("data:image/") || value.startsWith("data:video/")) return this.saveDataUri(value, options);
     if (/^https?:\/\//i.test(value)) return this.saveRemoteUrl(value, options);
-    throw new Error("Formato de imagen no admitido. Usa Data URI, URL http(s) o asset local /assets/.");
+    throw new Error("Formato de asset no admitido. Usa Data URI, URL http(s) o asset local /assets/.");
   }
 
   async saveBuffer(buffer, { bucket = "uploads", title = "asset", ext = ".jpg", mime = "image/jpeg", originalUrl = null } = {}) {

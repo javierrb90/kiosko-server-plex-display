@@ -22,7 +22,7 @@ const settings = settingsStore.get();
 const PORT = Number(process.env.PORT || settings.server?.port || 3000);
 
 const app = express();
-const maxPayloadMb = Number(settings.integrations?.playnite?.maxPayloadMb || 35);
+const maxPayloadMb = Math.max(Number(settings.integrations?.playnite?.maxPayloadMb || 80), 80);
 app.use(express.json({ limit: `${maxPayloadMb}mb` }));
 app.use(express.urlencoded({ extended: true, limit: `${maxPayloadMb}mb` }));
 app.use("/assets", express.static(path.join(DATA_DIR, "assets"), { maxAge: "7d", immutable: false }));
@@ -37,10 +37,12 @@ await Promise.all([store.init(), stateStore.init(), assetService.init(), wallpap
 
 const plex = new PlexService(settingsStore.get().plex || {});
 
+const validViews = new Set(["dashboard", "current-content", "collections"]);
 const runtime = {
-  activeView: stateStore.get().activeView || "dashboard",
+  activeView: validViews.has(stateStore.get().activeView) ? stateStore.get().activeView : "dashboard",
   plex: stateStore.get().lastPlex || { event: "idle", title: "Sin reproducción", subtitle: "", year: "", posterUrl: null, backdropUrl: null, type: "" },
-  game: stateStore.get().lastGame || null
+  game: stateStore.get().lastGame || null,
+  currentContent: stateStore.get().lastCurrent || stateStore.get().lastGame || stateStore.get().lastPlex || null
 };
 
 function configStatus() {
@@ -64,7 +66,7 @@ const wss = new WebSocketServer({ server });
 const hub = new RealtimeHub(wss);
 
 function listNotifications(limit) {
-  const configuredLimit = settingsStore.get().views?.notifications?.itemsPerPage || 5;
+  const configuredLimit = settingsStore.get().views?.notifications?.itemsPerPage || 50;
   return store.list({ page: 1, limit: limit || configuredLimit });
 }
 
@@ -77,6 +79,7 @@ function snapshot() {
     type: "state:snapshot",
     payload: {
       activeView: runtime.activeView,
+      currentContent: runtime.currentContent,
       plex: runtime.plex,
       game: runtime.game,
       notifications: listNotifications(),
@@ -167,7 +170,73 @@ app.put("/api/custom-css/:name", express.text({ type: "text/css", limit: "1mb" }
   res.json({ ok: true, name: safe });
 });
 
-app.get("/api/notifications", (req, res) => res.json(store.list(req.query)));
+app.get("/api/notifications", (req, res) => res.json(store.list({ ...req.query, limit: req.query.limit || 50 })));
+app.delete("/api/notifications", async (_req, res) => {
+  await store.clear();
+  hub.broadcast({ type: "notifications:cleared", payload: { ok: true } });
+  broadcastState();
+  res.json({ ok: true });
+});
+
+function getExternalIdFromRequest(req) {
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, "externalId")) return req.body.externalId;
+  return req.get("Idempotency-Key") || null;
+}
+
+function validateExternalId(externalId) {
+  if (externalId === null || externalId === undefined || externalId === "") return null;
+  if (typeof externalId !== "string" || externalId.trim().length === 0 || externalId.length > 255) {
+    return "externalId must be a non-empty string with a maximum length of 255 characters";
+  }
+  return null;
+}
+
+function normalizeExternalNotificationPayload(body = {}, externalId = null) {
+  const title = body.title || body.summary || body.message || body.text || "Nueva notificación";
+  const subtitle = body.subtitle || body.detail || body.description || (body.title ? body.message : "") || "";
+  const allowedPriorities = new Set(["low", "normal", "high"]);
+  const priority = allowedPriorities.has(body.priority) ? body.priority : "normal";
+  const meta = body.meta && typeof body.meta === "object" && !Array.isArray(body.meta) ? { ...body.meta } : {};
+  if (externalId && !meta.externalId) meta.externalId = externalId;
+  if (body.id && !meta.id) meta.id = body.id;
+  if (body.url && !meta.url) meta.url = body.url;
+
+  return {
+    source: body.source || "external",
+    type: body.type || "info",
+    priority,
+    title,
+    subtitle,
+    image: body.image || body.icon || null,
+    backdrop: body.backdrop || null,
+    url: body.url || null,
+    meta
+  };
+}
+
+async function handleExternalNotification(req, res) {
+  try {
+    const externalId = getExternalIdFromRequest(req);
+    const validationError = validateExternalId(externalId);
+    if (validationError) return res.status(400).json({ ok: false, error: validationError });
+
+    const input = normalizeExternalNotificationPayload(req.body || {}, externalId);
+    const result = await store.addExternal(input, externalId || null);
+
+    if (result.duplicate) {
+      return res.status(200).json({ ok: true, duplicate: true, notification: result.notification });
+    }
+
+    await publishNotification(result.notification);
+    return res.status(201).json({ ok: true, duplicate: false, notification: result.notification });
+  } catch (error) {
+    console.error("Error creando notificación externa:", error);
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+app.post("/api/notifications", handleExternalNotification);
+app.post("/api/notify", handleExternalNotification);
 app.post("/api/notifications/test", async (req, res) => {
   const notification = await store.add({ source: "system", type: "test", priority: "low", title: req.body?.title || "Prueba", subtitle: req.body?.subtitle || "Notificación de prueba" });
   await publishNotification(notification);
@@ -188,10 +257,11 @@ app.post("/api/simulate/:kind", async (req, res) => {
         type: "movie",
         ratingKey: "simulated"
       };
-      await stateStore.update({ lastPlex: runtime.plex });
-      hub.broadcast({ type: "plex:update", payload: runtime.plex });
-      await navigate("plex-now-playing", "simulación plex");
-      return res.json({ ok: true, kind, view: "plex-now-playing" });
+      runtime.currentContent = { ...runtime.plex, source: "plex", kind: "plex" };
+      await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
+      hub.broadcast({ type: "current:update", payload: runtime.currentContent });
+      await navigate("current-content", "simulación plex");
+      return res.json({ ok: true, kind, view: "current-content" });
     }
     if (kind === "game") {
       runtime.game = {
@@ -205,10 +275,11 @@ app.post("/api/simulate/:kind", async (req, res) => {
         cover: null,
         background: null
       };
-      await stateStore.update({ lastGame: runtime.game });
-      hub.broadcast({ type: "game:update", payload: runtime.game });
-      await navigate("game-now-playing", "simulación playnite");
-      return res.json({ ok: true, kind, view: "game-now-playing" });
+      runtime.currentContent = { ...runtime.game, source: "playnite", kind: "game" };
+      await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
+      hub.broadcast({ type: "current:update", payload: runtime.currentContent });
+      await navigate("current-content", "simulación playnite");
+      return res.json({ ok: true, kind, view: "current-content" });
     }
 
     const samples = {
@@ -230,12 +301,26 @@ app.post("/api/simulate/:kind", async (req, res) => {
 app.get("/api/wallpapers", (_req, res) => res.json(wallpaperStore.list()));
 app.post("/api/wallpapers", async (req, res) => {
   try {
-    const asset = await assetService.saveImage(req.body?.image || req.body?.url || req.body?.dataUri, { bucket: "wallpapers", title: req.body?.title || "wallpaper" });
-    if (asset.mime === "image/gif" && settingsStore.get().wallpapers?.allowGifs === false) {
+    const asset = await assetService.saveImage(req.body?.media || req.body?.image || req.body?.url || req.body?.dataUri, { bucket: "wallpapers", title: req.body?.title || "wallpaper" });
+    const wpSettings = settingsStore.get().wallpapers || {};
+    if (asset.mime === "image/gif" && wpSettings.allowGifs === false) {
       await assetService.removePublicPath(asset.path);
       return res.status(400).json({ error: "Los GIFs están desactivados en ajustes." });
     }
-    const wallpaper = await wallpaperStore.add({ title: req.body?.title || "Wallpaper", source: req.body?.source || "manual", status: req.body?.status || "active", asset, meta: req.body?.meta || {} });
+    if (String(asset.mime || "").startsWith("video/") && wpSettings.allowVideos === false) {
+      await assetService.removePublicPath(asset.path);
+      return res.status(400).json({ error: "Los vídeos están desactivados en ajustes." });
+    }
+    const wallpaper = await wallpaperStore.add({
+      title: req.body?.title || "Wallpaper",
+      source: req.body?.source || "manual",
+      status: req.body?.status || "active",
+      asset,
+      audioEnabled: Boolean(req.body?.audioEnabled),
+      finishBeforeNext: Boolean(req.body?.finishBeforeNext),
+      volume: req.body?.volume ?? 0.35,
+      meta: req.body?.meta || {}
+    });
     hub.broadcast({ type: "wallpapers:update", payload: wallpaperStore.list() });
     broadcastState();
     res.status(201).json(wallpaper);
@@ -261,25 +346,89 @@ app.patch("/api/collections/:id", async (req, res) => {
   catch (error) { res.status(404).json({ error: error.message }); }
 });
 app.delete("/api/collections/:id", async (req, res) => {
-  try { const removed = await collectionStore.remove(req.params.id); for (const item of removed.items || []) await assetService.removePublicPath(item.assetPath); hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); broadcastState(); res.json({ ok: true }); }
+  try { const removed = await collectionStore.remove(req.params.id); for (const item of removed.items || []) { await assetService.removePublicPath(item.assetPath); await assetService.removePublicPath(item.backdropPath); await assetService.removePublicPath(item.videoPath); } hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); broadcastState(); res.json({ ok: true }); }
   catch (error) { res.status(404).json({ error: error.message }); }
 });
 app.post("/api/collections/:id/items", async (req, res) => {
   try {
-    const asset = await assetService.saveImage(req.body?.image || req.body?.url || req.body?.dataUri, { bucket: "collections", title: req.body?.title || "item" });
-    const item = await collectionStore.addItem(req.params.id, { title: req.body?.title || "Imagen", source: req.body?.source || "manual", asset, meta: req.body?.meta || {} });
+    const coverInput = req.body?.coverImage || req.body?.image || req.body?.url || req.body?.dataUri;
+    const backdropInput = req.body?.backdropImage || req.body?.backdrop || req.body?.background;
+    const videoInput = req.body?.video || req.body?.videoImage || req.body?.trailer || req.body?.videoDataUri;
+    const asset = await assetService.saveImage(coverInput, { bucket: "collections", title: req.body?.title || "item" });
+    let backdropAsset = null;
+    if (backdropInput) {
+      try { backdropAsset = await assetService.saveImage(backdropInput, { bucket: "collections", title: `${req.body?.title || "item"}-backdrop` }); }
+      catch (error) { console.warn("No se pudo guardar backdrop de colección:", error.message); }
+    }
+    let videoAsset = null;
+    if (videoInput) {
+      try { videoAsset = await assetService.saveImage(videoInput, { bucket: "collections", title: `${req.body?.title || "item"}-video` }); }
+      catch (error) { console.warn("No se pudo guardar vídeo de colección:", error.message); }
+    }
+    const item = await collectionStore.addItem(req.params.id, {
+      title: req.body?.title || "Imagen",
+      source: req.body?.source || "manual",
+      asset,
+      backdropAsset,
+      videoAsset,
+      videoFinishBeforeNext: Boolean(req.body?.videoFinishBeforeNext),
+      meta: req.body?.meta || {}
+    });
     hub.broadcast({ type: "collections:update", payload: collectionStore.list() });
     broadcastState();
     res.status(201).json(item);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
+app.patch("/api/collections/:id/items/:itemId", async (req, res) => {
+  try {
+    const patch = { ...req.body };
+    const title = req.body?.title || "item";
+    if (req.body?.coverImage || req.body?.image || req.body?.dataUri) {
+      const asset = await assetService.saveImage(req.body.coverImage || req.body.image || req.body.dataUri, { bucket: "collections", title });
+      patch.coverPath = asset.path;
+      patch.assetPath = asset.path;
+      patch.mime = asset.mime;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "backdropImage") || req.body?.backdrop || req.body?.background) {
+      const value = req.body.backdropImage || req.body.backdrop || req.body.background;
+      if (value) {
+        const asset = await assetService.saveImage(value, { bucket: "collections", title: `${title}-backdrop` });
+        patch.backdropPath = asset.path;
+      } else patch.backdropPath = null;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "video") || req.body?.trailer || req.body?.videoDataUri) {
+      const value = req.body.video || req.body.trailer || req.body.videoDataUri;
+      if (value) {
+        const asset = await assetService.saveImage(value, { bucket: "collections", title: `${title}-video` });
+        patch.videoPath = asset.path;
+        patch.videoMime = asset.mime;
+      } else { patch.videoPath = null; patch.videoMime = null; }
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "videoFinishBeforeNext")) {
+      patch.videoFinishBeforeNext = Boolean(req.body.videoFinishBeforeNext);
+    }
+    const item = await collectionStore.updateItem(req.params.id, req.params.itemId, patch);
+    hub.broadcast({ type: "collections:update", payload: collectionStore.list() });
+    broadcastState();
+    res.json(item);
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
 app.delete("/api/collections/:id/items/:itemId", async (req, res) => {
-  try { const removed = await collectionStore.removeItem(req.params.id, req.params.itemId); await assetService.removePublicPath(removed.assetPath); hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); res.json({ ok: true }); }
+  try { const removed = await collectionStore.removeItem(req.params.id, req.params.itemId); await assetService.removePublicPath(removed.assetPath); await assetService.removePublicPath(removed.backdropPath); await assetService.removePublicPath(removed.videoPath); hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); res.json({ ok: true }); }
   catch (error) { res.status(404).json({ error: error.message }); }
 });
 app.post("/api/collections/:id/items/:itemId/move", async (req, res) => {
   try { const c = await collectionStore.moveItem(req.params.id, req.params.itemId, req.body?.direction || "up"); hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); res.json(c); }
   catch (error) { res.status(404).json({ error: error.message }); }
+});
+
+app.post("/api/current/clear", async (_req, res) => {
+  runtime.currentContent = null;
+  await stateStore.update({ lastCurrent: null });
+  hub.broadcast({ type: "current:update", payload: null });
+  broadcastState();
+  res.json({ ok: true });
 });
 
 async function handleTautulliWebhook(req, res) {
@@ -291,11 +440,12 @@ async function handleTautulliWebhook(req, res) {
     const metadata = await plex.getMetadata(ratingKey);
     const event = normalizeTautulliEvent(req.body, metadata);
     runtime.plex = event.plex;
-    await stateStore.update({ lastPlex: runtime.plex });
-    hub.broadcast({ type: "plex:update", payload: runtime.plex });
+    runtime.currentContent = { ...event.plex, source: "plex", kind: "plex" };
+    await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
+    hub.broadcast({ type: "current:update", payload: runtime.currentContent });
 
     if (event.startsPlayback && shouldShowPlexEvent(event.event)) {
-      await navigate("plex-now-playing", "plex playback");
+      await navigate("current-content", "plex playback");
     }
 
     if (event.isLibraryAdded && settingsStore.get().integrations?.tautulli?.notifyLibraryAdded) {
@@ -376,10 +526,11 @@ async function handlePlayniteWebhook(req, res) {
     const rawGame = normalizePlayniteEvent(req.body);
     const game = await persistPlayniteRuntimeAssets(rawGame);
     runtime.game = game;
-    await stateStore.update({ lastGame: runtime.game });
+    runtime.currentContent = { ...game, source: "playnite", kind: "game" };
+    await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
     console.log("Webhook Playnite recibido", { title: game.title, platforms: game.platforms, hasCover: Boolean(game.cover), hasBackground: Boolean(game.background), payloadBytes: Number(req.headers["content-length"] || 0), persistedAssets: true });
-    hub.broadcast({ type: "game:update", payload: game });
-    await navigate("game-now-playing", "playnite game_started");
+    hub.broadcast({ type: "current:update", payload: runtime.currentContent });
+    await navigate("current-content", "playnite game_started");
     return res.status(200).json({ ok: true, event: game.event, title: game.title });
   } catch (error) {
     console.error("Error en webhook Playnite:", error);

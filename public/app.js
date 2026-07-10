@@ -2,8 +2,7 @@ import { SocketClient } from "/core/socket-client.js";
 import { ViewManager } from "/core/view-manager.js";
 import { createUi } from "/core/ui.js";
 import { createDashboardView } from "/views/dashboard.js";
-import { createPlexView } from "/views/plex-now-playing.js";
-import { createGameView } from "/views/game-now-playing.js";
+import { createCurrentContentView } from "/views/current-content.js";
 import { createCollectionsView } from "/views/collections.js";
 
 const DEBUG_PREFIX = "[Kiosko UI]";
@@ -36,7 +35,7 @@ const state = {
   notificationsOverlayOpen: false,
   overlayNotifications: [],
   notificationsPage: 1,
-  notificationsPerPage: 6
+  notificationsPerPage: 50
 };
 
 const views = new ViewManager(appRoot, { debug });
@@ -82,34 +81,17 @@ function relativeTime(value) {
   const days = Math.floor(hours / 24);
   return `Hace ${days} d`;
 }
-function getNotificationsPerPage() {
-  const width = window.innerWidth || document.documentElement.clientWidth || 960;
-  const height = window.innerHeight || document.documentElement.clientHeight || 540;
-  if (width >= 860) return 6;
-  return 4;
-}
 function renderNotificationsOverlay() {
   if (!notificationsOverlayList) return;
-  state.notificationsPerPage = getNotificationsPerPage();
-  const items = state.overlayNotifications || [];
-  const totalPages = Math.max(1, Math.ceil(items.length / state.notificationsPerPage));
-  state.notificationsPage = Math.min(Math.max(1, state.notificationsPage || 1), totalPages);
-  const start = (state.notificationsPage - 1) * state.notificationsPerPage;
-  const visible = items.slice(start, start + state.notificationsPerPage);
+  const items = (state.overlayNotifications || []).slice(0, 50);
   if (notificationsOverlayCount) {
-    notificationsOverlayCount.textContent = items.length
-      ? `${state.notificationsPage} / ${totalPages} · ${items.length} recientes`
-      : "Sin actividad reciente";
+    notificationsOverlayCount.textContent = items.length ? `${items.length} recientes` : "Sin actividad reciente";
   }
-  const prev = notificationsOverlay?.querySelector('[data-notifications-prev]');
-  const next = notificationsOverlay?.querySelector('[data-notifications-next]');
-  if (prev) prev.disabled = state.notificationsPage <= 1;
-  if (next) next.disabled = state.notificationsPage >= totalPages;
-  if (!visible.length) {
+  if (!items.length) {
     notificationsOverlayList.innerHTML = `<div class="notifications-panel__empty">No hay notificaciones recientes.</div>`;
     return;
   }
-  notificationsOverlayList.innerHTML = visible.map((item) => `<article class="overlay-notification ${item.unread ? "overlay-notification--unread" : ""}">
+  notificationsOverlayList.innerHTML = items.map((item) => `<article class="overlay-notification ${item.unread ? "overlay-notification--unread" : ""}">
     <div class="overlay-notification__icon" aria-hidden="true">${notificationIcon(item)}</div>
     <div class="overlay-notification__copy">
       <h2>${escapeHtml(item.title || "Nueva notificación")}</h2>
@@ -129,7 +111,7 @@ async function markNotificationsViewed() {
   await api("/api/state", { method: "PUT", body: JSON.stringify({ lastNotificationsViewedAt: now }) }).catch(debugError);
 }
 async function loadOverlayNotifications() {
-  const result = await api("/api/notifications?page=1&limit=25");
+  const result = await api("/api/notifications?page=1&limit=50");
   const lastViewed = Date.parse(state.runtime?.lastNotificationsViewedAt || "");
   state.overlayNotifications = (result.items || []).map(item => ({ ...item, unread: Number.isFinite(lastViewed) ? Date.parse(item.createdAt) > lastViewed : true }));
   renderNotificationsOverlay();
@@ -166,6 +148,8 @@ function updateNotificationsTrigger() {
 function applyDisplaySettings() {
   document.body.classList.toggle("dock-autohide", state.settings?.display?.dockAutoHide !== false);
   document.body.classList.toggle("privacy-locked", Boolean(state.privacyLocked));
+  const pos = state.settings?.display?.dockPosition || "bottom";
+  document.body.dataset.dockPosition = ["top", "bottom", "left", "right"].includes(pos) ? pos : "bottom";
   if (state.privacyLocked) {
     hideDock(true);
     closeNotificationsOverlay();
@@ -188,24 +172,30 @@ function showDock({ temporary = true } = {}) {
   state.dockTimer = setTimeout(() => hideDock(), Math.max(1, seconds) * 1000);
 }
 
-function dimmableView(id = state.activeView) {
-  if (state.privacyLocked) return false;
-  return ["plex-now-playing", "game-now-playing"].includes(id);
+function getDimConfig(id = state.activeView) {
+  if (state.privacyLocked) return { enabled: false };
+  const settings = state.settings || {};
+  if (!settings.display?.dimEnabled) return { enabled: false };
+  const perView = settings.display?.dimByView?.[id];
+  return {
+    enabled: perView?.enabled !== false,
+    afterSeconds: Number(perView?.afterSeconds || settings.display?.dimTimeoutSeconds || 30),
+    opacity: Number(perView?.opacity ?? settings.display?.dimOpacity ?? 0.6)
+  };
 }
 function clearDimTimer() { clearTimeout(state.dimTimer); state.dimTimer = null; }
 function setDimmed(dimmed) { dimOverlay.classList.toggle("dim-overlay--active", Boolean(dimmed)); }
 function resetDimTimer(reason = "interacción") {
   clearDimTimer();
   setDimmed(false);
-  const settings = state.settings || {};
-  if (!settings.display?.dimEnabled || !dimmableView()) return;
-  const seconds = Number(settings.display?.dimTimeoutSeconds || 10);
-  const opacity = Number(settings.display?.dimOpacity ?? 0.5);
-  dimOverlay.style.setProperty("--dim-opacity", String(opacity));
+  const cfg = getDimConfig();
+  if (!cfg.enabled) return;
+  dimOverlay.style.setProperty("--dim-opacity", String(Math.max(0, Math.min(1, cfg.opacity))));
   state.dimTimer = setTimeout(() => {
     debug("Atenuando vista", { view: state.activeView, reason });
     setDimmed(true);
-  }, Math.max(1, seconds) * 1000);
+    hideDock(true);
+  }, Math.max(1, cfg.afterSeconds) * 1000);
 }
 
 function navigate(id, { persist = true, reason = "dock", force = false } = {}) {
@@ -231,21 +221,48 @@ async function setPrivacyLocked(locked) {
   await api("/api/state", { method: "PUT", body: JSON.stringify({ privacyLocked: state.privacyLocked, activeView: state.privacyLocked ? "dashboard" : state.activeView }) }).catch(debugError);
 }
 
+function playNotificationSound() {
+  const cfg = state.settings?.notifications || {};
+  if (!cfg.soundEnabled || state.privacyLocked) return;
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const gain = ctx.createGain();
+    gain.gain.value = Math.max(0, Math.min(1, Number(cfg.soundVolume ?? 0.35)));
+    gain.connect(ctx.destination);
+    const notes = [660, 880];
+    notes.forEach((freq, index) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      const start = ctx.currentTime + index * 0.11;
+      osc.start(start);
+      osc.stop(start + 0.08);
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 420);
+  } catch (error) { debugError('No se pudo reproducir sonido de notificación', error); }
+}
+
 function showNotificationToast(notification) {
-  if (state.privacyLocked) return;
   if (!state.settings?.notifications?.toastEnabled) return;
   state.latestNotification = notification;
   clearTimeout(state.toastTimer);
   toast.hidden = false;
-  toast.innerHTML = `<strong>${escapeHtml(notification.title || "Nueva notificación")}</strong><span>${escapeHtml(notification.subtitle || notification.source || "")}</span>`;
+  toast.classList.remove('event-toast--small', 'event-toast--medium', 'event-toast--large');
+  const size = state.settings?.notifications?.toastSize || 'large';
+  toast.classList.add(`event-toast--${['small','medium','large'].includes(size) ? size : 'large'}`);
+  if (state.privacyLocked) toast.innerHTML = `<strong>Nueva notificación</strong><span>Actividad recibida</span>`;
+  else toast.innerHTML = `<strong>${escapeHtml(notification.title || "Nueva notificación")}</strong><span>${escapeHtml(notification.subtitle || notification.source || "")}</span>`;
   toast.classList.add("event-toast--visible");
+  playNotificationSound();
   const seconds = Number(state.settings?.notifications?.toastDurationSeconds || 6);
   state.toastTimer = setTimeout(() => toast.classList.remove("event-toast--visible"), seconds * 1000);
 }
 
-views.register(createDashboardView({ api, debug, onTogglePrivacy: () => setPrivacyLocked(!state.privacyLocked) }));
-views.register(createPlexView({ api, debug, ui }));
-views.register(createGameView({ api, debug, ui }));
+views.register(createDashboardView({ api, debug, ui, onTogglePrivacy: () => setPrivacyLocked(!state.privacyLocked) }));
+views.register(createCurrentContentView({ api, debug, ui }));
 views.register(createCollectionsView({ api, debug, ui }));
 
 function applyState(payload = {}) {
@@ -255,11 +272,11 @@ function applyState(payload = {}) {
   state.privacyLocked = Boolean(payload.state?.privacyLocked);
   state.unreadCount = Number(payload.unreadCount || 0);
   applyDisplaySettings();
-  views.update("dashboard", { wallpapers: payload.wallpapers || [], settings: state.settings, unreadCount: state.unreadCount, privacyLocked: state.privacyLocked });
-  views.update("plex-now-playing", payload.plex);
-  views.update("game-now-playing", payload.game);
+  views.update("dashboard", { wallpapers: payload.wallpapers || [], collections: payload.collections || [], settings: state.settings, unreadCount: state.unreadCount, privacyLocked: state.privacyLocked });
+  views.update("current-content", Object.prototype.hasOwnProperty.call(payload, "currentContent") ? payload.currentContent : (payload.current || payload.game || payload.plex));
   views.update("collections", { collections: payload.collections || [], state: payload.state });
-  if (!views.activeId) navigate("dashboard", { persist: false, reason: "snapshot inicial", force: true });
+  const initialView = ["dashboard", "current-content", "collections"].includes(payload.activeView) ? payload.activeView : "dashboard";
+  if (!views.activeId) navigate(initialView, { persist: false, reason: "snapshot inicial", force: true });
   if (state.privacyLocked) navigate("dashboard", { persist: false, reason: "privacy snapshot", force: true });
   resetDimTimer("snapshot");
 }
@@ -270,14 +287,23 @@ const socket = new SocketClient({
     if (message.type === "state:snapshot") return applyState(message.payload);
     if (message.type === "settings:update") { state.settings = message.payload; applyDisplaySettings(); views.update("dashboard", { settings: state.settings }); resetDimTimer("settings update"); if (!state.privacyLocked) showDock(); return; }
     if (message.type === "wallpapers:update") { views.update("dashboard", { wallpapers: message.payload || [], settings: state.settings }); return; }
-    if (message.type === "collections:update") { views.update("collections", { collections: message.payload || [] }); return; }
+    if (message.type === "collections:update") { views.update("collections", { collections: message.payload || [] }); views.update("dashboard", { collections: message.payload || [], settings: state.settings }); return; }
     if (message.type === "custom-css:update") { refreshCustomCss(message.payload?.name); return; }
-    if (message.type === "plex:update") { views.update("plex-now-playing", message.payload); resetDimTimer("plex update"); return; }
-    if (message.type === "game:update") { views.update("game-now-playing", message.payload); resetDimTimer("game update"); return; }
+    if (message.type === "current:update") { views.update("current-content", message.payload); resetDimTimer("current update"); return; }
+    if (message.type === "plex:update") { views.update("current-content", { ...(message.payload || {}), source: "plex", kind: "plex" }); resetDimTimer("plex update"); return; }
+    if (message.type === "game:update") { views.update("current-content", { ...(message.payload || {}), source: "playnite", kind: "game" }); resetDimTimer("game update"); return; }
+    if (message.type === "notifications:cleared") {
+      state.overlayNotifications = [];
+      state.unreadCount = 0;
+      renderNotificationsOverlay();
+      updateNotificationsTrigger();
+      views.update("dashboard", { unreadCount: 0, privacyLocked: state.privacyLocked });
+      return;
+    }
     if (message.type === "notification:new") {
       state.unreadCount += 1;
       state.overlayNotifications.unshift({ ...message.payload, unread: true });
-      state.overlayNotifications = state.overlayNotifications.slice(0, 25);
+      state.overlayNotifications = state.overlayNotifications.slice(0, 50);
       renderNotificationsOverlay();
       views.update("dashboard", { unreadCount: state.unreadCount, privacyLocked: state.privacyLocked });
       updateNotificationsTrigger();
@@ -324,6 +350,17 @@ window.addEventListener("pointerdown", event => {
 window.addEventListener("keydown", () => { resetDimTimer("keydown"); showDock(); });
 notificationsOverlay.addEventListener("click", event => {
   if (event.target.closest("[data-close-notifications]")) closeNotificationsOverlay();
+  if (event.target.closest("[data-clear-notifications]")) {
+    api("/api/notifications", { method: "DELETE" })
+      .then(() => {
+        state.overlayNotifications = [];
+        state.unreadCount = 0;
+        renderNotificationsOverlay();
+        updateNotificationsTrigger();
+        views.update("dashboard", { unreadCount: 0, privacyLocked: state.privacyLocked });
+      })
+      .catch(debugError);
+  }
   if (event.target.closest("[data-notifications-prev]")) { state.notificationsPage -= 1; renderNotificationsOverlay(); }
   if (event.target.closest("[data-notifications-next]")) { state.notificationsPage += 1; renderNotificationsOverlay(); }
 });

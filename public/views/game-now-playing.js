@@ -40,8 +40,9 @@ export function createGameView({ api, ui } = {}) {
       body: JSON.stringify({
         title: current.title || "Carátula",
         source: "playnite",
-        image: current.cover,
-        meta: { platforms: current.platforms }
+        coverImage: current.cover,
+        backdropImage: current.background,
+        meta: { platforms: current.platforms, developers: current.developers, releaseYear: current.releaseYear }
       })
     });
     ui.toast("Carátula añadida a colección", { detail: collection.name });
@@ -61,7 +62,7 @@ export function createGameView({ api, ui } = {}) {
         {
           id: "collection",
           label: "Añadir carátula a colección",
-          description: current?.cover ? "Guardar la carátula en una galería" : "No hay carátula disponible",
+          description: current?.cover ? "Guardar carátula y fondo en una colección" : "No hay carátula disponible",
           disabled: !current?.cover,
           run: addCoverToCollection
         }

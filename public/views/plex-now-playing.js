@@ -36,8 +36,9 @@ export function createPlexView({ api, ui } = {}) {
       body: JSON.stringify({
         title: current.title || "Póster Plex",
         source: "plex",
-        image: current.posterUrl,
-        meta: { type: current.type, ratingKey: current.ratingKey }
+        coverImage: current.posterUrl,
+        backdropImage: current.backdropUrl,
+        meta: { type: current.type, ratingKey: current.ratingKey, year: current.year }
       })
     });
     ui.toast("Póster añadido a colección", { detail: collection.name });
@@ -57,7 +58,7 @@ export function createPlexView({ api, ui } = {}) {
         {
           id: "collection",
           label: "Añadir póster a colección",
-          description: current?.posterUrl ? "Guardar el póster en una galería" : "No hay póster disponible",
+          description: current?.posterUrl ? "Guardar póster y fondo en una colección" : "No hay póster disponible",
           disabled: !current?.posterUrl,
           run: addPosterToCollection
         }

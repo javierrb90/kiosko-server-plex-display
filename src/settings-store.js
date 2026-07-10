@@ -6,28 +6,43 @@ export const DEFAULT_SETTINGS = {
   plex: { enabled: true, url: "", token: "" },
   display: {
     dimEnabled: true,
-    dimTimeoutSeconds: 10,
-    dimOpacity: 0.5,
-    wallpaperIntervalSeconds: 35,
-    wallpaperAnimation: false,
+    dimTimeoutSeconds: 30,
+    dimOpacity: 0.6,
+    dimByView: {
+      dashboard: { enabled: true, afterSeconds: 45, opacity: 0.45 },
+      "current-content": { enabled: true, afterSeconds: 30, opacity: 0.75 },
+      collections: { enabled: true, afterSeconds: 60, opacity: 0.25 }
+    },
     dockAutoHide: true,
-    dockAutoHideSeconds: 4
+    dockAutoHideSeconds: 4,
+    dockPosition: "bottom"
+  },
+  dashboard: {
+    wallpaperIntervalSeconds: 35,
+    wallpaperFadeSeconds: 1,
+    wallpaperMotion: true,
+    showProgressBar: true,
+    progressBarOpacity: 0.75,
+    videoAudioGlobalEnabled: true,
+    videoAudioDefaultMuted: true,
+    sources: {
+      wallpapers: true,
+      collections: []
+    }
   },
   views: {
     dashboard: { enabled: true },
-    notifications: { enabled: true, itemsPerPage: 5 },
-    plex: { enabled: true },
-    game: { enabled: true },
-    collections: { enabled: true },
-    settings: { enabled: true }
+    notifications: { enabled: true, itemsPerPage: 50 },
+    current: { enabled: true },
+    collections: { enabled: true, layout: "masonry", size: "xl" }
   },
   integrations: {
     tautulli: { enabled: true, notifyLibraryAdded: true, showPlaybackOn: ["play", "start"] },
     arr: { enabled: true, storeTestNotifications: true, enabledEvents: ["grab", "movie_add", "series_add"] },
-    playnite: { enabled: true, maxPayloadMb: 35 }
+    playnite: { enabled: true, maxPayloadMb: 80 }
   },
-  notifications: { maxStored: 25, toastEnabled: true, toastDurationSeconds: 6 },
-  wallpapers: { allowGifs: true },
+  notifications: { maxStored: 50, toastEnabled: true, toastDurationSeconds: 6, toastSize: "large", soundEnabled: false, soundVolume: 0.35 },
+  wallpapers: { allowGifs: true, allowVideos: true, allowVideoAudio: true },
   customCss: { enabled: true }
 };
 
@@ -51,17 +66,45 @@ function clampNumber(value, min, max, fallback) {
   return Math.min(max, Math.max(min, number));
 }
 
+function normalizeOpacity(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n > 1) return clampNumber(n, 0, 100, fallback * 100) / 100;
+  return clampNumber(n, 0, 1, fallback);
+}
+
 function sanitize(settings) {
   const s = deepMerge(DEFAULT_SETTINGS, settings || {});
   s.server.port = clampNumber(s.server.port, 1, 65535, 3000);
-  s.display.dimTimeoutSeconds = clampNumber(s.display.dimTimeoutSeconds, 2, 3600, 10);
-  s.display.dimOpacity = clampNumber(s.display.dimOpacity, 0, 0.95, 0.5);
-  s.display.wallpaperIntervalSeconds = clampNumber(s.display.wallpaperIntervalSeconds, 5, 3600, 35);
+
+  s.display.dimTimeoutSeconds = clampNumber(s.display.dimTimeoutSeconds, 2, 3600, 30);
+  s.display.dimOpacity = normalizeOpacity(s.display.dimOpacity, 0.6);
   s.display.dockAutoHideSeconds = clampNumber(s.display.dockAutoHideSeconds, 1, 60, 4);
-  s.views.notifications.itemsPerPage = clampNumber(s.views.notifications.itemsPerPage, 1, 20, 5);
-  s.notifications.maxStored = clampNumber(s.notifications.maxStored, 1, 25, 25);
+  if (!["top", "bottom", "left", "right"].includes(s.display.dockPosition)) s.display.dockPosition = "bottom";
+
+  const defaultsByView = DEFAULT_SETTINGS.display.dimByView;
+  for (const viewId of Object.keys(defaultsByView)) {
+    const current = s.display.dimByView?.[viewId] || {};
+    s.display.dimByView[viewId] = {
+      enabled: current.enabled !== false,
+      afterSeconds: clampNumber(current.afterSeconds, 2, 3600, defaultsByView[viewId].afterSeconds),
+      opacity: normalizeOpacity(current.opacity, defaultsByView[viewId].opacity)
+    };
+  }
+
+  s.dashboard.wallpaperIntervalSeconds = clampNumber(s.dashboard.wallpaperIntervalSeconds ?? s.display.wallpaperIntervalSeconds, 5, 3600, 35);
+  s.dashboard.wallpaperFadeSeconds = clampNumber(s.dashboard.wallpaperFadeSeconds, 0, 10, 1);
+  s.dashboard.progressBarOpacity = normalizeOpacity(s.dashboard.progressBarOpacity, 0.75);
+  if (!isObject(s.dashboard.sources)) s.dashboard.sources = { wallpapers: true, collections: [] };
+  s.dashboard.sources.wallpapers = s.dashboard.sources.wallpapers !== false;
+  if (!Array.isArray(s.dashboard.sources.collections)) s.dashboard.sources.collections = [];
+
+  s.views.notifications.itemsPerPage = clampNumber(s.views.notifications.itemsPerPage, 1, 50, 50);
+  s.notifications.maxStored = clampNumber(s.notifications.maxStored, 1, 50, 50);
   s.notifications.toastDurationSeconds = clampNumber(s.notifications.toastDurationSeconds, 1, 60, 6);
-  s.integrations.playnite.maxPayloadMb = clampNumber(s.integrations.playnite.maxPayloadMb, 1, 100, 35);
+  if (!["small", "medium", "large"].includes(s.notifications.toastSize)) s.notifications.toastSize = "large";
+  s.notifications.soundVolume = normalizeOpacity(s.notifications.soundVolume, 0.35);
+  s.integrations.playnite.maxPayloadMb = clampNumber(s.integrations.playnite.maxPayloadMb, 1, 250, 80);
   if (!Array.isArray(s.integrations.tautulli.showPlaybackOn)) s.integrations.tautulli.showPlaybackOn = ["play", "start"];
   if (!Array.isArray(s.integrations.arr.enabledEvents)) s.integrations.arr.enabledEvents = ["grab", "movie_add", "series_add"];
   return s;

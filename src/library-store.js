@@ -8,6 +8,7 @@ function queueWrite(instance, filePath, data) {
   instance.writeQueue = instance.writeQueue.then(() => fs.writeFile(filePath, content, "utf8"));
   return instance.writeQueue;
 }
+function mediaTypeFromMime(mime = "") { return String(mime).startsWith("video/") ? "video" : "image"; }
 
 export class WallpaperStore {
   constructor(dataDir) {
@@ -19,15 +20,29 @@ export class WallpaperStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     try {
       const parsed = JSON.parse(await fs.readFile(this.filePath, "utf8"));
-      this.wallpapers = Array.isArray(parsed) ? parsed : [];
+      this.wallpapers = Array.isArray(parsed) ? parsed.map(w => ({ type: w.type || (String(w.mime || "").startsWith("video/") ? "video" : "image"), audioEnabled: false, volume: 0.35, finishBeforeNext: false, ...w })) : [];
     } catch (error) { if (error.code !== "ENOENT") console.error("No se pudieron cargar wallpapers:", error); }
     await this.persist();
   }
   list({ includeArchived = true } = {}) {
     return this.wallpapers.filter(w => w.status !== "deleted" && (includeArchived || w.status === "active"));
   }
-  async add({ title = "Wallpaper", asset, source = "manual", status = "active", meta = {} }) {
-    const item = { id: crypto.randomUUID(), title, source, status, assetPath: asset.path, createdAt: now(), updatedAt: now(), meta };
+  async add({ title = "Wallpaper", asset, source = "manual", status = "active", meta = {}, audioEnabled = false, volume = 0.35, finishBeforeNext = false }) {
+    const item = {
+      id: crypto.randomUUID(),
+      title,
+      source,
+      status,
+      type: mediaTypeFromMime(asset?.mime),
+      mime: asset?.mime || null,
+      assetPath: asset.path,
+      audioEnabled: Boolean(audioEnabled),
+      finishBeforeNext: Boolean(finishBeforeNext),
+      volume: Math.max(0, Math.min(1, Number(volume) || 0.35)),
+      createdAt: now(),
+      updatedAt: now(),
+      meta
+    };
     this.wallpapers.unshift(item);
     await this.persist();
     return item;
@@ -35,6 +50,7 @@ export class WallpaperStore {
   async update(id, patch = {}) {
     const item = this.wallpapers.find(w => w.id === id);
     if (!item) throw new Error("Wallpaper no encontrado.");
+    if (patch.volume !== undefined) patch.volume = Math.max(0, Math.min(1, Number(patch.volume) || 0));
     Object.assign(item, patch, { updatedAt: now() });
     await this.persist();
     return item;
@@ -59,17 +75,17 @@ export class CollectionStore {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
     try {
       const parsed = JSON.parse(await fs.readFile(this.filePath, "utf8"));
-      this.collections = Array.isArray(parsed) ? parsed : [];
+      this.collections = Array.isArray(parsed) ? parsed.map(c => ({ dashboardEnabled: false, layout: c.layout || "masonry", ...c, items: (c.items || []).map(item => ({ coverPath: item.coverPath || item.assetPath || null, backdropPath: item.backdropPath || item.meta?.backdropPath || null, videoPath: item.videoPath || item.meta?.videoPath || null, videoFinishBeforeNext: Boolean(item.videoFinishBeforeNext ?? item.meta?.videoFinishBeforeNext ?? false), displaySkin: item.displaySkin || item.meta?.displaySkin || 'none', ...item })) })) : [];
     } catch (error) { if (error.code !== "ENOENT") console.error("No se pudieron cargar colecciones:", error); }
     if (!this.collections.length) {
-      this.collections = [{ id: crypto.randomUUID(), name: "Favoritos", mode: "presentation", items: [], createdAt: now(), updatedAt: now() }];
+      this.collections = [{ id: crypto.randomUUID(), name: "Favoritos", mode: "presentation", layout: "masonry", dashboardEnabled: false, items: [], createdAt: now(), updatedAt: now() }];
     }
     await this.persist();
   }
   list() { return this.collections; }
   get(id) { return this.collections.find(c => c.id === id); }
   async create({ name = "Nueva colección" } = {}) {
-    const collection = { id: crypto.randomUUID(), name: String(name || "Nueva colección"), mode: "presentation", items: [], createdAt: now(), updatedAt: now() };
+    const collection = { id: crypto.randomUUID(), name: String(name || "Nueva colección"), mode: "presentation", layout: "masonry", dashboardEnabled: false, items: [], createdAt: now(), updatedAt: now() };
     this.collections.unshift(collection);
     await this.persist();
     return collection;
@@ -79,6 +95,8 @@ export class CollectionStore {
     if (!collection) throw new Error("Colección no encontrada.");
     if (patch.name !== undefined) collection.name = String(patch.name || collection.name);
     if (patch.mode !== undefined) collection.mode = patch.mode === "manage" ? "manage" : "presentation";
+    if (patch.layout !== undefined) collection.layout = patch.layout === "square" ? "square" : "masonry";
+    if (patch.dashboardEnabled !== undefined) collection.dashboardEnabled = Boolean(patch.dashboardEnabled);
     collection.updatedAt = now();
     await this.persist();
     return collection;
@@ -91,15 +109,52 @@ export class CollectionStore {
     await this.persist();
     return removed;
   }
-  async addItem(collectionId, { title = "Imagen", asset, source = "manual", meta = {} }) {
+  async addItem(collectionId, { title = "Imagen", asset, backdropAsset = null, videoAsset = null, source = "manual", videoFinishBeforeNext = false, meta = {} }) {
     const collection = this.get(collectionId);
     if (!collection) throw new Error("Colección no encontrada.");
-    const item = { id: crypto.randomUUID(), title, source, assetPath: asset.path, createdAt: now(), meta };
+    const item = {
+      id: crypto.randomUUID(),
+      title,
+      source,
+      assetPath: asset.path,
+      coverPath: asset.path,
+      backdropPath: backdropAsset?.path || meta.backdropPath || null,
+      videoPath: videoAsset?.path || meta.videoPath || null,
+      videoMime: videoAsset?.mime || meta.videoMime || null,
+      videoFinishBeforeNext: Boolean(videoFinishBeforeNext ?? meta.videoFinishBeforeNext ?? false),
+      displaySkin: meta.displaySkin || 'none',
+      mime: asset.mime || null,
+      createdAt: now(),
+      meta
+    };
     collection.items.unshift(item);
     collection.updatedAt = now();
     await this.persist();
     return item;
   }
+
+  async updateItem(collectionId, itemId, patch = {}) {
+    const collection = this.get(collectionId);
+    if (!collection) throw new Error("Colección no encontrada.");
+    const item = collection.items.find(i => i.id === itemId);
+    if (!item) throw new Error("Item no encontrado.");
+    if (patch.title !== undefined) item.title = String(patch.title || item.title || "Imagen");
+    if (patch.source !== undefined) item.source = String(patch.source || item.source || "manual");
+    if (patch.coverPath !== undefined || patch.assetPath !== undefined) {
+      item.coverPath = patch.coverPath || patch.assetPath || item.coverPath || null;
+      item.assetPath = item.coverPath || item.assetPath || null;
+    }
+    if (patch.backdropPath !== undefined) item.backdropPath = patch.backdropPath || null;
+    if (patch.videoPath !== undefined) item.videoPath = patch.videoPath || null;
+    if (patch.videoMime !== undefined) item.videoMime = patch.videoMime || null;
+    if (patch.videoFinishBeforeNext !== undefined) item.videoFinishBeforeNext = Boolean(patch.videoFinishBeforeNext);
+    if (patch.displaySkin !== undefined) item.displaySkin = patch.displaySkin || "none";
+    if (patch.meta && typeof patch.meta === "object" && !Array.isArray(patch.meta)) item.meta = { ...(item.meta || {}), ...patch.meta };
+    collection.updatedAt = now();
+    await this.persist();
+    return item;
+  }
+
   async removeItem(collectionId, itemId) {
     const collection = this.get(collectionId);
     if (!collection) throw new Error("Colección no encontrada.");

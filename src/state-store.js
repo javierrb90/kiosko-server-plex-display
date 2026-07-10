@@ -7,6 +7,7 @@ const DEFAULT_STATE = {
   lastWallpaperId: null,
   lastPlex: null,
   lastGame: null,
+  lastCurrent: null,
   lastNotificationsViewedAt: null,
   privacyLocked: false,
   updatedAt: null

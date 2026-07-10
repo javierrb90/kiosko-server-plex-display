@@ -67,7 +67,9 @@ export function createCollectionsView({ api, ui } = {}) {
 
     const columns = splitIntoColumns(c.items);
     grid.innerHTML = `<div class="collections-masonry">${columns.map(column => `<div class="collection-column">${column.map(({ item, index }) => `<article class="collection-item">
-      <img src="${escapeAttr(item.assetPath)}" alt="${escapeAttr(item.title || "")}">
+      <img src="${escapeAttr(item.coverPath || item.assetPath)}" alt="${escapeAttr(item.title || "")}">
+      ${item.videoPath ? `<span class="collection-item__badge">Vídeo</span>` : ``}
+      ${item.title ? `<div class="collection-item__caption">${escapeHtml(item.title)}</div>` : ``}
       <div class="collection-item-controls">
         <button data-move="up" data-id="${item.id}" ${index === 0 ? "disabled" : ""}>←</button>
         <button data-move="down" data-id="${item.id}" ${index === c.items.length - 1 ? "disabled" : ""}>→</button>

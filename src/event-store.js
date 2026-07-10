@@ -2,17 +2,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const MAX_NOTIFICATIONS = 25;
+const MAX_NOTIFICATIONS = 50;
+const IDEMPOTENCY_TTL_DAYS = 7;
+const IDEMPOTENCY_TTL_MS = IDEMPOTENCY_TTL_DAYS * 24 * 60 * 60 * 1000;
 
 export class EventStore {
   constructor(dataDir) {
     this.filePath = path.join(dataDir, "notifications.json");
+    this.idempotencyPath = path.join(dataDir, "notification-idempotency.json");
     this.notifications = [];
-    this.writeQueue = Promise.resolve();
+    this.idempotency = {};
+    this.operationQueue = Promise.resolve();
   }
 
   async init() {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
@@ -21,6 +26,24 @@ export class EventStore {
       if (error.code !== "ENOENT") console.error("No se pudieron cargar notificaciones:", error);
       this.notifications = [];
     }
+
+    try {
+      const raw = await fs.readFile(this.idempotencyPath, "utf8");
+      const parsed = JSON.parse(raw);
+      this.idempotency = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch (error) {
+      if (error.code !== "ENOENT") console.error("No se pudo cargar notification-idempotency.json:", error);
+      this.idempotency = {};
+    }
+
+    this.pruneIdempotencyKeys();
+    await this.persistIdempotency();
+  }
+
+  enqueue(operation) {
+    const run = this.operationQueue.then(operation, operation);
+    this.operationQueue = run.catch(() => {});
+    return run;
   }
 
   list({ page = 1, limit = 5 } = {}) {
@@ -46,6 +69,63 @@ export class EventStore {
   }
 
   async add(input) {
+    return this.enqueue(async () => {
+      const notification = this.buildNotification(input);
+      this.notifications.unshift(notification);
+      this.notifications = this.notifications.slice(0, MAX_NOTIFICATIONS);
+      await this.persistNotifications();
+      return notification;
+    });
+  }
+
+  async clear() {
+    return this.enqueue(async () => {
+      this.notifications = [];
+      await this.persistNotifications();
+      return { ok: true };
+    });
+  }
+
+  async addExternal(input, externalId = null) {
+    return this.enqueue(async () => {
+      this.pruneIdempotencyKeys();
+
+      if (externalId) {
+        const existing = this.findByExternalId(externalId);
+        if (existing || this.idempotency[externalId]) {
+          await this.persistIdempotency();
+          return {
+            duplicate: true,
+            notification: existing || null
+          };
+        }
+      }
+
+      const notification = this.buildNotification(input, externalId);
+      this.notifications.unshift(notification);
+      this.notifications = this.notifications.slice(0, MAX_NOTIFICATIONS);
+
+      await this.persistNotifications();
+
+      if (externalId) {
+        this.idempotency[externalId] = notification.createdAt;
+        await this.persistIdempotency();
+      }
+
+      return {
+        duplicate: false,
+        notification
+      };
+    });
+  }
+
+  buildNotification(input = {}, externalId = null) {
+    const meta = input.meta && typeof input.meta === "object" && !Array.isArray(input.meta)
+      ? { ...input.meta }
+      : {};
+
+    if (externalId && !meta.externalId) meta.externalId = externalId;
+
     const notification = {
       id: crypto.randomUUID(),
       source: input.source || "system",
@@ -56,17 +136,43 @@ export class EventStore {
       image: input.image || null,
       backdrop: input.backdrop || null,
       createdAt: input.createdAt || new Date().toISOString(),
-      meta: input.meta || {}
+      meta
     };
-    this.notifications.unshift(notification);
-    this.notifications = this.notifications.slice(0, MAX_NOTIFICATIONS);
-    await this.persist();
+
+    if (externalId) notification.externalId = externalId;
+    if (input.url) notification.url = input.url;
+
     return notification;
   }
 
-  async persist() {
-    const content = JSON.stringify(this.notifications, null, 2);
-    this.writeQueue = this.writeQueue.then(() => fs.writeFile(this.filePath, content, "utf8"));
-    return this.writeQueue;
+  findByExternalId(externalId) {
+    return this.notifications.find(notification => (
+      notification.externalId === externalId || notification.meta?.externalId === externalId
+    )) || null;
+  }
+
+  pruneIdempotencyKeys(now = Date.now()) {
+    for (const [externalId, date] of Object.entries(this.idempotency)) {
+      const timestamp = Date.parse(date);
+      if (!Number.isFinite(timestamp) || now - timestamp > IDEMPOTENCY_TTL_MS) {
+        delete this.idempotency[externalId];
+      }
+    }
+  }
+
+  async persistNotifications() {
+    await this.atomicWriteJson(this.filePath, this.notifications);
+  }
+
+  async persistIdempotency() {
+    await this.atomicWriteJson(this.idempotencyPath, this.idempotency);
+  }
+
+  async atomicWriteJson(filePath, data) {
+    const content = JSON.stringify(data, null, 2);
+    const tmpPath = `${filePath}.tmp`;
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(tmpPath, content, "utf8");
+    await fs.rename(tmpPath, filePath);
   }
 }
