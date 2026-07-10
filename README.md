@@ -1,18 +1,31 @@
-# Kiosko Media Center v4
+# Kiosko Media Center v4 · versión estable
 
-Evolución del kiosko hacia un panel multimedia persistente con navegación por dock, Dashboard ambiental, Notifications, Plex, Game, Collections y Settings.
+Aplicación web local para usar como kiosko multimedia en una pantalla pequeña, tablet, móvil Android o monitor táctil. La app funciona como un marco digital que muestra wallpapers, vídeos y elementos de colecciones, y reacciona a eventos de Plex/Tautulli, Playnite, Sonarr/Radarr y notificaciones REST externas.
 
-## Cambios principales
+## Concepto actual
 
-- Dashboard de wallpapers rotatorios como vista base ambiental.
-- Dock inferior con seis vistas: Dashboard, Notifications, Plex, Game, Collections y Settings.
-- Plex y Playnite son vistas persistentes, no popups temporales.
-- Notificaciones nuevas muestran toast; al pulsarlo se abre Notifications.
-- Atenuación configurable para Notifications, Plex y Game.
-- Settings integrado dentro de la app.
-- Wallapers, colecciones, settings, estado y notificaciones persistidos en `data/`.
-- Assets guardados como archivos locales en `data/assets/`.
-- CSS personalizado persistente por vista en `data/custom-css/`.
+La aplicación se organiza alrededor de tres vistas principales:
+
+- **Dashboard**: vista principal tipo marco digital. Rota entre wallpapers, vídeos y colecciones seleccionadas.
+- **Actual**: último contenido activo recibido desde Plex/Tautulli o Playnite.
+- **Colecciones**: muro visual de items manuales con portada, backdrop, vídeo opcional y metadatos simples.
+
+Además incluye:
+
+- overlay global de notificaciones;
+- dock flotante y reposicionable;
+- panel externo `/admin.html` para configuración;
+- assets persistentes en `data/assets/`;
+- API REST genérica para notificaciones externas.
+
+## Stack
+
+- Node.js 22+
+- Express
+- WebSocket con `ws`
+- Frontend HTML/CSS/JavaScript ES modules
+- Persistencia JSON en filesystem
+- Docker / Portainer
 
 ## Arranque local
 
@@ -21,32 +34,61 @@ npm install
 npm start
 ```
 
-Luego abre:
+Abrir:
 
 ```text
 http://localhost:3000
 ```
 
-La configuración de Plex puede editarse desde la vista Settings. `.env` queda sólo como mecanismo inicial/compatibilidad.
-
-## Webhooks
+Admin:
 
 ```text
-Tautulli: POST /webhook/tautulli
-Compatibilidad Tautulli antigua: POST /webhook
-Sonarr/Radarr unificado: POST /webhook/arr
-Playnite: POST /webhook/playnite
+http://localhost:3000/admin.html
 ```
+
+## Despliegue Portainer
+
+El proyecto está preparado para usar el volumen externo:
+
+```text
+kiosko_volume
+```
+
+Compose incluido:
+
+```yaml
+services:
+  kiosko-media-center:
+    container_name: kiosko-media-center
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATA_DIR: /app/data
+    volumes:
+      - kiosko_volume:/app/data
+
+volumes:
+  kiosko_volume:
+    external: true
+```
+
+Crear previamente el volumen en Portainer si no existe.
 
 ## Persistencia
 
 ```text
 data/
 ├── settings.json
+├── state.json
 ├── notifications.json
+├── notification-idempotency.json
 ├── wallpapers.json
 ├── collections.json
-├── state.json
 ├── custom-css/
 └── assets/
     ├── wallpapers/
@@ -56,28 +98,64 @@ data/
     └── uploads/
 ```
 
-## API básica
+## Webhooks
 
 ```text
-GET /api/health
-GET/PUT /api/settings
-GET /api/notifications
-GET/POST/PATCH/DELETE /api/wallpapers
-GET/POST/PATCH/DELETE /api/collections
-POST/DELETE /api/collections/:id/items
-POST /api/collections/:id/items/:itemId/move
-GET/PUT /api/custom-css/:name
+Tautulli recomendado:        POST /webhook/tautulli
+Tautulli legacy:             POST /webhook
+Sonarr/Radarr unificado:     POST /webhook/arr
+Sonarr/Radarr específico:    POST /webhook/arr/:source
+Playnite:                    POST /webhook/playnite
 ```
 
-## v4.4 · Modo ligero para Wallpaper Engine
+## API principal
 
-Esta versión deja la interfaz en modo estable/liviano:
+```text
+GET    /api/health
+GET    /api/settings
+PUT    /api/settings
+POST   /api/settings/reset
+GET    /api/state
+PUT    /api/state
+GET    /api/notifications
+POST   /api/notifications
+POST   /api/notify
+DELETE /api/notifications
+GET    /api/wallpapers
+POST   /api/wallpapers
+PATCH  /api/wallpapers/:id
+DELETE /api/wallpapers/:id
+GET    /api/collections
+POST   /api/collections
+PATCH  /api/collections/:id
+DELETE /api/collections/:id
+POST   /api/collections/:id/items
+PATCH  /api/collections/:id/items/:itemId
+DELETE /api/collections/:id/items/:itemId
+POST   /api/collections/:id/items/:itemId/move
+GET    /api/custom-css/:name
+PUT    /api/custom-css/:name
+```
 
-- Animaciones CSS desactivadas globalmente.
-- Transiciones desactivadas.
-- `filter`, `blur` y `backdrop-filter` desactivados.
-- Transformaciones 3D eliminadas.
-- Ken Burns del dashboard desactivado aunque la opción siga existiendo para futuras versiones.
-- El dock sigue flotando y auto-ocultándose, pero sin animación.
+La API REST de notificaciones externas está documentada en `README-NOTIFICATIONS-API.md`.
 
-La URL normal ya usa este modo ligero. No hace falta añadir `?compat=1`, aunque sigue siendo compatible.
+## Dashboard
+
+El Dashboard puede usar como fuentes:
+
+- wallpapers de imagen/GIF;
+- wallpapers de vídeo MP4/WebM;
+- colecciones seleccionadas.
+
+Los wallpapers normales se muestran sin blur. Los items de colección reciben tratamiento visual con backdrop atenuado/blur y portada grande. El movimiento de fondos se controla por JavaScript para evitar que CSS personalizado lo anule accidentalmente.
+
+## Producción
+
+El ZIP no debe incluir:
+
+- `node_modules/`;
+- `.env` con secretos;
+- `data/` con contenido real;
+- tokens de Plex.
+
+El Dockerfile instala dependencias desde `https://registry.npmjs.org/` y evita depender de `package-lock.json` durante el build de Portainer.

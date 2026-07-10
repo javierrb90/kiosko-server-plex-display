@@ -24,7 +24,7 @@ function muteSvg(muted) { return muted
   : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4Zm12.8-2.2-1.4 1.4a5.5 5.5 0 0 1 0 7.8l1.4 1.4a7.5 7.5 0 0 0 0-10.6Zm-3 3-1.4 1.4a2 2 0 0 1 0 2.8l1.4 1.4a4 4 0 0 0 0-5.6Z"/></svg>`; }
 
 export function createDashboardView({ api, ui, onTogglePrivacy } = {}) {
-  let el, timer, progressFrame;
+  let el, timer, progressFrame, backgroundMotionFrame;
   let wallpapers = [];
   let collections = [];
   let settings = {};
@@ -115,6 +115,47 @@ export function createDashboardView({ api, ui, onTogglePrivacy } = {}) {
     return pickFromRecord(sourceQueues.get(id), direction) || null;
   }
 
+  function stopBackgroundMotion() {
+    cancelAnimationFrame(backgroundMotionFrame);
+    backgroundMotionFrame = null;
+    const media = el?.querySelector('.dashboard-bg-media');
+    if (media) {
+      media.style.animation = '';
+      media.style.transform = '';
+    }
+  }
+
+  function startBackgroundMotion() {
+    cancelAnimationFrame(backgroundMotionFrame);
+    backgroundMotionFrame = null;
+    const media = el?.querySelector('img.dashboard-bg-media');
+    if (!media || settings.dashboard?.wallpaperMotion === false) {
+      stopBackgroundMotion();
+      return;
+    }
+
+    // Movimiento controlado por JS para que no dependa de CSS heredado/custom.
+    // Se aplica sólo a imágenes. Los vídeos no reciben movimiento extra.
+    media.style.animation = 'none';
+    media.style.transformOrigin = 'center center';
+    media.style.willChange = 'transform';
+
+    const started = performance.now();
+    const loop = (now) => {
+      if (!isVisible || !el?.contains(media) || settings.dashboard?.wallpaperMotion === false) {
+        stopBackgroundMotion();
+        return;
+      }
+      const elapsed = (now - started) / 1000;
+      const x = Math.sin(elapsed / 9) * 2.6;
+      const y = Math.cos(elapsed / 12) * 1.4;
+      const scale = 1.08 + (Math.sin(elapsed / 15) + 1) * 0.025;
+      media.style.transform = `scale(${scale.toFixed(4)}) translate(${x.toFixed(3)}%, ${y.toFixed(3)}%)`;
+      backgroundMotionFrame = requestAnimationFrame(loop);
+    };
+    backgroundMotionFrame = requestAnimationFrame(loop);
+  }
+
   function showEmpty() {
     const stage = el.querySelector('.dashboard-stage');
     stage.innerHTML = `<div class="dashboard-empty">Añade wallpapers o activa colecciones como fuente del Dashboard desde Admin.</div>`;
@@ -150,6 +191,7 @@ export function createDashboardView({ api, ui, onTogglePrivacy } = {}) {
     if (video && shouldWaitForVideo(slide)) {
       video.addEventListener('ended', () => { if (isVisible && currentSlide?.id === slide.id) renderNext(1); }, { once: true });
     }
+    startBackgroundMotion();
     applyAccent(slide.media || slide.cover, slide.wallpaper?.meta?.accent);
     schedule();
     updateOverlay();
@@ -201,6 +243,8 @@ export function createDashboardView({ api, ui, onTogglePrivacy } = {}) {
     if (video) { video.muted = videoMuted; video.volume = Math.max(0, Math.min(1, Number(currentSlide?.wallpaper?.volume ?? 0.35))); }
     el.classList.toggle('dashboard-view--privacy', privacyLocked);
     el.classList.toggle('dashboard-view--no-motion', settings.dashboard?.wallpaperMotion === false);
+    if (settings.dashboard?.wallpaperMotion === false) stopBackgroundMotion();
+    else startBackgroundMotion();
     updateProgress();
   }
   function openMenu() {
@@ -262,7 +306,7 @@ export function createDashboardView({ api, ui, onTogglePrivacy } = {}) {
       isVisible = true; el.classList.add('view--active'); el.setAttribute('aria-hidden', 'false');
       await loadData(); resetQueues(); if (!currentSlide) renderNext(1); else renderMedia(currentSlide);
     },
-    hide() { isVisible = false; el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); clearInterval(timer); cancelAnimationFrame(progressFrame); },
+    hide() { isVisible = false; el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); clearInterval(timer); cancelAnimationFrame(progressFrame); stopBackgroundMotion(); },
     async update(data = {}) {
       if (Array.isArray(data.wallpapers)) wallpapers = data.wallpapers;
       if (Array.isArray(data.collections)) collections = data.collections;
@@ -273,7 +317,7 @@ export function createDashboardView({ api, ui, onTogglePrivacy } = {}) {
       if (!wallpapers.length && !collections.length && !('wallpapers' in data)) await loadData();
       if (isVisible && ('wallpapers' in data || 'collections' in data || 'settings' in data)) { resetQueues(); if (!currentSlide) renderNext(1); schedule(); }
     },
-    destroy() { clearInterval(timer); cancelAnimationFrame(progressFrame); }
+    destroy() { clearInterval(timer); cancelAnimationFrame(progressFrame); stopBackgroundMotion(); }
   };
 }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }
