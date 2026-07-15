@@ -1,6 +1,7 @@
 services:
   kiosko-media-center:
     container_name: kiosko-media-center
+    hostname: kiosko
     build:
       context: .
       dockerfile: Dockerfile
@@ -12,7 +13,13 @@ services:
       DATA_DIR: /app/data
     volumes:
       - kiosko_volume:/app/data
+    networks:
+      - arrnet
 
 volumes:
   kiosko_volume:
+    external: true
+
+networks:
+  arrnet:
     external: true

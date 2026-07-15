@@ -104,3 +104,9 @@ data/
 ## v5.4.1 · Caché local de assets Plex
 
 Las imágenes de Plex se descargan al volumen persistente y se sirven desde `/assets/plex/...`, evitando cargar siempre desde `http://PLEX:32400/...X-Plex-Token=...` en el navegador.
+
+## Despliegue con Cloudflare Tunnel
+
+Desde la v5.4.3 el cliente WebSocket usa automáticamente `wss://` cuando la app se abre por HTTPS, así que funciona detrás de Cloudflare Tunnel sin bloqueo por mixed content.
+
+El `docker-compose.yml` incluido usa la red externa `arrnet` y hostname `kiosko`, pensado para apuntar el túnel a `http://kiosko:3000` dentro de esa red.

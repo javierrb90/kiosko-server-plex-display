@@ -7,8 +7,13 @@ export class SocketClient {
     this.retry = 1000;
   }
 
+  buildUrl() {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${window.location.host}`;
+  }
+
   connect() {
-    this.ws = new WebSocket(`ws://${location.host}`);
+    this.ws = new WebSocket(this.buildUrl());
     this.ws.onmessage = ({ data }) => {
       try {
         this.onMessage(JSON.parse(data));
