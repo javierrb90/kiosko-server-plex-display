@@ -24,9 +24,9 @@ export function createUi({ modalRoot, toastRoot } = {}) {
         btn.type = 'button';
         btn.className = `ui-modal__button ${action.variant ? `ui-modal__button--${action.variant}` : ''}`.trim();
         btn.textContent = action.label;
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
           if (typeof action.onClick === 'function') {
-            const value = action.onClick(root);
+            const value = await action.onClick(root);
             if (value === false) return;
             resolve(close(value));
           } else {

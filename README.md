@@ -1,60 +1,39 @@
-# Kiosko Media Center v4 · versión estable
+# Kiosko Media Center v5.4
 
-Aplicación web local para usar como kiosko multimedia en una pantalla pequeña, tablet, móvil Android o monitor táctil. La app funciona como un marco digital que muestra wallpapers, vídeos y elementos de colecciones, y reacciona a eventos de Plex/Tautulli, Playnite, Sonarr/Radarr y notificaciones REST externas.
+Aplicación web local para gestionar actividad multimedia de Plex/Tautulli y Playnite desde una interfaz visual, pensada primero para móvil/portrait y también usable en pantallas táctiles.
 
-## Concepto actual
+## Vistas principales
 
-La aplicación se organiza alrededor de tres vistas principales:
+- **Backlog**: actividad reciente pendiente de clasificar. Agrupa Plex y Playnite en un grid único con filtros, búsqueda, tamaños de carátula y paginación por flechas.
+- **Actual**: muestra lo que se está reproduciendo en Plex o el juego activo de Playnite. Ya no fuerza navegación automática.
+- **Colecciones**: archivo de contenido visto/terminado con valoración, fecha y paginación.
+- **Notificaciones**: centro auxiliar de actividad/log, mantenido como overlay.
 
-- **Dashboard**: vista principal tipo marco digital. Rota entre wallpapers, vídeos y colecciones seleccionadas.
-- **Actual**: último contenido activo recibido desde Plex/Tautulli o Playnite.
-- **Colecciones**: muro visual de items manuales con portada, backdrop, vídeo opcional y metadatos simples.
+## Cambios clave v5.4
 
-Además incluye:
+- Dashboard eliminado como vista.
+- Backlog como vista inicial por defecto.
+- Configuración integrada en modal dentro de la app.
+- Eliminada la página `/admin.html`.
+- Eliminadas colecciones manuales antiguas y wallpapers del dashboard.
+- Eliminado oscurecimiento automático de pantalla.
+- Dock compacto fijo en la esquina superior izquierda, junto a notificaciones.
+- Controles de cada vista en la esquina superior derecha.
+- Grids reales alineados arriba/izquierda, sin centrar tarjetas sueltas.
+- Paginación visible en Backlog y Colecciones.
+- Fondos dinámicos por Backlog/Colecciones usando backdrops de los items filtrados.
 
-- overlay global de notificaciones;
-- dock flotante y reposicionable;
-- panel externo `/admin.html` para configuración;
-- assets persistentes en `data/assets/`;
-- API REST genérica para notificaciones externas.
+## Fuentes de Backlog
 
-## Stack
+Configurables desde Opciones:
 
-- Node.js 22+
-- Express
-- WebSocket con `ws`
-- Frontend HTML/CSS/JavaScript ES modules
-- Persistencia JSON en filesystem
-- Docker / Portainer
+- Plex · nuevo contenido añadido desde Tautulli.
+- Plex · contenido reproducido.
+- Playnite · juegos lanzados.
 
-## Arranque local
+Los items que entran por reproducción de Plex se muestran igual que el contenido añadido; la diferencia queda sólo a nivel interno.
 
-```bash
-npm install
-npm start
-```
-
-Abrir:
-
-```text
-http://localhost:3000
-```
-
-Admin:
-
-```text
-http://localhost:3000/admin.html
-```
-
-## Despliegue Portainer
-
-El proyecto está preparado para usar el volumen externo:
-
-```text
-kiosko_volume
-```
-
-Compose incluido:
+## Docker / Portainer
 
 ```yaml
 services:
@@ -77,9 +56,27 @@ volumes:
     external: true
 ```
 
-Crear previamente el volumen en Portainer si no existe.
+## Endpoints principales
 
-## Persistencia
+```text
+GET  /api/health
+GET  /api/settings
+PUT  /api/settings
+POST /webhook/tautulli
+POST /webhook/playnite
+POST /webhook/arr/:source
+GET  /api/notifications
+DELETE /api/notifications
+GET  /api/backlog
+DELETE /api/backlog/:source/:id
+POST /api/backlog/:source/:id/complete
+GET  /api/completions
+PATCH /api/completions/:id
+DELETE /api/completions/:id
+POST /api/current/clear
+```
+
+## Datos persistentes
 
 ```text
 data/
@@ -87,75 +84,23 @@ data/
 ├── state.json
 ├── notifications.json
 ├── notification-idempotency.json
-├── wallpapers.json
-├── collections.json
-├── custom-css/
+├── backlog.json
+├── completed-items.json
 └── assets/
-    ├── wallpapers/
-    ├── collections/
     ├── plex/
     ├── playnite/
     └── uploads/
 ```
 
-## Webhooks
 
-```text
-Tautulli recomendado:        POST /webhook/tautulli
-Tautulli legacy:             POST /webhook
-Sonarr/Radarr unificado:     POST /webhook/arr
-Sonarr/Radarr específico:    POST /webhook/arr/:source
-Playnite:                    POST /webhook/playnite
-```
+## Novedades v5.4
 
-## API principal
+- Paginación estable por número de items, independiente del tamaño de carátula.
+- Filtros multiselección por tipo: películas, juegos y series.
+- Estado de vista guardado en sesión.
+- PWA básica para instalación en Android cuando el navegador lo permita.
+- Opciones ampliadas con Diseño, Debug y CSS personalizado.
 
-```text
-GET    /api/health
-GET    /api/settings
-PUT    /api/settings
-POST   /api/settings/reset
-GET    /api/state
-PUT    /api/state
-GET    /api/notifications
-POST   /api/notifications
-POST   /api/notify
-DELETE /api/notifications
-GET    /api/wallpapers
-POST   /api/wallpapers
-PATCH  /api/wallpapers/:id
-DELETE /api/wallpapers/:id
-GET    /api/collections
-POST   /api/collections
-PATCH  /api/collections/:id
-DELETE /api/collections/:id
-POST   /api/collections/:id/items
-PATCH  /api/collections/:id/items/:itemId
-DELETE /api/collections/:id/items/:itemId
-POST   /api/collections/:id/items/:itemId/move
-GET    /api/custom-css/:name
-PUT    /api/custom-css/:name
-```
+## v5.4.1 · Caché local de assets Plex
 
-La API REST de notificaciones externas está documentada en `README-NOTIFICATIONS-API.md`.
-
-## Dashboard
-
-El Dashboard puede usar como fuentes:
-
-- wallpapers de imagen/GIF;
-- wallpapers de vídeo MP4/WebM;
-- colecciones seleccionadas.
-
-Los wallpapers normales se muestran sin blur. Los items de colección reciben tratamiento visual con backdrop atenuado/blur y portada grande. El movimiento de fondos se controla por JavaScript para evitar que CSS personalizado lo anule accidentalmente.
-
-## Producción
-
-El ZIP no debe incluir:
-
-- `node_modules/`;
-- `.env` con secretos;
-- `data/` con contenido real;
-- tokens de Plex.
-
-El Dockerfile instala dependencias desde `https://registry.npmjs.org/` y evita depender de `package-lock.json` durante el build de Portainer.
+Las imágenes de Plex se descargan al volumen persistente y se sirven desde `/assets/plex/...`, evitando cargar siempre desde `http://PLEX:32400/...X-Plex-Token=...` en el navegador.

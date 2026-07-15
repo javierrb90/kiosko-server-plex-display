@@ -5,44 +5,40 @@ export const DEFAULT_SETTINGS = {
   server: { port: 3000 },
   plex: { enabled: true, url: "", token: "" },
   display: {
-    dimEnabled: true,
-    dimTimeoutSeconds: 30,
-    dimOpacity: 0.6,
-    dimByView: {
-      dashboard: { enabled: true, afterSeconds: 45, opacity: 0.45 },
-      "current-content": { enabled: true, afterSeconds: 30, opacity: 0.75 },
-      collections: { enabled: true, afterSeconds: 60, opacity: 0.25 }
-    },
-    dockAutoHide: true,
-    dockAutoHideSeconds: 4,
-    dockPosition: "bottom"
+    defaultView: "backlog",
+    dockPosition: "top"
   },
-  dashboard: {
-    wallpaperIntervalSeconds: 35,
-    wallpaperFadeSeconds: 1,
-    wallpaperMotion: true,
-    showProgressBar: true,
-    progressBarOpacity: 0.75,
-    videoAudioGlobalEnabled: true,
-    videoAudioDefaultMuted: true,
-    sources: {
-      wallpapers: true,
-      collections: []
-    }
+  design: {
+    accentColor: "#8fafef",
+    fontScale: "medium",
+    density: "comfortable"
   },
   views: {
-    dashboard: { enabled: true },
     notifications: { enabled: true, itemsPerPage: 50 },
+    backlog: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
     current: { enabled: true },
-    collections: { enabled: true, layout: "masonry", size: "xl" }
+    collections: { enabled: true, cardSize: "medium", itemsPerPage: 12 }
+  },
+  backlog: {
+    sources: {
+      plexRecentlyAdded: true,
+      plexPlayback: false,
+      playniteStarted: true
+    }
   },
   integrations: {
     tautulli: { enabled: true, notifyLibraryAdded: true, showPlaybackOn: ["play", "start"] },
     arr: { enabled: true, storeTestNotifications: true, enabledEvents: ["grab", "movie_add", "series_add"] },
     playnite: { enabled: true, maxPayloadMb: 80 }
   },
-  notifications: { maxStored: 50, toastEnabled: true, toastDurationSeconds: 6, toastSize: "large", soundEnabled: false, soundVolume: 0.35 },
-  wallpapers: { allowGifs: true, allowVideos: true, allowVideoAudio: true },
+  notifications: {
+    maxStored: 50,
+    toastEnabled: true,
+    toastDurationSeconds: 6,
+    toastSize: "medium",
+    soundEnabled: false,
+    soundVolume: 0.35
+  },
   customCss: { enabled: true }
 };
 
@@ -73,37 +69,66 @@ function normalizeOpacity(value, fallback) {
   return clampNumber(n, 0, 1, fallback);
 }
 
+function cardSize(value) {
+  return ["small", "medium", "large"].includes(value) ? value : "medium";
+}
+
+function fontScale(value) {
+  return ["small", "medium", "large"].includes(value) ? value : "medium";
+}
+
+function density(value) {
+  return ["compact", "comfortable", "large"].includes(value) ? value : "comfortable";
+}
+
+function color(value, fallback = "#8fafef") {
+  const text = String(value || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(text) ? text : fallback;
+}
+
 function sanitize(settings) {
   const s = deepMerge(DEFAULT_SETTINGS, settings || {});
   s.server.port = clampNumber(s.server.port, 1, 65535, 3000);
 
-  s.display.dimTimeoutSeconds = clampNumber(s.display.dimTimeoutSeconds, 2, 3600, 30);
-  s.display.dimOpacity = normalizeOpacity(s.display.dimOpacity, 0.6);
-  s.display.dockAutoHideSeconds = clampNumber(s.display.dockAutoHideSeconds, 1, 60, 4);
-  if (!["top", "bottom", "left", "right"].includes(s.display.dockPosition)) s.display.dockPosition = "bottom";
+  // Migraciones desde v4/v5.2: todo lo que apunte al Dashboard vuelve a Backlog.
+  if (s.display?.defaultView === "dashboard") s.display.defaultView = "backlog";
+  if (!["backlog", "current-content", "collections"].includes(s.display.defaultView)) s.display.defaultView = "backlog";
+  s.display.dockPosition = "top";
 
-  const defaultsByView = DEFAULT_SETTINGS.display.dimByView;
-  for (const viewId of Object.keys(defaultsByView)) {
-    const current = s.display.dimByView?.[viewId] || {};
-    s.display.dimByView[viewId] = {
-      enabled: current.enabled !== false,
-      afterSeconds: clampNumber(current.afterSeconds, 2, 3600, defaultsByView[viewId].afterSeconds),
-      opacity: normalizeOpacity(current.opacity, defaultsByView[viewId].opacity)
-    };
-  }
+  // El oscurecimiento automático, wallpapers del Dashboard y colecciones manuales quedan fuera del modelo v5.3.
+  delete s.display.dimEnabled;
+  delete s.display.dimTimeoutSeconds;
+  delete s.display.dimOpacity;
+  delete s.display.dimByView;
+  delete s.display.dockAutoHide;
+  delete s.display.dockAutoHideSeconds;
+  delete s.dashboard;
+  delete s.wallpapers;
 
-  s.dashboard.wallpaperIntervalSeconds = clampNumber(s.dashboard.wallpaperIntervalSeconds ?? s.display.wallpaperIntervalSeconds, 5, 3600, 35);
-  s.dashboard.wallpaperFadeSeconds = clampNumber(s.dashboard.wallpaperFadeSeconds, 0, 10, 1);
-  s.dashboard.progressBarOpacity = normalizeOpacity(s.dashboard.progressBarOpacity, 0.75);
-  if (!isObject(s.dashboard.sources)) s.dashboard.sources = { wallpapers: true, collections: [] };
-  s.dashboard.sources.wallpapers = s.dashboard.sources.wallpapers !== false;
-  if (!Array.isArray(s.dashboard.sources.collections)) s.dashboard.sources.collections = [];
-
+  if (!isObject(s.views)) s.views = DEFAULT_SETTINGS.views;
+  if (!isObject(s.views.notifications)) s.views.notifications = { enabled: true, itemsPerPage: 50 };
   s.views.notifications.itemsPerPage = clampNumber(s.views.notifications.itemsPerPage, 1, 50, 50);
+  s.views.backlog = { enabled: true, ...(isObject(s.views.backlog) ? s.views.backlog : {}), cardSize: cardSize(s.views.backlog?.cardSize), itemsPerPage: clampNumber(s.views.backlog?.itemsPerPage, 1, 60, 12) };
+  s.views.current = { enabled: true, ...(isObject(s.views.current) ? s.views.current : {}) };
+  s.views.collections = { enabled: true, ...(isObject(s.views.collections) ? s.views.collections : {}), cardSize: cardSize(s.views.collections?.cardSize), itemsPerPage: clampNumber(s.views.collections?.itemsPerPage, 1, 120, 12) };
+  delete s.views.dashboard;
+
+  if (!isObject(s.design)) s.design = {};
+  s.design.accentColor = color(s.design.accentColor);
+  s.design.fontScale = fontScale(s.design.fontScale);
+  s.design.density = density(s.design.density);
+
+  if (!isObject(s.backlog)) s.backlog = { sources: {} };
+  if (!isObject(s.backlog.sources)) s.backlog.sources = {};
+  s.backlog.sources.plexRecentlyAdded = s.backlog.sources.plexRecentlyAdded !== false;
+  s.backlog.sources.plexPlayback = s.backlog.sources.plexPlayback === true;
+  s.backlog.sources.playniteStarted = s.backlog.sources.playniteStarted !== false;
+
   s.notifications.maxStored = clampNumber(s.notifications.maxStored, 1, 50, 50);
   s.notifications.toastDurationSeconds = clampNumber(s.notifications.toastDurationSeconds, 1, 60, 6);
-  if (!["small", "medium", "large"].includes(s.notifications.toastSize)) s.notifications.toastSize = "large";
+  if (!["small", "medium", "large"].includes(s.notifications.toastSize)) s.notifications.toastSize = "medium";
   s.notifications.soundVolume = normalizeOpacity(s.notifications.soundVolume, 0.35);
+
   s.integrations.playnite.maxPayloadMb = clampNumber(s.integrations.playnite.maxPayloadMb, 1, 250, 80);
   if (!Array.isArray(s.integrations.tautulli.showPlaybackOn)) s.integrations.tautulli.showPlaybackOn = ["play", "start"];
   if (!Array.isArray(s.integrations.arr.enabledEvents)) s.integrations.arr.enabledEvents = ["grab", "movie_add", "series_add"];

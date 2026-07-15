@@ -7,7 +7,7 @@ export function normalizeTautulliEvent(payload, metadata) {
   const eventKey = compact(rawEvent);
 
   // Sólo estos eventos abren el popup temporal de Plex.
-  // "resume" se procesa, pero no interrumpe el dashboard.
+  // "resume" se procesa, pero no fuerza navegación automática.
   const playbackStarts = new Set([
     "play", "start", "playbackstart",
     "media.play", "media.playbackstart"

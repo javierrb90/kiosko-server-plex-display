@@ -1,188 +1,188 @@
-export function createCollectionsView({ api, ui } = {}) {
+export function createCollectionsView({ api, ui, controlsRoot } = {}) {
   let el;
-  let collections = [];
-  let selectedId = null;
+  let items = [];
+  let settings = {};
+  let activeTypes = new Set(['games', 'movies', 'series']);
+  let cardSize = 'medium';
+  let search = '';
+  let page = 0;
   let isVisible = false;
-  let mode = "presentation";
-  let itemSize = "xl";
-  let layout = "masonry"; // masonry | square
+  let bgTimer = null;
+  let bgIndex = 0;
+  let controlsMounted = false;
 
-  const sizeBase = { l: 120, xl: 165, xxl: 230, all: 76 };
+  const sizeMap = {
+    small: { width: 104, gap: 12 },
+    medium: { width: 136, gap: 14 },
+    large: { width: 176, gap: 16 }
+  };
+  const typeLabels = { games: 'Juegos', movies: 'Películas', series: 'Series' };
 
-  function selected() {
-    return collections.find(c => c.id === selectedId) || collections[0];
+  function currentSize() { return ['small','medium','large'].includes(cardSize) ? cardSize : 'medium'; }
+  function label(type) { return typeLabels[type] || 'Otros'; }
+  function sourceLabel(source) { return source === 'plex' ? 'Plex' : source === 'playnite' ? 'Playnite' : source; }
+  function stars(value = 0) { const n = Math.max(0, Math.min(5, Number(value) || 0)); return `<span class="star-rating">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`; }
+  function date(value) { const d = new Date(value); return Number.isFinite(d.getTime()) ? d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : ''; }
+  function configuredPageSize() { return clamp(Number(settings.views?.collections?.itemsPerPage), 1, 120, 12); }
+
+  function sessionKey() { return 'kiosko:v5.4.2:collections'; }
+  function saveSession() { try { sessionStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {} }
+  function loadSession() {
+    try {
+      const parsed = JSON.parse(sessionStorage.getItem(sessionKey()) || sessionStorage.getItem('kiosko:v5.4:collections') || 'null');
+      if (!parsed) return;
+      if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(type => ['games','movies','series'].includes(type)));
+      if (typeof parsed.search === 'string') search = parsed.search;
+      if (Number.isFinite(Number(parsed.page))) page = Math.max(0, Number(parsed.page));
+      if (['small','medium','large'].includes(parsed.cardSize)) cardSize = parsed.cardSize;
+    } catch {}
   }
 
-  function getColumnCount() {
-    const grid = el?.querySelector(".collections-grid");
-    const width = grid?.clientWidth || window.innerWidth || 960;
-    const base = sizeBase[itemSize] || sizeBase.xl;
-    return Math.max(1, Math.floor(width / base));
+  function countsByType() {
+    return items.reduce((acc, item) => { const type = item.collectionType; if (['games','movies','series'].includes(type)) acc[type] = (acc[type] || 0) + 1; return acc; }, { games: 0, movies: 0, series: 0 });
   }
 
-  function splitIntoColumns(items) {
-    const count = getColumnCount();
-    const cols = Array.from({ length: count }, () => []);
-    items.forEach((item, index) => cols[index % count].push({ item, index }));
-    return cols;
+  function filtered() {
+    const q = search.trim().toLowerCase();
+    return items
+      .filter(item => activeTypes.has(item.collectionType))
+      .filter(item => !q || `${item.title || ''} ${label(item.collectionType)} ${sourceLabel(item.source)}`.toLowerCase().includes(q))
+      .sort((a,b)=>Date.parse(b.completedAt||0)-Date.parse(a.completedAt||0));
   }
 
-  function updateSquareSize() {
-    const grid = el?.querySelector('.collections-grid');
-    if (!grid) return;
-    const count = getColumnCount();
-    const gap = itemSize === 'all' ? 8 : 12;
-    const width = grid.clientWidth || 960;
-    const size = Math.max(42, Math.floor((width - gap * (count - 1)) / count));
-    grid.style.setProperty('--collection-square-size', `${size}px`);
+  function visible() {
+    const list = filtered();
+    const pageSize = configuredPageSize();
+    const pages = Math.max(1, Math.ceil(list.length / pageSize));
+    page = Math.max(0, Math.min(page, pages - 1));
+    return { rows: list.slice(page * pageSize, page * pageSize + pageSize), total: list.length, pages };
   }
 
-  async function refresh() {
-    collections = await api("/api/collections");
-    if (!selectedId || !selected()) selectedId = collections[0]?.id;
+  function setBackground(list) {
+    const bg = el?.querySelector('[data-dynamic-bg]'); if (!bg) return;
+    const candidates = list.filter(item => item.backdrop || item.poster);
+    if (!candidates.length) { bg.innerHTML = ''; return; }
+    bgIndex = bgIndex % candidates.length; const src = candidates[bgIndex].backdrop || candidates[bgIndex].poster;
+    bg.innerHTML = `<img src="${escapeAttr(src)}" alt="">`;
+  }
+  function restartBackgroundRotation() {
+    clearInterval(bgTimer); const list = filtered().filter(item => item.backdrop || item.poster); bgIndex = Math.min(bgIndex, Math.max(0, list.length-1)); setBackground(list);
+    if (list.length > 1 && isVisible) bgTimer = setInterval(() => { bgIndex = (bgIndex + 1) % list.length; setBackground(list); }, 12000);
+  }
+
+  function renderControls({ force = false } = {}) {
+    if (!controlsRoot || !isVisible) return;
+    if (!force && controlsMounted) return;
+    controlsMounted = true;
+    controlsRoot.innerHTML = `<button type="button" class="view-actions-button view-filter-button" data-collection-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-collection-filter-meta></span></button>`;
+    updateControlsState();
+  }
+
+  function updateControlsState() {
+    if (!controlsRoot || !isVisible) return;
+    const meta = controlsRoot.querySelector('[data-collection-filter-meta]');
+    if (meta) meta.textContent = `${activeTypes.size}/3 · ${currentSize().slice(0,1).toUpperCase()}`;
+  }
+
+  async function openControlsModal() {
+    const counts = countsByType();
+    const body = `<div class="controls-modal">
+      <section class="controls-modal__section"><h3>Tipos</h3><div class="controls-modal__checks">
+        ${['games','movies','series'].map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-type="${type}" ${activeTypes.has(type) ? 'checked' : ''}><span>${typeLabels[type]}</span><small>${counts[type] || 0}</small></label>`).join('')}
+      </div></section>
+      <section class="controls-modal__section"><h3>Tamaño de carátula</h3><div class="controls-modal__sizes">
+        ${[['small','S'],['medium','M'],['large','L']].map(([value,label]) => `<label class="controls-modal__toggle"><input type="radio" name="collection-size" value="${value}" ${currentSize() === value ? 'checked' : ''}><span>${label}</span></label>`).join('')}
+      </div></section>
+      <section class="controls-modal__section"><h3>Búsqueda</h3><label class="ui-field"><span>Filtrar por título o detalle</span><input type="search" data-control-search value="${escapeAttr(search)}" placeholder="Buscar" autocomplete="off"></label></section>
+    </div>`;
+    const result = await ui.open({
+      title: 'Vista de Colecciones',
+      body,
+      actions: [
+        { label: 'Cancelar', value: null },
+        { label: 'Aplicar', variant: 'primary', onClick: root => ({
+          activeTypes: [...root.querySelectorAll('[data-filter-type]:checked')].map(input => input.dataset.filterType),
+          cardSize: root.querySelector('input[name="collection-size"]:checked')?.value || currentSize(),
+          search: root.querySelector('[data-control-search]')?.value || ''
+        }) }
+      ]
+    });
+    if (!result) return;
+    activeTypes = new Set(result.activeTypes.filter(type => ['games','movies','series'].includes(type)));
+    if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']);
+    cardSize = ['small','medium','large'].includes(result.cardSize) ? result.cardSize : 'medium';
+    search = result.search || '';
+    page = 0;
+    bgIndex = 0;
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { collections: { cardSize } } }) }).catch(() => {});
+    updateControlsState();
     render();
-  }
-
-  function applyClasses() {
-    const grid = el?.querySelector(".collections-grid");
-    if (!grid) return;
-    grid.classList.remove("collections-grid--l", "collections-grid--xl", "collections-grid--xxl", "collections-grid--all", "collections-grid--masonry", "collections-grid--square");
-    grid.classList.add(`collections-grid--${itemSize}`, `collections-grid--${layout}`);
-    updateSquareSize();
   }
 
   function render() {
     if (!el || !isVisible) return;
-    const c = selected();
-    el.querySelector(".collection-title").textContent = c?.name || "Colecciones";
-    el.querySelector(".collection-count").textContent = c ? `${c.items?.length || 0} imágenes` : "0 imágenes";
-    el.classList.toggle("collections--manage", mode === "manage");
-    const grid = el.querySelector(".collections-grid");
-    applyClasses();
-
-    if (!c?.items?.length) {
-      grid.innerHTML = `<div class="collections-empty">Esta colección todavía no tiene imágenes.</div>`;
-      return;
-    }
-
-    const columns = splitIntoColumns(c.items);
-    grid.innerHTML = `<div class="collections-masonry">${columns.map(column => `<div class="collection-column">${column.map(({ item, index }) => `<article class="collection-item">
-      <img src="${escapeAttr(item.coverPath || item.assetPath)}" alt="${escapeAttr(item.title || "")}">
-      ${item.videoPath ? `<span class="collection-item__badge">Vídeo</span>` : ``}
-      ${item.title ? `<div class="collection-item__caption">${escapeHtml(item.title)}</div>` : ``}
-      <div class="collection-item-controls">
-        <button data-move="up" data-id="${item.id}" ${index === 0 ? "disabled" : ""}>←</button>
-        <button data-move="down" data-id="${item.id}" ${index === c.items.length - 1 ? "disabled" : ""}>→</button>
-        <button data-delete="${item.id}">×</button>
+    const { rows, total, pages } = visible();
+    el.querySelector('[data-section-count]').textContent = `${total}`;
+    const pager = el.querySelector('.pager');
+    pager.hidden = pages <= 1;
+    el.querySelector('[data-page-label]').textContent = `${page + 1}/${pages}`;
+    el.querySelector('[data-prev]').disabled = page <= 0; el.querySelector('[data-next]').disabled = page >= pages - 1;
+    updateControlsState();
+    const grid = el.querySelector('.media-grid'); const cfg = sizeMap[currentSize()];
+    grid.style.setProperty('--card-width', `${cfg.width}px`); grid.style.setProperty('--card-gap', `${cfg.gap}px`);
+    if (!rows.length) { grid.innerHTML = `<div class="grid-empty">Todavía no hay elementos con estos filtros.</div>`; restartBackgroundRotation(); saveSession(); return; }
+    grid.innerHTML = rows.map(item => `<article class="media-card completed-card" data-id="${escapeAttr(item.id)}">
+      <div class="media-card__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
+      <div class="media-card__meta">
+        <strong>${escapeHtml(item.title || 'Sin título')}</strong>
+        <span>${escapeHtml(label(item.collectionType))} · ${escapeHtml(sourceLabel(item.source))}</span>
+        ${stars(item.rating)}
+        <time>${escapeHtml(date(item.completedAt))}</time>
       </div>
-    </article>`).join("")}</div>`).join("")}</div>`;
+    </article>`).join('');
+    restartBackgroundRotation();
+    saveSession();
   }
 
-  function changeCollection(delta) {
-    if (!collections.length) return;
-    const current = Math.max(0, collections.findIndex(c => c.id === selectedId));
-    selectedId = collections[(current + delta + collections.length) % collections.length].id;
-    render();
-  }
-
-  async function createCollection() {
-    const name = await ui.prompt({ title: "Nueva colección", placeholder: "Nombre", defaultValue: "Nueva colección" });
-    if (!name) return;
-    const c = await api("/api/collections", { method: "POST", body: JSON.stringify({ name }) });
-    selectedId = c.id;
-    await refresh();
-  }
-
-  async function renameCollection() {
-    const c = selected();
-    if (!c) return;
-    const name = await ui.prompt({ title: "Renombrar colección", placeholder: "Nombre", defaultValue: c.name });
-    if (!name) return;
-    await api(`/api/collections/${c.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
-    await refresh();
-  }
-
-  async function deleteCollection() {
-    const c = selected();
-    if (!c) return;
-    const ok = await ui.confirm({ title: "Eliminar colección", message: `¿Eliminar ${c.name}? También se borrarán sus imágenes.`, confirmText: "Eliminar", danger: true });
-    if (!ok) return;
-    await api(`/api/collections/${c.id}`, { method: "DELETE" });
-    selectedId = null;
-    await refresh();
-  }
-
-  function openMenu() {
-    const c = selected();
-    ui.actionSheet({
-      title: c?.name || 'Colecciones',
+  function find(id) { return items.find(item => item.id === id); }
+  async function editItem(item) {
+    const rating = await ui.open({
+      title: 'Editar valoración',
+      className: 'ui-modal-root--rating',
+      body: `<div class="rating-modal"><div class="rating-modal__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : ''}</div><div class="rating-modal__copy"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(label(item.collectionType))}</p><fieldset class="rating-picker" data-value="${Number(item.rating||0)}">${[1,2,3,4,5].map(n => `<button type="button" data-rating="${n}">${n <= Number(item.rating||0) ? '★' : '☆'}</button>`).join('')}</fieldset></div></div>`,
       actions: [
-        { id: 'prev', label: 'Colección anterior', description: 'Cambiar a la colección previa', disabled: collections.length < 2, run: () => changeCollection(-1) },
-        { id: 'next', label: 'Colección siguiente', description: 'Cambiar a la siguiente colección', disabled: collections.length < 2, run: () => changeCollection(1) },
-        { id: 'mode', label: mode === 'manage' ? 'Modo presentación' : 'Modo gestión', description: mode === 'manage' ? 'Ocultar controles de items' : 'Mostrar mover/eliminar items', run: () => { mode = mode === 'manage' ? 'presentation' : 'manage'; render(); } },
-        { id: 'layout', label: layout === 'masonry' ? 'Cuadrícula cuadrada' : 'Masonry ratio original', description: layout === 'masonry' ? 'Mostrar todos los items en cuadrados' : 'Preservar formato original de portadas/fondos', run: () => { layout = layout === 'masonry' ? 'square' : 'masonry'; render(); } },
-        { id: 'size-l', label: 'Tamaño L', description: 'Más columnas', run: () => { itemSize = 'l'; render(); } },
-        { id: 'size-xl', label: 'Tamaño XL', description: 'Tamaño medio', run: () => { itemSize = 'xl'; render(); } },
-        { id: 'size-xxl', label: 'Tamaño XXL', description: 'Piezas grandes', run: () => { itemSize = 'xxl'; render(); } },
-        { id: 'size-all', label: 'Ver todos', description: 'Miniaturas pequeñas para maximizar cantidad visible', run: () => { itemSize = 'all'; render(); } },
-        { id: 'new', label: 'Nueva colección', description: 'Crear una colección vacía', run: createCollection },
-        { id: 'rename', label: 'Renombrar colección', description: 'Cambiar el nombre actual', disabled: !c, run: renameCollection },
-        { id: 'delete', label: 'Eliminar colección', description: 'Borrar colección e imágenes', disabled: !c, run: deleteCollection }
+        { label: 'Eliminar', variant: 'danger', onClick: async () => { const ok = await ui.confirm({ title: 'Eliminar de colección', message: '¿Eliminar este elemento?', confirmText: 'Eliminar', danger: true }); if (!ok) return false; await api(`/api/completions/${item.id}`, { method: 'DELETE' }); return null; } },
+        { label: 'Cancelar', value: null },
+        { label: 'Guardar', variant: 'primary', onClick: (root) => Number(root.querySelector('.rating-picker')?.dataset.value || item.rating || 0) }
       ]
     });
+    if (rating === null) return;
+    await api(`/api/completions/${item.id}`, { method: 'PATCH', body: JSON.stringify({ rating }) }); ui.toast('Valoración actualizada');
   }
 
   return {
-    id: "collections",
+    id: 'collections',
     mount(target) {
       el = target;
-      el.innerHTML = `<div class="collections-view">
-        <header>
-          <div>
-            <p class="eyebrow">COLECCIONES</p>
-            <h1 class="collection-title">Colecciones</h1>
-            <div class="collection-meta"><span class="collection-count">0 imágenes</span></div>
-          </div>
-          <button class="collection-menu-button" type="button" data-menu aria-label="Acciones">...</button>
-        </header>
-        <section class="collections-grid"></section>
-      </div>`;
-      el.querySelector('[data-menu]').addEventListener('click', openMenu);
-      el.querySelector(".collections-grid").addEventListener("click", async e => {
-        const del = e.target.closest("[data-delete]");
-        const move = e.target.closest("[data-move]");
-        const c = selected();
-        if (!c) return;
-        if (del) {
-          const ok = await ui.confirm({ title: "Eliminar imagen", message: "¿Eliminar esta imagen de la colección?", confirmText: "Eliminar", danger: true });
-          if (!ok) return;
-          await api(`/api/collections/${c.id}/items/${del.dataset.delete}`, { method: "DELETE" });
-          await refresh();
-          ui.toast("Imagen eliminada");
-        }
-        if (move && !move.disabled) {
-          await api(`/api/collections/${c.id}/items/${move.dataset.id}/move`, {
-            method: "POST",
-            body: JSON.stringify({ direction: move.dataset.move === "down" ? "down" : "up" })
-          });
-          await refresh();
-        }
+      loadSession();
+      el.innerHTML = `<div class="app-section collections-view"><div class="section-bg" data-dynamic-bg></div><header class="section-title"><h1>Colecciones <span data-section-count>0</span></h1></header><section class="media-grid" aria-label="Colecciones"></section><footer class="pager"><button data-prev aria-label="Página anterior">‹</button><span data-page-label>1/1</span><button data-next aria-label="Página siguiente">›</button></footer></div>`;
+      el.addEventListener('click', async event => {
+        if (event.target.closest('[data-prev]')) { page -= 1; render(); return; }
+        if (event.target.closest('[data-next]')) { page += 1; render(); return; }
+        const card = event.target.closest('.media-card'); if (card) { const item = find(card.dataset.id); if (item) await editItem(item); }
       });
-      window.addEventListener("resize", () => { if (isVisible) render(); });
+      controlsRoot?.addEventListener('click', event => {
+        if (!isVisible) return;
+        if (event.target.closest('[data-collection-open-controls]')) openControlsModal();
+      });
+      window.addEventListener('resize', () => { if (isVisible) render(); });
+      document.addEventListener('click', (event) => { const btn = event.target.closest('.rating-picker button'); if (!btn) return; const picker = btn.closest('.rating-picker'); picker.dataset.value = btn.dataset.rating; picker.querySelectorAll('button').forEach(node => { node.textContent = Number(node.dataset.rating) <= Number(btn.dataset.rating) ? '★' : '☆'; }); });
     },
-    show() { isVisible = true; el.classList.add("view--active"); el.setAttribute("aria-hidden", "false"); refresh().catch(console.error); },
-    hide() { isVisible = false; el.classList.remove("view--active"); el.setAttribute("aria-hidden", "true"); },
-    update(data = {}) {
-      if (data.collections) {
-        collections = data.collections;
-        if (!selectedId || !selected()) selectedId = data.state?.selectedCollectionId || collections[0]?.id;
-        if (isVisible) render();
-      }
-    }
+    show() { isVisible = true; controlsMounted = false; el.classList.add('view--active'); el.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); render(); },
+    hide() { isVisible = false; clearInterval(bgTimer); controlsMounted = false; el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); if (controlsRoot) controlsRoot.innerHTML = ''; },
+    update(data = {}) { if (Array.isArray(data.completions)) items = data.completions; if (data.settings) { settings = data.settings; cardSize = settings.views?.collections?.cardSize || cardSize; } if (isVisible) render(); }
   };
 }
-
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c]));
-}
+function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>'\"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }
 function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }

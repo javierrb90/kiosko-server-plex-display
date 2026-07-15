@@ -30,6 +30,20 @@ function extFromUrl(url) {
   } catch { return ""; }
 }
 
+function extFromMime(mime) {
+  return MIME_EXT[String(mime || "").split(";")[0].toLowerCase()] || "";
+}
+
+async function findCachedFile(dir, prefix) {
+  try {
+    const entries = await fs.readdir(dir);
+    const match = entries.find((entry) => entry.startsWith(prefix));
+    return match ? path.join(dir, match) : null;
+  } catch {
+    return null;
+  }
+}
+
 export class AssetService {
   constructor(dataDir) {
     this.dataDir = dataDir;
@@ -37,7 +51,7 @@ export class AssetService {
   }
 
   async init() {
-    for (const dir of ["wallpapers", "collections", "plex", "playnite", "uploads"]) {
+    for (const dir of ["plex", "playnite", "uploads"]) {
       await fs.mkdir(path.join(this.assetsDir, dir), { recursive: true });
     }
   }
@@ -62,6 +76,34 @@ export class AssetService {
     const ext = MIME_EXT[contentType] || extFromUrl(url) || ".jpg";
     const buffer = Buffer.from(await response.arrayBuffer());
     return this.saveBuffer(buffer, { bucket, title, ext, mime: contentType || "image/jpeg", originalUrl: url });
+  }
+
+  async cacheRemoteUrl(url, { bucket = "uploads", title = "asset", cacheKey = null } = {}) {
+    const value = String(url || "");
+    if (!/^https?:\/\//i.test(value)) throw new Error("URL remota no válida.");
+
+    const safeBucket = safeName(bucket);
+    const dir = path.join(this.assetsDir, safeBucket);
+    await fs.mkdir(dir, { recursive: true });
+
+    const hash = crypto.createHash("sha1").update(String(cacheKey || value)).digest("hex").slice(0, 24);
+    const prefix = `cache-${hash}-`;
+    const existing = await findCachedFile(dir, prefix);
+    if (existing) {
+      const ext = path.extname(existing).toLowerCase();
+      const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : ext === ".gif" ? "image/gif" : "image/jpeg";
+      return { id: hash, path: this.publicPath(existing), filePath: existing, mime, size: 0, originalUrl: value, cached: true };
+    }
+
+    const response = await fetch(value);
+    if (!response.ok) throw new Error(`No se pudo descargar el asset: HTTP ${response.status}`);
+    const contentType = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
+    const ext = extFromMime(contentType) || extFromUrl(value) || ".jpg";
+    const filename = `${prefix}${safeName(title)}${ext}`;
+    const absPath = path.join(dir, filename);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(absPath, buffer);
+    return { id: hash, path: this.publicPath(absPath), filePath: absPath, mime: contentType || "image/jpeg", size: buffer.length, originalUrl: value, cached: false };
   }
 
   async saveExistingAsset(publicPath, { bucket = "uploads", title = "asset" } = {}) {

@@ -19,10 +19,12 @@ export function normalizePlayniteEvent(payload = {}) {
   const genres = asList(payload.genres);
   const releaseYear = payload.releaseYear ?? payload.year ?? "";
   const playtime = payload.playtime ?? null;
+  const gameId = payload.id || payload.gameId || payload.databaseId || payload.sourceId || title;
 
   return {
     event: "game_started",
     title,
+    gameId: String(gameId || title),
     platforms,
     developers,
     publishers,

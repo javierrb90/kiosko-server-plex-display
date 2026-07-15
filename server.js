@@ -11,7 +11,7 @@ import { normalizePlayniteEvent } from "./src/adapters/playnite.js";
 import { SettingsStore } from "./src/settings-store.js";
 import { StateStore } from "./src/state-store.js";
 import { AssetService } from "./src/asset-service.js";
-import { WallpaperStore, CollectionStore } from "./src/library-store.js";
+import { BacklogStore, CompletionStore } from "./src/backlog-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -31,18 +31,18 @@ app.use(express.static(path.join(__dirname, "public")));
 const store = new EventStore(DATA_DIR);
 const stateStore = new StateStore(DATA_DIR);
 const assetService = new AssetService(DATA_DIR);
-const wallpaperStore = new WallpaperStore(DATA_DIR);
-const collectionStore = new CollectionStore(DATA_DIR);
-await Promise.all([store.init(), stateStore.init(), assetService.init(), wallpaperStore.init(), collectionStore.init()]);
+const backlogStore = new BacklogStore(DATA_DIR);
+const completionStore = new CompletionStore(DATA_DIR);
+await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init()]);
 
 const plex = new PlexService(settingsStore.get().plex || {});
 
-const validViews = new Set(["dashboard", "current-content", "collections"]);
+const validViews = new Set(["backlog", "current-content", "collections"]);
 const runtime = {
-  activeView: validViews.has(stateStore.get().activeView) ? stateStore.get().activeView : "dashboard",
+  activeView: validViews.has(settingsStore.get().display?.defaultView) ? settingsStore.get().display.defaultView : "backlog",
   plex: stateStore.get().lastPlex || { event: "idle", title: "Sin reproducción", subtitle: "", year: "", posterUrl: null, backdropUrl: null, type: "" },
   game: stateStore.get().lastGame || null,
-  currentContent: stateStore.get().lastCurrent || stateStore.get().lastGame || stateStore.get().lastPlex || null
+  currentContent: stateStore.get().lastCurrent || null
 };
 
 function configStatus() {
@@ -58,7 +58,7 @@ function configStatus() {
 
 const server = app.listen(PORT, () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v4 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v5.4 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
 });
@@ -85,8 +85,9 @@ function snapshot() {
       notifications: listNotifications(),
       unreadCount: unreadNotificationCount(),
       settings: publicSettings(),
-      wallpapers: wallpaperStore.list(),
-      collections: collectionStore.list(),
+      backlog: backlogStore.list(),
+      completions: completionStore.list(),
+      completionRatings: completionStore.ratingsMap(),
       state: stateStore.get()
     }
   };
@@ -95,7 +96,7 @@ function broadcastState() { hub.broadcast(snapshot()); }
 function publicSettings() { return settingsStore.get(); }
 async function navigate(viewId, reason = "manual", { force = false } = {}) {
   const locked = Boolean(stateStore.get().privacyLocked);
-  if (locked && viewId !== "dashboard" && !force) {
+  if (locked && !force) {
     console.log(`Navegación bloqueada por privacidad: ${viewId}`, { reason });
     return false;
   }
@@ -118,21 +119,29 @@ function shouldShowPlexEvent(event) {
   const key = normalizeEnabledPlaybackEvent(event);
   return allowed.some(item => normalizeEnabledPlaybackEvent(item) === key);
 }
+function backlogSources() {
+  const sources = settingsStore.get().backlog?.sources || {};
+  return {
+    plexRecentlyAdded: sources.plexRecentlyAdded !== false,
+    plexPlayback: sources.plexPlayback === true,
+    playniteStarted: sources.playniteStarted !== false
+  };
+}
 
 wss.on("connection", ws => {
   console.log("WebSocket conectado");
   hub.send(ws, snapshot());
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, wallpapers: wallpaperStore.list().length, collections: collectionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length, completions: completionStore.list().length }));
 app.get("/api/state", (_req, res) => res.json(stateStore.get()));
 app.put("/api/state", async (req, res) => {
   const patch = req.body || {};
   const state = await stateStore.update(patch);
   if (patch.privacyLocked === true) {
-    runtime.activeView = "dashboard";
-    await stateStore.update({ activeView: "dashboard" });
-    hub.broadcast({ type: "view:show", payload: { id: "dashboard", reason: "privacy lock" } });
+    runtime.activeView = "backlog";
+    await stateStore.update({ activeView: "backlog" });
+    hub.broadcast({ type: "view:show", payload: { id: "backlog", reason: "privacy lock" } });
   }
   broadcastState();
   res.json(stateStore.get());
@@ -259,9 +268,12 @@ app.post("/api/simulate/:kind", async (req, res) => {
       };
       runtime.currentContent = { ...runtime.plex, source: "plex", kind: "plex" };
       await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
+      if (backlogSources().plexPlayback) {
+        await backlogStore.upsert("plex", normalizePlexBacklogItem(runtime.plex));
+        broadcastBacklogAndCompletions();
+      }
       hub.broadcast({ type: "current:update", payload: runtime.currentContent });
-      await navigate("current-content", "simulación plex");
-      return res.json({ ok: true, kind, view: "current-content" });
+      return res.json({ ok: true, kind, view: runtime.activeView });
     }
     if (kind === "game") {
       runtime.game = {
@@ -277,9 +289,12 @@ app.post("/api/simulate/:kind", async (req, res) => {
       };
       runtime.currentContent = { ...runtime.game, source: "playnite", kind: "game" };
       await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
+      if (backlogSources().playniteStarted) {
+        await backlogStore.upsert("playnite", normalizePlayniteBacklogItem(runtime.game));
+        broadcastBacklogAndCompletions();
+      }
       hub.broadcast({ type: "current:update", payload: runtime.currentContent });
-      await navigate("current-content", "simulación playnite");
-      return res.json({ ok: true, kind, view: "current-content" });
+      return res.json({ ok: true, kind, view: runtime.activeView });
     }
 
     const samples = {
@@ -298,128 +313,109 @@ app.post("/api/simulate/:kind", async (req, res) => {
   }
 });
 
-app.get("/api/wallpapers", (_req, res) => res.json(wallpaperStore.list()));
-app.post("/api/wallpapers", async (req, res) => {
-  try {
-    const asset = await assetService.saveImage(req.body?.media || req.body?.image || req.body?.url || req.body?.dataUri, { bucket: "wallpapers", title: req.body?.title || "wallpaper" });
-    const wpSettings = settingsStore.get().wallpapers || {};
-    if (asset.mime === "image/gif" && wpSettings.allowGifs === false) {
-      await assetService.removePublicPath(asset.path);
-      return res.status(400).json({ error: "Los GIFs están desactivados en ajustes." });
-    }
-    if (String(asset.mime || "").startsWith("video/") && wpSettings.allowVideos === false) {
-      await assetService.removePublicPath(asset.path);
-      return res.status(400).json({ error: "Los vídeos están desactivados en ajustes." });
-    }
-    const wallpaper = await wallpaperStore.add({
-      title: req.body?.title || "Wallpaper",
-      source: req.body?.source || "manual",
-      status: req.body?.status || "active",
-      asset,
-      audioEnabled: Boolean(req.body?.audioEnabled),
-      finishBeforeNext: Boolean(req.body?.finishBeforeNext),
-      volume: req.body?.volume ?? 0.35,
-      meta: req.body?.meta || {}
-    });
-    hub.broadcast({ type: "wallpapers:update", payload: wallpaperStore.list() });
-    broadcastState();
-    res.status(201).json(wallpaper);
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
-app.patch("/api/wallpapers/:id", async (req, res) => {
-  try { const item = await wallpaperStore.update(req.params.id, req.body || {}); hub.broadcast({ type: "wallpapers:update", payload: wallpaperStore.list() }); res.json(item); }
-  catch (error) { res.status(404).json({ error: error.message }); }
-});
-app.delete("/api/wallpapers/:id", async (req, res) => {
-  try { const removed = await wallpaperStore.remove(req.params.id); await assetService.removePublicPath(removed.assetPath); hub.broadcast({ type: "wallpapers:update", payload: wallpaperStore.list() }); broadcastState(); res.json({ ok: true }); }
-  catch (error) { res.status(404).json({ error: error.message }); }
-});
 
-app.get("/api/collections", (_req, res) => res.json(collectionStore.list()));
-app.post("/api/collections", async (req, res) => {
-  const c = await collectionStore.create({ name: req.body?.name || "Nueva colección" });
-  hub.broadcast({ type: "collections:update", payload: collectionStore.list() });
-  res.status(201).json(c);
-});
-app.patch("/api/collections/:id", async (req, res) => {
-  try { const c = await collectionStore.update(req.params.id, req.body || {}); hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); res.json(c); }
-  catch (error) { res.status(404).json({ error: error.message }); }
-});
-app.delete("/api/collections/:id", async (req, res) => {
-  try { const removed = await collectionStore.remove(req.params.id); for (const item of removed.items || []) { await assetService.removePublicPath(item.assetPath); await assetService.removePublicPath(item.backdropPath); await assetService.removePublicPath(item.videoPath); } hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); broadcastState(); res.json({ ok: true }); }
-  catch (error) { res.status(404).json({ error: error.message }); }
-});
-app.post("/api/collections/:id/items", async (req, res) => {
-  try {
-    const coverInput = req.body?.coverImage || req.body?.image || req.body?.url || req.body?.dataUri;
-    const backdropInput = req.body?.backdropImage || req.body?.backdrop || req.body?.background;
-    const videoInput = req.body?.video || req.body?.videoImage || req.body?.trailer || req.body?.videoDataUri;
-    const asset = await assetService.saveImage(coverInput, { bucket: "collections", title: req.body?.title || "item" });
-    let backdropAsset = null;
-    if (backdropInput) {
-      try { backdropAsset = await assetService.saveImage(backdropInput, { bucket: "collections", title: `${req.body?.title || "item"}-backdrop` }); }
-      catch (error) { console.warn("No se pudo guardar backdrop de colección:", error.message); }
-    }
-    let videoAsset = null;
-    if (videoInput) {
-      try { videoAsset = await assetService.saveImage(videoInput, { bucket: "collections", title: `${req.body?.title || "item"}-video` }); }
-      catch (error) { console.warn("No se pudo guardar vídeo de colección:", error.message); }
-    }
-    const item = await collectionStore.addItem(req.params.id, {
-      title: req.body?.title || "Imagen",
-      source: req.body?.source || "manual",
-      asset,
-      backdropAsset,
-      videoAsset,
-      videoFinishBeforeNext: Boolean(req.body?.videoFinishBeforeNext),
-      meta: req.body?.meta || {}
+async function cachePlexMetadataAssets(metadata = {}) {
+  const normalized = { ...metadata, meta: { ...(metadata.meta || {}) } };
+
+  if (normalized.posterUrl && /^https?:\/\//i.test(String(normalized.posterUrl))) {
+    const poster = await assetService.cacheRemoteUrl(normalized.posterUrl, {
+      bucket: "plex",
+      title: `${normalized.title || "plex"}-poster`,
+      cacheKey: `plex:poster:${normalized.ratingKey || normalized.canonicalRatingKey || normalized.canonicalId || normalized.posterUrl}:${normalized.posterUrl}`
     });
-    hub.broadcast({ type: "collections:update", payload: collectionStore.list() });
-    broadcastState();
-    res.status(201).json(item);
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
-app.patch("/api/collections/:id/items/:itemId", async (req, res) => {
+    normalized.meta.originalPosterUrl = normalized.posterUrl;
+    normalized.posterUrl = poster.path;
+  }
+
+  if (normalized.backdropUrl && /^https?:\/\//i.test(String(normalized.backdropUrl))) {
+    const backdrop = await assetService.cacheRemoteUrl(normalized.backdropUrl, {
+      bucket: "plex",
+      title: `${normalized.title || "plex"}-backdrop`,
+      cacheKey: `plex:backdrop:${normalized.ratingKey || normalized.canonicalRatingKey || normalized.canonicalId || normalized.backdropUrl}:${normalized.backdropUrl}`
+    });
+    normalized.meta.originalBackdropUrl = normalized.backdropUrl;
+    normalized.backdropUrl = backdrop.path;
+  }
+
+  return normalized;
+}
+
+function normalizePlexBacklogItem(metadata = {}) {
+  return {
+    source: "plex",
+    type: metadata.type || "plex",
+    collectionType: metadata.collectionType || (metadata.type === "movie" ? "movies" : "series"),
+    canonicalId: metadata.canonicalId,
+    ratingKey: metadata.ratingKey,
+    title: metadata.title || "Contenido Plex",
+    subtitle: metadata.subtitle || metadata.year || "",
+    poster: metadata.posterUrl || null,
+    backdrop: metadata.backdropUrl || null,
+    year: metadata.year || "",
+    meta: {
+      ...(metadata.meta || {}),
+      ratingKey: metadata.ratingKey,
+      canonicalRatingKey: metadata.canonicalRatingKey,
+      parentRatingKey: metadata.parentRatingKey || null,
+      grandparentRatingKey: metadata.grandparentRatingKey || null,
+      plexType: metadata.type || "unknown"
+    }
+  };
+}
+
+function normalizePlayniteBacklogItem(game = {}) {
+  return {
+    source: "playnite",
+    type: "game",
+    collectionType: "games",
+    canonicalId: `playnite:${String(game.gameId || game.title || "game").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "game"}`,
+    gameId: game.gameId || game.title,
+    title: game.title || "Juego sin título",
+    subtitle: Array.isArray(game.platforms) ? game.platforms.join(" · ") : "",
+    poster: game.cover || null,
+    backdrop: game.background || null,
+    year: game.releaseYear || "",
+    meta: {
+      platforms: game.platforms || [],
+      developers: game.developers || [],
+      publishers: game.publishers || [],
+      genres: game.genres || [],
+      playtime: game.playtime || null
+    }
+  };
+}
+
+function broadcastBacklogAndCompletions() {
+  hub.broadcast({ type: "backlog:update", payload: { backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap() } });
+  hub.broadcast({ type: "completions:update", payload: completionStore.list() });
+}
+
+app.get("/api/backlog", (_req, res) => res.json({ backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap() }));
+app.delete("/api/backlog/:source/:id", async (req, res) => {
   try {
-    const patch = { ...req.body };
-    const title = req.body?.title || "item";
-    if (req.body?.coverImage || req.body?.image || req.body?.dataUri) {
-      const asset = await assetService.saveImage(req.body.coverImage || req.body.image || req.body.dataUri, { bucket: "collections", title });
-      patch.coverPath = asset.path;
-      patch.assetPath = asset.path;
-      patch.mime = asset.mime;
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "backdropImage") || req.body?.backdrop || req.body?.background) {
-      const value = req.body.backdropImage || req.body.backdrop || req.body.background;
-      if (value) {
-        const asset = await assetService.saveImage(value, { bucket: "collections", title: `${title}-backdrop` });
-        patch.backdropPath = asset.path;
-      } else patch.backdropPath = null;
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "video") || req.body?.trailer || req.body?.videoDataUri) {
-      const value = req.body.video || req.body.trailer || req.body.videoDataUri;
-      if (value) {
-        const asset = await assetService.saveImage(value, { bucket: "collections", title: `${title}-video` });
-        patch.videoPath = asset.path;
-        patch.videoMime = asset.mime;
-      } else { patch.videoPath = null; patch.videoMime = null; }
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, "videoFinishBeforeNext")) {
-      patch.videoFinishBeforeNext = Boolean(req.body.videoFinishBeforeNext);
-    }
-    const item = await collectionStore.updateItem(req.params.id, req.params.itemId, patch);
-    hub.broadcast({ type: "collections:update", payload: collectionStore.list() });
+    const removed = await backlogStore.remove(req.params.source, req.params.id);
+    broadcastBacklogAndCompletions();
     broadcastState();
-    res.json(item);
+    res.json({ ok: true, removed });
+  } catch (error) { res.status(404).json({ error: error.message }); }
+});
+app.post("/api/backlog/:source/:id/complete", async (req, res) => {
+  try {
+    const removed = await backlogStore.remove(req.params.source, req.params.id);
+    const completed = await completionStore.complete({ ...removed, rating: req.body?.rating ?? 0 });
+    broadcastBacklogAndCompletions();
+    broadcastState();
+    res.json({ ok: true, completed });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
-app.delete("/api/collections/:id/items/:itemId", async (req, res) => {
-  try { const removed = await collectionStore.removeItem(req.params.id, req.params.itemId); await assetService.removePublicPath(removed.assetPath); await assetService.removePublicPath(removed.backdropPath); await assetService.removePublicPath(removed.videoPath); hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); res.json({ ok: true }); }
+app.get("/api/completions", (_req, res) => res.json(completionStore.list()));
+app.patch("/api/completions/:id", async (req, res) => {
+  try { const item = await completionStore.update(req.params.id, req.body || {}); broadcastBacklogAndCompletions(); broadcastState(); res.json(item); }
   catch (error) { res.status(404).json({ error: error.message }); }
 });
-app.post("/api/collections/:id/items/:itemId/move", async (req, res) => {
-  try { const c = await collectionStore.moveItem(req.params.id, req.params.itemId, req.body?.direction || "up"); hub.broadcast({ type: "collections:update", payload: collectionStore.list() }); res.json(c); }
+app.delete("/api/completions/:id", async (req, res) => {
+  try { const removed = await completionStore.remove(req.params.id); broadcastBacklogAndCompletions(); broadcastState(); res.json({ ok: true, removed }); }
   catch (error) { res.status(404).json({ error: error.message }); }
 });
 
@@ -437,16 +433,27 @@ async function handleTautulliWebhook(req, res) {
   try {
     const ratingKey = req.body.ratingKey || req.body.rating_key;
     if (!ratingKey) return res.status(400).json({ error: "Falta ratingKey.", receivedKeys: Object.keys(req.body || {}) });
-    const metadata = await plex.getMetadata(ratingKey);
+    let metadata = await plex.getMetadata(ratingKey);
+    metadata = await cachePlexMetadataAssets(metadata);
     const event = normalizeTautulliEvent(req.body, metadata);
     runtime.plex = event.plex;
     runtime.currentContent = { ...event.plex, source: "plex", kind: "plex" };
     await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
-    hub.broadcast({ type: "current:update", payload: runtime.currentContent });
-
-    if (event.startsPlayback && shouldShowPlexEvent(event.event)) {
-      await navigate("current-content", "plex playback");
+    const sources = backlogSources();
+    const shouldAddToBacklog = (event.isLibraryAdded && sources.plexRecentlyAdded) || (event.startsPlayback && sources.plexPlayback);
+    if (shouldAddToBacklog) {
+      const backlogItem = normalizePlexBacklogItem({
+        ...metadata,
+        meta: {
+          ...(metadata.meta || {}),
+          backlogSource: event.isLibraryAdded ? "plex_recently_added" : "plex_playback",
+          tautulliEvent: event.rawEvent
+        }
+      });
+      await backlogStore.upsert("plex", backlogItem);
+      broadcastBacklogAndCompletions();
     }
+    hub.broadcast({ type: "current:update", payload: runtime.currentContent });
 
     if (event.isLibraryAdded && settingsStore.get().integrations?.tautulli?.notifyLibraryAdded) {
       const notification = await store.add({ source: "plex", type: "library_added", priority: "normal", title: `${metadata.title} añadido a Plex`, subtitle: metadata.subtitle || metadata.year, image: metadata.posterUrl, backdrop: metadata.backdropUrl, meta: { ratingKey: metadata.ratingKey, plexType: metadata.type } });
@@ -528,9 +535,12 @@ async function handlePlayniteWebhook(req, res) {
     runtime.game = game;
     runtime.currentContent = { ...game, source: "playnite", kind: "game" };
     await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
+    if (backlogSources().playniteStarted) {
+      await backlogStore.upsert("playnite", normalizePlayniteBacklogItem(game));
+      broadcastBacklogAndCompletions();
+    }
     console.log("Webhook Playnite recibido", { title: game.title, platforms: game.platforms, hasCover: Boolean(game.cover), hasBackground: Boolean(game.background), payloadBytes: Number(req.headers["content-length"] || 0), persistedAssets: true });
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
-    await navigate("current-content", "playnite game_started");
     return res.status(200).json({ ok: true, event: game.event, title: game.title });
   } catch (error) {
     console.error("Error en webhook Playnite:", error);

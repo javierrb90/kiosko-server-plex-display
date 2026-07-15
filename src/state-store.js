@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const DEFAULT_STATE = {
-  activeView: "dashboard",
+  activeView: "backlog",
   selectedCollectionId: null,
   lastWallpaperId: null,
   lastPlex: null,
