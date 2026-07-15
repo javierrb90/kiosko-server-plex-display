@@ -232,3 +232,1547 @@ svg { width: 22px; height: 22px; fill: currentColor; display: block; }
   .app-topbar { gap: 4px; }
   .app-topbar__left { gap: 4px; }
 }
+
+/* v5.4.4 settings tabs + configurable section backgrounds */
+.section-bg { --section-bg-overlay: rgba(var(--section-bg-overlay-rgb, 5, 7, 12), 0.76); }
+.section-bg .section-bg__image,
+.section-bg > img {
+  position: absolute;
+  inset: -6%;
+  width: 112%;
+  height: 112%;
+  object-fit: cover;
+  filter: blur(var(--section-bg-blur, 18px));
+  opacity: 0;
+  transform: scale(1.03);
+  animation: section-bg-pan 28s ease-in-out infinite alternate;
+  transition: opacity var(--section-bg-fade, .75s) ease;
+}
+.section-bg .section-bg__image.is-visible { opacity: var(--section-bg-opacity, .28); }
+.section-bg > img { opacity: var(--section-bg-opacity, .28); }
+.section-bg::after {
+  background:
+    linear-gradient(180deg, rgba(var(--section-bg-overlay-rgb, 5, 7, 12), .54), rgba(var(--section-bg-overlay-rgb, 5, 7, 12), .78) 44%, rgba(var(--section-bg-overlay-rgb, 5, 7, 12), .9)),
+    var(--section-bg-overlay);
+}
+
+.ui-modal-root--settings .ui-modal { width: min(860px, calc(100vw - 24px)); }
+.settings-tabs { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 16px; min-height: min(620px, calc(100vh - 156px)); }
+.settings-tabs__nav { display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px solid rgba(255,255,255,.08); border-radius: 18px; background: rgba(255,255,255,.035); align-self: start; position: sticky; top: 0; }
+.settings-tabs__nav button { border: 0; border-radius: 13px; min-height: 40px; padding: 9px 11px; text-align: left; color: rgba(255,255,255,.72); background: transparent; font-weight: 900; }
+.settings-tabs__nav button.is-active { color: #07101f; background: var(--accent-color); }
+.settings-tabs__panels { min-width: 0; }
+.settings-tab-panel { display: none; gap: 12px; align-content: start; }
+.settings-tab-panel.is-active { display: grid; }
+.settings-tab-panel h3 { margin: 0 0 4px; font-size: 1rem; }
+.settings-tab-panel textarea { min-height: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.app-loading .view[data-view="backlog"] { display: block; }
+
+@media (orientation: portrait), (max-width: 720px) {
+  .settings-tabs { grid-template-columns: 1fr; min-height: 0; }
+  .settings-tabs__nav { position: static; flex-direction: row; overflow-x: auto; border-radius: 16px; }
+  .settings-tabs__nav button { white-space: nowrap; min-height: 38px; }
+  .ui-modal-root--settings .ui-modal { max-height: calc(100vh - 18px); }
+}
+
+/* v5.5 cards, filters, notifications, export and improved color pickers */
+:root {
+  --source-plex: #8fafef;
+  --source-playnite: #8fe1b5;
+  --source-other: #d8b4fe;
+}
+
+.app-topbar {
+  align-items: center;
+}
+.app-topbar__left {
+  gap: 6px;
+}
+.dock {
+  gap: 3px;
+  padding: 4px;
+}
+.dock button {
+  width: 40px;
+  height: 40px;
+  gap: 0;
+}
+.dock button small {
+  display: none;
+}
+.view-filter-button {
+  min-height: 40px;
+}
+
+.media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-width, 264px), 1fr));
+}
+.media-card {
+  width: 100%;
+  min-height: 132px;
+  overflow: hidden;
+}
+.media-card[data-source="plex"] { --card-source-color: var(--source-plex); }
+.media-card[data-source="playnite"] { --card-source-color: var(--source-playnite); }
+.media-card:not([data-source="plex"]):not([data-source="playnite"]) { --card-source-color: var(--source-other); }
+.media-card--rich {
+  position: relative;
+  padding: 0;
+  border-color: color-mix(in srgb, var(--card-source-color) 42%, rgba(255,255,255,.08));
+  background: rgba(10,14,24,.68);
+}
+.media-card--rich::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(4,8,16,.22), rgba(5,7,12,.74) 46%, rgba(5,7,12,.92));
+  pointer-events: none;
+}
+.media-card--rich:hover {
+  border-color: color-mix(in srgb, var(--card-source-color) 72%, #ffffff 18%);
+}
+.media-card__bg {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  opacity: .33;
+  filter: blur(14px) saturate(1.05);
+  transform: scale(1.08);
+}
+.media-card__surface {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  align-items: start;
+}
+.media-card__badge {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-source-color) 22%, rgba(255,255,255,.08));
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.media-card__poster {
+  width: 74px;
+  min-width: 74px;
+  aspect-ratio: 2 / 3;
+  border-radius: 12px;
+}
+.media-card__meta {
+  gap: 6px;
+  padding: 0;
+  align-self: stretch;
+}
+.media-card__meta strong {
+  -webkit-line-clamp: 3;
+  font-size: calc(clamp(.95rem, 2vw, 1.02rem) * var(--ui-scale));
+}
+.media-card__meta span,
+.media-card__meta time {
+  color: rgba(246,247,251,.72);
+}
+.media-card__completion {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 2px;
+}
+.media-card__status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 850;
+}
+.completed-card .media-card__completion time {
+  color: rgba(255,255,255,.58);
+  font-size: .76rem;
+}
+.star-rating {
+  color: #ffd56a;
+}
+.grid-empty--rich {
+  min-height: 240px;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 28px;
+  border: 1px dashed rgba(255,255,255,.16);
+  border-radius: 22px;
+  background: rgba(255,255,255,.04);
+  color: #fff;
+}
+.grid-empty--rich strong {
+  font-size: 1.08rem;
+}
+.grid-empty--rich p {
+  max-width: 480px;
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.notifications-panel__filters {
+  padding: 10px 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+.notifications-filter-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+}
+.notifications-filter-chips button {
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 999px;
+  background: rgba(255,255,255,.05);
+  color: #fff;
+  padding: 8px 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.notifications-filter-chips button small {
+  color: rgba(255,255,255,.58);
+}
+.notifications-filter-chips button.is-active {
+  background: color-mix(in srgb, var(--accent-color) 24%, rgba(255,255,255,.08));
+  border-color: color-mix(in srgb, var(--accent-color) 65%, rgba(255,255,255,.12));
+}
+.overlay-notification[data-source="plex"] .overlay-notification__icon { color: var(--source-plex); }
+.overlay-notification[data-source="playnite"] .overlay-notification__icon { color: var(--source-playnite); }
+.overlay-notification:not([data-source="plex"]):not([data-source="playnite"]) .overlay-notification__icon { color: var(--source-other); }
+
+.color-field .color-field__control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 16px;
+  background: rgba(255,255,255,.04);
+}
+.color-field input[type="color"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 54px;
+  min-width: 54px;
+  height: 36px;
+  border: 0;
+  padding: 0;
+  border-radius: 12px;
+  background: transparent;
+  overflow: hidden;
+}
+.color-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.color-field input[type="color"]::-webkit-color-swatch,
+.color-field input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 12px;
+}
+.color-field code {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,.06);
+  color: #fff;
+  font-weight: 800;
+}
+.settings-fieldset {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 18px;
+  background: rgba(255,255,255,.03);
+}
+.settings-fieldset h4 {
+  margin: 0;
+  font-size: .9rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.settings-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 10px;
+}
+.ui-action-button {
+  min-height: 48px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 16px;
+  background: rgba(255,255,255,.06);
+  color: #fff;
+  font-weight: 900;
+}
+.ui-field__help,
+.settings-help {
+  color: var(--text-muted);
+  font-size: .84rem;
+}
+
+@media (max-width: 820px) {
+  .dock button {
+    width: 36px;
+    height: 36px;
+  }
+  .media-grid {
+    grid-template-columns: 1fr;
+  }
+  .media-card__surface {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+  .media-card__poster {
+    width: 68px;
+    min-width: 68px;
+  }
+  .settings-actions-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v5.5.1 backlog date groups + configurable item backgrounds */
+.media-grid__group {
+  grid-column: 1 / -1;
+  margin: 8px 0 -2px;
+  color: var(--accent-color);
+  font-size: calc(.74rem * var(--ui-scale));
+  font-weight: 950;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  opacity: .92;
+}
+.media-card--rich {
+  border-left-width: 4px;
+}
+.media-card__surface {
+  grid-template-columns: 74px minmax(0, 1fr);
+}
+.media-card__badge {
+  display: none !important;
+}
+.media-card__bg {
+  opacity: var(--card-bg-opacity, .32);
+  filter: blur(var(--card-bg-blur, 12px)) saturate(1.05);
+}
+.media-card--rich::after {
+  background: rgba(5,7,12,var(--card-bg-overlay-opacity, .72));
+}
+html[data-item-background="off"] .media-card__bg {
+  display: none;
+}
+html[data-item-background="off"] .media-card--rich::after {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--card-source-color) 14%, rgba(10,14,24,.76)), rgba(5,7,12,.88));
+}
+.media-card__completion {
+  margin-top: 0;
+}
+.media-card__status {
+  display: none !important;
+}
+
+@media (max-width: 820px) {
+  .media-grid__group {
+    margin-top: 10px;
+  }
+  .media-card__surface {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+}
+
+
+/* v5.5.2 final topbar + clean cards */
+.app-topbar {
+  align-items: center !important;
+}
+.app-topbar__left,
+.app-topbar__right {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.app-topbar__left {
+  flex: 1 1 auto;
+}
+.app-topbar__right {
+  justify-content: flex-end;
+  flex: 0 0 auto;
+}
+.app-topbar__controls {
+  position: static !important;
+  max-width: none !important;
+  overflow: visible !important;
+  padding: 0 !important;
+}
+.dock--flat {
+  padding: 0 !important;
+  gap: 6px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.dock--flat button,
+.topbar-button,
+.notifications-trigger,
+.settings-trigger,
+.view-actions-button {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  padding: 0 !important;
+  border: 1px solid var(--stroke) !important;
+  border-radius: 14px !important;
+  color: #fff !important;
+  background: var(--glass) !important;
+  backdrop-filter: blur(18px) !important;
+  -webkit-backdrop-filter: blur(18px) !important;
+  box-shadow: 0 14px 42px rgba(0,0,0,.28) !important;
+}
+.dock--flat button:hover,
+.dock--flat .dock__item--active {
+  background: color-mix(in srgb, var(--accent-color) 26%, rgba(255,255,255,.10)) !important;
+  border-color: color-mix(in srgb, var(--accent-color) 65%, rgba(255,255,255,.18)) !important;
+}
+.dock button small {
+  display: none !important;
+}
+.view-filter-button .view-filter-button__label,
+.view-filter-button .view-filter-button__meta {
+  display: none !important;
+}
+
+.media-card {
+  border-radius: var(--card-radius, 18px) !important;
+}
+.media-card__poster {
+  border-radius: max(6px, calc(var(--card-radius, 18px) - 8px)) !important;
+}
+.media-card--rich {
+  border-left-width: 1px !important;
+  border-color: color-mix(in srgb, var(--card-source-color) 36%, rgba(255,255,255,.10)) !important;
+  box-shadow: 0 16px 48px rgba(0,0,0,.22) !important;
+}
+.media-card--rich::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--card-source-color);
+  opacity: .62;
+  z-index: 2;
+}
+.media-card--rich:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--card-source-color) 52%, rgba(255,255,255,.18)) !important;
+}
+.media-card__surface {
+  align-items: center !important;
+  min-height: 132px;
+}
+.media-card__meta {
+  align-self: center !important;
+  justify-content: center;
+  align-content: center;
+}
+.media-card__meta strong {
+  -webkit-line-clamp: 2;
+}
+.media-card__completion {
+  align-items: center;
+}
+.media-grid__group span {
+  color: rgba(255,255,255,.56);
+  letter-spacing: 0;
+  margin-left: 6px;
+}
+html[data-item-background="off"] .media-card--rich::after {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--card-source-color) 9%, rgba(10,14,24,.82)), rgba(5,7,12,.88)) !important;
+}
+
+@media (max-width: 820px) {
+  .app-topbar__left,
+  .app-topbar__right {
+    gap: 5px;
+  }
+  .dock--flat {
+    gap: 5px !important;
+  }
+  .dock--flat button,
+  .topbar-button,
+  .notifications-trigger,
+  .settings-trigger,
+  .view-actions-button {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    border-radius: 12px !important;
+  }
+  .media-card__surface {
+    min-height: 122px;
+  }
+}
+
+@media (max-width: 390px) {
+  .dock--flat {
+    gap: 4px !important;
+  }
+  .app-topbar__left,
+  .app-topbar__right {
+    gap: 4px;
+  }
+  .dock--flat button,
+  .topbar-button,
+  .notifications-trigger,
+  .settings-trigger,
+  .view-actions-button {
+    width: 34px !important;
+    height: 34px !important;
+    min-width: 34px !important;
+  }
+}
+
+
+/* v5.5.2.2 settings card controls cleanup */
+.settings-fieldset > .ui-field,
+.settings-fieldset > .ui-check {
+  margin: 0;
+}
+.settings-fieldset input[type="range"] {
+  width: 100%;
+}
+
+
+/* v5.5.2.3 debug/fix: settings cards controls */
+.settings-fieldset h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-fieldset h4::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: rgba(255,255,255,.08);
+}
+
+
+/* v5.5.2.5 definitive card vars */
+.media-card {
+  border-radius: var(--card-radius, 18px) !important;
+}
+.media-card__poster {
+  border-radius: max(4px, calc(var(--card-radius, 18px) - 8px)) !important;
+}
+.media-card__bg {
+  opacity: var(--card-bg-opacity, .32) !important;
+  filter: blur(var(--card-bg-blur, 12px)) saturate(1.05) !important;
+}
+.media-card--rich::after {
+  background: rgba(5,7,12,var(--card-bg-overlay-opacity, .72)) !important;
+}
+html[data-item-background="off"] .media-card__bg {
+  display: none !important;
+}
+
+/* v5.6: On Deck, Actual toast, compact notifications and mobile poster grid */
+.deck-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-color) 26%, rgba(255,255,255,.08));
+  color: #fff;
+  font-size: .72rem;
+  font-weight: 950;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.current-status {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.event-toast {
+  max-width: min(420px, calc(100vw - 24px));
+  text-align: left;
+}
+.event-toast strong,
+.event-toast span {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notifications-panel {
+  height: min(720px, calc(100dvh - 24px));
+  max-height: none;
+}
+.notifications-panel__header {
+  padding: 14px 16px 12px;
+}
+.notifications-panel__header h1 {
+  font-size: 1.28rem;
+}
+.notifications-filter-chips {
+  padding: 8px 10px;
+  gap: 6px;
+  overflow-x: auto;
+}
+.notifications-filter-chips button {
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: .82rem;
+}
+.notifications-panel__list {
+  padding: 8px 10px;
+}
+.overlay-notification {
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 8px;
+  min-height: 58px;
+  padding: 8px 10px;
+  border-radius: 13px;
+  margin-bottom: 6px;
+}
+.overlay-notification__icon svg {
+  width: 17px;
+  height: 17px;
+}
+.overlay-notification__copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: baseline;
+}
+.overlay-notification__copy h2 {
+  font-size: .9rem;
+  line-height: 1.12;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.overlay-notification__copy p {
+  grid-column: 1 / -1;
+  margin: 2px 0 0;
+  font-size: .78rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.overlay-notification__copy time {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: .68rem;
+  white-space: nowrap;
+}
+.notifications-panel__footer {
+  padding: 9px 12px;
+}
+.notifications-panel__footer button {
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
+@media (orientation: portrait), (max-width: 820px) {
+  .media-grid {
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)) !important;
+    gap: 10px !important;
+  }
+  .media-card {
+    min-height: 0 !important;
+    width: 100% !important;
+    padding: 7px !important;
+  }
+  .media-card--rich {
+    background: rgba(10,14,24,.72) !important;
+  }
+  .media-card--rich::before {
+    left: 8px !important;
+    right: 8px !important;
+    height: 2px !important;
+  }
+  .media-card--rich::after {
+    background: linear-gradient(180deg, rgba(5,7,12,.10), rgba(5,7,12,.72)) !important;
+  }
+  .media-card__bg {
+    display: none !important;
+  }
+  .media-card__surface {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 7px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    align-items: start !important;
+  }
+  .media-card__poster {
+    width: 100% !important;
+    min-width: 0 !important;
+    aspect-ratio: 2 / 3 !important;
+    border-radius: max(6px, calc(var(--card-radius, 18px) - 8px)) !important;
+  }
+  .media-card__meta {
+    padding: 2px 1px 1px !important;
+    gap: 3px !important;
+    justify-content: start !important;
+    align-content: start !important;
+  }
+  .media-card__meta strong {
+    font-size: .82rem !important;
+    line-height: 1.08 !important;
+    -webkit-line-clamp: 2 !important;
+  }
+  .media-card__meta span,
+  .media-card__meta time {
+    font-size: .68rem !important;
+  }
+  .media-card__completion {
+    gap: 4px !important;
+    margin-top: 1px !important;
+  }
+  .star-rating {
+    font-size: .72rem !important;
+  }
+  .deck-pill {
+    min-height: 18px;
+    padding: 0 6px;
+    font-size: .58rem;
+  }
+  .media-grid__group {
+    margin: 6px 0 -2px !important;
+    font-size: .68rem !important;
+  }
+  .notifications-panel {
+    left: 6px !important;
+    right: 6px !important;
+    top: 6px !important;
+    bottom: 6px !important;
+    width: auto !important;
+    height: auto !important;
+    border-radius: 18px !important;
+  }
+  .notifications-panel__header {
+    padding: 12px 14px 10px !important;
+  }
+  .notifications-panel__header h1 {
+    font-size: 1.5rem !important;
+  }
+}
+
+
+/* v5.6.1 responsive card sizing */
+.media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-width, 290px), 1fr)) !important;
+  gap: var(--card-gap, 16px) !important;
+}
+.media-card--rich {
+  min-height: calc(var(--card-poster-size, 92px) + 44px) !important;
+}
+.media-card__surface {
+  grid-template-columns: var(--card-poster-size, 92px) minmax(0, 1fr) !important;
+  min-height: calc(var(--card-poster-size, 92px) + 26px) !important;
+}
+.media-card__poster {
+  width: var(--card-poster-size, 92px) !important;
+  min-width: var(--card-poster-size, 92px) !important;
+}
+.media-card__meta {
+  gap: calc(7px + (var(--card-poster-size, 92px) - 74px) / 18) !important;
+}
+.media-card__meta strong {
+  font-size: clamp(1rem, calc(var(--card-poster-size, 92px) / 70 * 1rem), 1.32rem) !important;
+}
+.media-card__meta span {
+  font-size: clamp(.78rem, calc(var(--card-poster-size, 92px) / 105 * 1rem), .98rem) !important;
+}
+
+@media (max-width: 820px) {
+  .media-grid {
+    --mobile-card-gap: clamp(8px, 2.4vw, 12px);
+    display: grid !important;
+    grid-template-columns: repeat(var(--mobile-columns, 3), minmax(0, 1fr)) !important;
+    gap: var(--mobile-card-gap) !important;
+    align-content: start !important;
+    justify-content: stretch !important;
+  }
+  .media-grid__group {
+    grid-column: 1 / -1 !important;
+  }
+  .media-card,
+  .media-card--rich {
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    border-radius: var(--card-radius, 16px) !important;
+  }
+  .media-card__bg,
+  .media-card--rich::after,
+  .media-card--rich::before {
+    display: none !important;
+  }
+  .media-card__surface {
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+    padding: 7px !important;
+    gap: 7px !important;
+    align-items: stretch !important;
+  }
+  .media-card__poster {
+    width: 100% !important;
+    min-width: 0 !important;
+    aspect-ratio: 2 / 3 !important;
+    border-radius: max(6px, calc(var(--card-radius, 16px) - 7px)) !important;
+  }
+  .media-card__meta {
+    display: flex !important;
+    min-height: 56px !important;
+    gap: 3px !important;
+    justify-content: flex-start !important;
+    align-items: stretch !important;
+  }
+  .media-card__meta strong {
+    font-size: clamp(.72rem, calc(2.7vw + .08rem), .95rem) !important;
+    line-height: 1.12 !important;
+    -webkit-line-clamp: 2 !important;
+  }
+  .media-card__meta span {
+    font-size: clamp(.62rem, 2.25vw, .78rem) !important;
+    line-height: 1.1 !important;
+    opacity: .72 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .media-card__completion {
+    margin-top: 1px !important;
+    gap: 4px !important;
+    font-size: clamp(.62rem, 2.2vw, .78rem) !important;
+  }
+  .star-rating {
+    letter-spacing: -.05em !important;
+  }
+}
+
+@media (max-width: 380px) {
+  .media-grid {
+    gap: 7px !important;
+  }
+  .media-card__surface {
+    padding: 6px !important;
+  }
+  .media-card__meta {
+    min-height: 50px !important;
+  }
+}
+
+
+/* v5.6.2 mobile grid text fix */
+@media (max-width: 820px) {
+  .media-card__meta {
+    flex-direction: column !important;
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  .media-card__meta strong,
+  .media-card__meta span {
+    display: -webkit-box !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    white-space: normal !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .media-card__meta strong {
+    -webkit-box-orient: vertical !important;
+    -webkit-line-clamp: 2 !important;
+  }
+
+  .media-card__meta span {
+    display: block !important;
+    -webkit-line-clamp: unset !important;
+  }
+
+  .media-card__completion {
+    width: 100% !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+  }
+
+  .media-card__completion time,
+  .deck-pill,
+  .star-rating {
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+
+/* v5.6.3 On Deck dynamic background + card grayscale */
+.media-card__bg {
+  filter: blur(var(--card-bg-blur, 12px)) grayscale(var(--card-bg-grayscale, 0%)) saturate(1.05) !important;
+}
+
+@media (max-width: 820px) {
+  .media-card__bg {
+    filter: none !important;
+  }
+}
+
+
+/* v5.6.4 unified visual settings + smoother backgrounds */
+.view {
+  position: relative;
+  overflow: hidden;
+}
+
+.section-bg,
+.media-bg-img {
+  transition:
+    opacity var(--section-bg-fade, 1.2s) ease,
+    filter var(--section-bg-fade, 1.2s) ease,
+    transform 12s ease;
+}
+
+.section-bg {
+  --section-bg-overlay: rgba(var(--section-bg-overlay-rgb, 5, 7, 12), var(--section-bg-overlay-opacity, .76));
+}
+
+.section-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--section-bg-overlay);
+  pointer-events: none;
+}
+
+.section-bg .section-bg__image,
+.section-bg > img {
+  filter: blur(var(--section-bg-blur, 18px)) grayscale(var(--section-bg-grayscale, 0%)) saturate(1.05) !important;
+}
+
+.section-bg .section-bg__image.is-visible {
+  opacity: var(--section-bg-opacity, .28) !important;
+}
+
+.section-bg--view {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+.view-shell {
+  position: relative;
+  z-index: 1;
+}
+
+/* Actual uses the same background treatment as the rest of the app */
+.media-bg-img {
+  filter: blur(var(--section-bg-blur, 18px)) grayscale(var(--section-bg-grayscale, 0%)) saturate(1.05) !important;
+  opacity: 0 !important;
+}
+
+.media-bg-img.media-bg-img--visible {
+  opacity: var(--section-bg-opacity, .28) !important;
+}
+
+.media-bg-treatment,
+.media-overlay {
+  background: rgba(var(--section-bg-overlay-rgb, 5, 7, 12), var(--section-bg-overlay-opacity, .76)) !important;
+}
+
+/* Better settings tabs on mobile and desktop */
+.settings-tabs__nav {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  border-bottom: 0 !important;
+}
+
+.settings-tabs__nav button {
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+  border-radius: 16px !important;
+  padding: 10px 14px !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+}
+
+.settings-tabs__panels {
+  margin-top: 14px !important;
+}
+
+@media (max-width: 820px) {
+  .settings-tabs__nav {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .settings-tabs__nav button {
+    width: 100% !important;
+    justify-content: center !important;
+    font-size: .92rem !important;
+    padding: 11px 8px !important;
+  }
+
+  .settings-modal-grid,
+  .settings-fieldset {
+    gap: 12px !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .settings-tabs__nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+
+/* v5.6.5 viewport-full backgrounds fix */
+html,
+body,
+#app {
+  min-height: 100dvh;
+  background: #05070c;
+}
+
+.view {
+  min-height: 100dvh !important;
+  background: transparent !important;
+}
+
+/* Backgrounds must not depend on the content height of each view */
+.view > .section-bg,
+.section-bg--view,
+.media-view > .media-bg-img,
+.media-bg-img {
+  position: fixed !important;
+  inset: -7dvh -7vw !important;
+  width: 114vw !important;
+  height: 114dvh !important;
+  min-height: 114dvh !important;
+  object-fit: cover !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  background: #05070c !important;
+}
+
+.section-bg--view {
+  overflow: hidden !important;
+}
+
+.section-bg--view .section-bg__image,
+.view > .section-bg .section-bg__image,
+.section-bg--view > img,
+.view > .section-bg > img {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  object-fit: cover !important;
+  background: #05070c !important;
+}
+
+/* The dark layer must also cover the whole viewport */
+.section-bg--view::after,
+.view > .section-bg::after,
+.media-bg-treatment,
+.media-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+/* Content always above viewport background */
+.view-shell,
+.media-view .media-layout,
+.media-view .current-empty,
+.section-title,
+.media-grid,
+.pager {
+  position: relative;
+  z-index: 2;
+}
+
+/* Make transitions between views/backgrounds softer */
+.section-bg__image,
+.media-bg-img {
+  transition:
+    opacity var(--section-bg-fade, 1.2s) ease,
+    filter var(--section-bg-fade, 1.2s) ease,
+    transform 18s ease !important;
+  transform: scale(1.03);
+}
+
+.section-bg__image.is-visible,
+.media-bg-img--visible {
+  transform: scale(1.08);
+}
+
+/* On Deck gets same visual behavior as Backlog/Colecciones */
+.section-bg--deck .section-bg__image.is-visible {
+  opacity: var(--section-bg-opacity, .28) !important;
+}
+
+/* Prevent any internal shell/card background from painting a black footer band */
+.view-shell::before,
+.view-shell::after {
+  pointer-events: none;
+}
+
+@media (max-width: 820px) {
+  .view > .section-bg,
+  .section-bg--view,
+  .media-bg-img {
+    inset: -8dvh -10vw !important;
+    width: 120vw !important;
+    height: 116dvh !important;
+    min-height: 116dvh !important;
+  }
+
+  .section-bg--view::after,
+  .view > .section-bg::after,
+  .media-bg-treatment,
+  .media-overlay {
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+  }
+}
+
+
+/* v5.6.6 definitive view background layer fix
+   The background layer must be tied to the view section, not to the inner content div height. */
+html,
+body,
+#app {
+  width: 100%;
+  min-width: 100%;
+  min-height: 100dvh !important;
+  height: 100dvh !important;
+  overflow: hidden;
+  background: #05070c !important;
+}
+
+#app {
+  position: fixed !important;
+  inset: 0 !important;
+  overflow: hidden !important;
+}
+
+/* Every view section is a full viewport layer */
+#app > section[data-view],
+.view {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  overflow: hidden !important;
+  background: transparent !important;
+}
+
+/* Only active view receives interactions. Hidden views stay full-screen but invisible. */
+#app > section[data-view][aria-hidden="true"] {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+#app > section[data-view][aria-hidden="false"],
+#app > section[data-view].view--active {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+}
+
+/* The first div inside each view is usually the bg layer.
+   Force it to cover the full viewport instead of the content height. */
+#app > section[data-view] > .section-bg,
+#app > section[data-view] > div.section-bg,
+#app > section[data-view] > div[data-section-bg] {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  max-height: none !important;
+  overflow: hidden !important;
+  z-index: 0 !important;
+  pointer-events: none !important;
+  background: #05070c !important;
+}
+
+/* Images inside that layer must also cover the layer. */
+#app > section[data-view] > .section-bg .section-bg__image,
+#app > section[data-view] > div[data-section-bg] .section-bg__image,
+#app > section[data-view] > .section-bg > img,
+#app > section[data-view] > div[data-section-bg] > img {
+  position: absolute !important;
+  inset: -6% !important;
+  width: 112% !important;
+  height: 112% !important;
+  min-height: 112% !important;
+  object-fit: cover !important;
+  max-width: none !important;
+  max-height: none !important;
+  filter: blur(var(--section-bg-blur, 18px)) grayscale(var(--section-bg-grayscale, 0%)) saturate(1.05) !important;
+  opacity: 0;
+  transition:
+    opacity var(--section-bg-fade, 1.2s) ease,
+    filter var(--section-bg-fade, 1.2s) ease,
+    transform 18s ease !important;
+  transform: scale(1.03);
+}
+
+#app > section[data-view] > .section-bg .section-bg__image.is-visible,
+#app > section[data-view] > div[data-section-bg] .section-bg__image.is-visible {
+  opacity: var(--section-bg-opacity, .28) !important;
+  transform: scale(1.08);
+}
+
+/* Full-screen dark/color treatment for all view bg layers */
+#app > section[data-view] > .section-bg::after,
+#app > section[data-view] > div[data-section-bg]::after {
+  content: "";
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
+  background: rgba(var(--section-bg-overlay-rgb, 5, 7, 12), var(--section-bg-overlay-opacity, .76)) !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+}
+
+/* Content inside each view always above the background */
+#app > section[data-view] > :not(.section-bg):not([data-section-bg]),
+#app > section[data-view] .view-shell,
+#app > section[data-view] .media-view,
+#app > section[data-view] .media-grid,
+#app > section[data-view] .section-title,
+#app > section[data-view] .pager {
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+/* Current view legacy background image must follow the same full-screen rule */
+.media-view > .media-bg-img,
+.media-bg-img {
+  position: absolute !important;
+  inset: -6% !important;
+  width: 112% !important;
+  height: 112% !important;
+  min-height: 112% !important;
+  object-fit: cover !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.media-bg-treatment,
+.media-overlay {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+}
+
+
+/* Inline background-image fallback for section bg images */
+.section-bg__image {
+  background-position: center !important;
+  background-size: cover !important;
+  background-repeat: no-repeat !important;
+}
+
+
+/* v5.6.7 item alignment + On Deck bg layer */
+.media-card__meta,
+.media-card__meta strong,
+.media-card__meta span,
+.media-card__completion,
+.completed-card .media-card__meta,
+.deck-view .media-card__meta {
+  text-align: left !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+}
+
+.media-card__meta {
+  justify-items: start !important;
+}
+
+.media-card__completion {
+  width: 100%;
+}
+
+.deck-view {
+  position: relative;
+  z-index: 2;
+}
+
+/* Ensure On Deck section background is visible behind its app-section */
+#app > section[data-view="on-deck"] > .section-bg,
+#app > section[data-view="on-deck"] > [data-section-bg] {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+
+/* v5.6.8 On Deck background via CSS variable on the view section */
+#app > section[data-view="on-deck"] {
+  --view-bg-image: none;
+  isolation: isolate;
+  background: #05070c !important;
+}
+
+#app > section[data-view="on-deck"][data-has-view-bg="true"]::before {
+  content: "";
+  position: absolute;
+  inset: -7%;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--view-bg-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: var(--section-bg-opacity, .28);
+  filter: blur(var(--section-bg-blur, 18px)) grayscale(var(--section-bg-grayscale, 0%)) saturate(1.05);
+  transform: scale(1.05);
+  transition:
+    opacity var(--section-bg-fade, 1.2s) ease,
+    filter var(--section-bg-fade, 1.2s) ease,
+    background-image var(--section-bg-fade, 1.2s) ease;
+}
+
+#app > section[data-view="on-deck"][data-has-view-bg="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgba(var(--section-bg-overlay-rgb, 5, 7, 12), var(--section-bg-overlay-opacity, .76));
+}
+
+#app > section[data-view="on-deck"] > * {
+  position: relative;
+  z-index: 2;
+}
+
+#app > section[data-view="on-deck"] > .section-bg {
+  display: none !important;
+}
+
+/* On Deck cards do not need an On Deck label inside themselves */
+.deck-view .deck-pill {
+  display: none !important;
+}
+
+.deck-view .media-card__completion:empty {
+  display: none !important;
+}
+
+
+/* v5.6.9 On Deck uses the same in-section background as Backlog/Colecciones */
+#app > section[data-view="on-deck"]::before,
+#app > section[data-view="on-deck"]::after {
+  display: none !important;
+  content: none !important;
+}
+
+#app > section[data-view="on-deck"] > .section-bg {
+  display: none !important;
+}
+
+#app > section[data-view="on-deck"] .deck-view > .section-bg[data-dynamic-bg] {
+  display: block !important;
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  z-index: 0 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: none !important;
+  background: transparent !important;
+}
+
+#app > section[data-view="on-deck"] .deck-view > .section-bg[data-dynamic-bg]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(var(--section-bg-overlay-rgb, 5, 7, 12), var(--section-bg-overlay-opacity, .76));
+  z-index: 1;
+  pointer-events: none;
+}
+
+#app > section[data-view="on-deck"] .deck-view > .section-bg[data-dynamic-bg] .section-bg__image {
+  position: absolute !important;
+  inset: -6% !important;
+  width: 112% !important;
+  height: 112% !important;
+  object-fit: cover !important;
+  background-position: center !important;
+  background-size: cover !important;
+  opacity: 0;
+  filter: blur(var(--section-bg-blur, 18px)) grayscale(var(--section-bg-grayscale, 0%)) saturate(1.05) !important;
+  transition:
+    opacity var(--section-bg-fade, 1.2s) ease,
+    filter var(--section-bg-fade, 1.2s) ease,
+    transform 18s ease !important;
+  transform: scale(1.03);
+}
+
+#app > section[data-view="on-deck"] .deck-view > .section-bg[data-dynamic-bg] .section-bg__image.is-visible {
+  opacity: var(--section-bg-opacity, .28) !important;
+  transform: scale(1.08);
+}
+
+#app > section[data-view="on-deck"] .deck-view > :not(.section-bg) {
+  position: relative;
+  z-index: 2;
+}
+
+/* Keep card text always left-aligned */
+.media-card__meta,
+.media-card__meta strong,
+.media-card__meta span,
+.media-card__completion {
+  text-align: left !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+}
+
+
+/* v5.6.10 polish: centered modals, softer view transitions, quieter production UI */
+
+/* Center all decision/action modals instead of bottom-sheet behavior */
+.ui-modal-root,
+.action-sheet-root,
+.rating-modal-root {
+  align-items: center !important;
+  justify-content: center !important;
+  padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)) !important;
+}
+
+.ui-modal,
+.action-sheet,
+.rating-modal,
+.ui-modal-card {
+  margin: auto !important;
+  max-height: min(82dvh, 720px) !important;
+  overflow: auto !important;
+  transform-origin: center center !important;
+}
+
+/* If action sheets were explicitly anchored to the bottom, neutralize that */
+.action-sheet,
+.ui-action-sheet {
+  bottom: auto !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+}
+
+/* Mobile keeps centered modals, with internal scroll if content is tall */
+@media (max-width: 820px) {
+  .ui-modal-root,
+  .action-sheet-root,
+  .rating-modal-root {
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 14px !important;
+  }
+
+  .ui-modal,
+  .action-sheet,
+  .rating-modal,
+  .ui-modal-card {
+    width: min(100%, 520px) !important;
+    max-height: calc(100dvh - 28px) !important;
+    border-radius: 22px !important;
+  }
+}
+
+/* Softer view changes */
+#app > section[data-view] {
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease,
+    visibility 220ms ease !important;
+  transform: translateY(6px) scale(.995);
+}
+
+#app > section[data-view][aria-hidden="false"],
+#app > section[data-view].view--active {
+  transform: translateY(0) scale(1);
+}
+
+/* Action hierarchy */
+.ui-action-button[data-variant="primary"],
+.action-sheet button[data-variant="primary"] {
+  font-weight: 950 !important;
+}
+
+.action-sheet button,
+.ui-action-button {
+  text-align: left !important;
+}
+
+/* Keep action sheet content readable when centered */
+.action-sheet__actions,
+.ui-actions,
+.ui-action-grid {
+  max-height: min(58dvh, 420px);
+  overflow: auto;
+}

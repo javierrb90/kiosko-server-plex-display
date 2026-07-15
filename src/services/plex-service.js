@@ -54,6 +54,9 @@ export class PlexService {
       canonicalId,
       posterUrl: this.assetUrl(posterPath),
       backdropUrl: this.assetUrl(backdropPath),
+      showTitle: node.grandparentTitle || node.parentTitle || node.title || "",
+      showPosterUrl: this.assetUrl(node.grandparentThumb || node.parentThumb || node.thumb),
+      showBackdropUrl: this.assetUrl(node.grandparentArt || node.parentArt || node.art),
       raw: node
     };
   }

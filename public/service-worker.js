@@ -1,4 +1,4 @@
-const CACHE = 'kiosko-v5-4-3-shell';
+const CACHE = 'kiosko-v5-6-10';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/core/socket-client.js'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

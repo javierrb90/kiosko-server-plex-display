@@ -1,4 +1,5 @@
 import express from "express";
+import fs from "node:fs/promises";
 import { WebSocketServer } from "ws";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,7 @@ import { SettingsStore } from "./src/settings-store.js";
 import { StateStore } from "./src/state-store.js";
 import { AssetService } from "./src/asset-service.js";
 import { BacklogStore, CompletionStore } from "./src/backlog-store.js";
+import { OnDeckStore } from "./src/on-deck-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -33,13 +35,18 @@ const stateStore = new StateStore(DATA_DIR);
 const assetService = new AssetService(DATA_DIR);
 const backlogStore = new BacklogStore(DATA_DIR);
 const completionStore = new CompletionStore(DATA_DIR);
-await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init()]);
+const onDeckStore = new OnDeckStore(DATA_DIR);
+await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), onDeckStore.init()]);
 
 const plex = new PlexService(settingsStore.get().plex || {});
 
-const validViews = new Set(["backlog", "current-content", "collections"]);
+const validViews = new Set(["backlog", "on-deck", "current-content", "collections"]);
+const initialActiveView = validViews.has(stateStore.get().activeView)
+  ? stateStore.get().activeView
+  : (validViews.has(settingsStore.get().display?.defaultView) ? settingsStore.get().display.defaultView : "backlog");
+
 const runtime = {
-  activeView: validViews.has(settingsStore.get().display?.defaultView) ? settingsStore.get().display.defaultView : "backlog",
+  activeView: initialActiveView,
   plex: stateStore.get().lastPlex || { event: "idle", title: "Sin reproducción", subtitle: "", year: "", posterUrl: null, backdropUrl: null, type: "" },
   game: stateStore.get().lastGame || null,
   currentContent: stateStore.get().lastCurrent || null
@@ -58,7 +65,7 @@ function configStatus() {
 
 const server = app.listen(PORT, () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v5.4 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v5.4.4 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
 });
@@ -86,6 +93,8 @@ function snapshot() {
       unreadCount: unreadNotificationCount(),
       settings: publicSettings(),
       backlog: backlogStore.list(),
+      onDeck: onDeckStore.list(),
+      onDeckMap: onDeckStore.map(),
       completions: completionStore.list(),
       completionRatings: completionStore.ratingsMap(),
       state: stateStore.get()
@@ -94,6 +103,24 @@ function snapshot() {
 }
 function broadcastState() { hub.broadcast(snapshot()); }
 function publicSettings() { return settingsStore.get(); }
+async function buildExportPayload() {
+  let customCss = "";
+  try {
+    customCss = await fs.readFile(path.join(DATA_DIR, "custom-css", "global.css"), "utf8");
+  } catch {}
+  return {
+    exportedAt: new Date().toISOString(),
+    app: "kiosko-media-center",
+    version: "v5.5",
+    settings: publicSettings(),
+    state: stateStore.get(),
+    backlog: backlogStore.list(),
+    onDeck: onDeckStore.list(),
+    completions: completionStore.list(),
+    notifications: store.list({ page: 1, limit: 50 }).items,
+    customCss
+  };
+}
 async function navigate(viewId, reason = "manual", { force = false } = {}) {
   const locked = Boolean(stateStore.get().privacyLocked);
   if (locked && !force) {
@@ -133,11 +160,13 @@ wss.on("connection", ws => {
   hub.send(ws, snapshot());
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length, completions: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length, onDeck: onDeckStore.list().length, completions: completionStore.list().length }));
+app.get("/api/snapshot", (_req, res) => res.json(snapshot().payload));
 app.get("/api/state", (_req, res) => res.json(stateStore.get()));
 app.put("/api/state", async (req, res) => {
   const patch = req.body || {};
   const state = await stateStore.update(patch);
+  if (patch.activeView && validViews.has(patch.activeView)) runtime.activeView = patch.activeView;
   if (patch.privacyLocked === true) {
     runtime.activeView = "backlog";
     await stateStore.update({ activeView: "backlog" });
@@ -162,6 +191,14 @@ app.post("/api/settings/reset", async (_req, res) => {
   broadcastState();
   res.json(next);
 });
+app.get("/api/export", async (_req, res) => {
+  const payload = await buildExportPayload();
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename=\"kiosko-backup-${stamp}.json\"`);
+  res.send(JSON.stringify(payload, null, 2));
+});
+
 
 app.get("/api/custom-css/:name", async (req, res) => {
   const safe = String(req.params.name || "global").replace(/[^a-z0-9_-]/gi, "");
@@ -358,10 +395,66 @@ function normalizePlexBacklogItem(metadata = {}) {
       canonicalRatingKey: metadata.canonicalRatingKey,
       parentRatingKey: metadata.parentRatingKey || null,
       grandparentRatingKey: metadata.grandparentRatingKey || null,
-      plexType: metadata.type || "unknown"
+      plexType: metadata.type || "unknown",
+      grandparentTitle: metadata.showTitle || metadata.raw?.grandparentTitle || null,
+      showTitle: metadata.showTitle || metadata.raw?.grandparentTitle || null,
+      showPoster: metadata.showPosterUrl || null,
+      showBackdrop: metadata.showBackdropUrl || null
     }
   };
 }
+
+function canonicalizePlexSeriesItem(item = {}) {
+  if (item.source !== "plex") return item;
+  const plexType = item.meta?.plexType || item.type;
+  const isSeriesItem = item.collectionType === "series" || ["episode", "season", "show"].includes(plexType);
+  if (!isSeriesItem || item.collectionType === "movies") return item;
+
+  const canonicalRatingKey =
+    item.meta?.canonicalRatingKey ||
+    item.meta?.grandparentRatingKey ||
+    item.grandparentRatingKey ||
+    item.meta?.parentRatingKey ||
+    item.parentRatingKey ||
+    item.ratingKey;
+
+  const canonicalId = item.canonicalId || (canonicalRatingKey ? `plex:series:${canonicalRatingKey}` : undefined);
+  const showTitle =
+    item.meta?.grandparentTitle ||
+    item.meta?.showTitle ||
+    item.meta?.seriesTitle ||
+    item.title ||
+    "Serie Plex";
+
+  return {
+    ...item,
+    source: "plex",
+    type: "show",
+    collectionType: "series",
+    canonicalId,
+    ratingKey: canonicalRatingKey || item.ratingKey,
+    title: showTitle,
+    subtitle: "Serie",
+    poster: item.meta?.showPoster || item.poster,
+    backdrop: item.meta?.showBackdrop || item.backdrop,
+    meta: {
+      ...(item.meta || {}),
+      plexType,
+      originalType: plexType,
+      originalRatingKey: item.ratingKey,
+      originalTitle: item.title,
+      originalSubtitle: item.subtitle,
+      canonicalRatingKey: canonicalRatingKey || item.meta?.canonicalRatingKey || null
+    }
+  };
+}
+
+function normalizeDeckItem(input = {}) {
+  if (!input) return input;
+  if (input.source === "plex") return canonicalizePlexSeriesItem(input);
+  return input;
+}
+
 
 function normalizePlayniteBacklogItem(game = {}) {
   return {
@@ -386,11 +479,26 @@ function normalizePlayniteBacklogItem(game = {}) {
 }
 
 function broadcastBacklogAndCompletions() {
-  hub.broadcast({ type: "backlog:update", payload: { backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap() } });
+  hub.broadcast({ type: "backlog:update", payload: { backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() } });
+  hub.broadcast({ type: "on-deck:update", payload: { onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() } });
   hub.broadcast({ type: "completions:update", payload: completionStore.list() });
 }
 
-app.get("/api/backlog", (_req, res) => res.json({ backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap() }));
+app.get("/api/backlog", (_req, res) => res.json({ backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() }));
+app.get("/api/on-deck", (_req, res) => res.json({ onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() }));
+
+function normalizeCurrentToDeckItem(input = runtime.currentContent) {
+  if (!input) throw new Error("No hay contenido actual.");
+  const isGame = input.source === "playnite" || input.kind === "game" || input.platforms;
+  return normalizeDeckItem(isGame ? normalizePlayniteBacklogItem(input) : normalizePlexBacklogItem(input));
+}
+
+async function completeItem(input, rating = 0) {
+  const completed = await completionStore.complete({ ...input, rating });
+  await onDeckStore.removeByCanonicalId(completed.canonicalId);
+  return completed;
+}
+
 app.delete("/api/backlog/:source/:id", async (req, res) => {
   try {
     const removed = await backlogStore.remove(req.params.source, req.params.id);
@@ -399,13 +507,46 @@ app.delete("/api/backlog/:source/:id", async (req, res) => {
     res.json({ ok: true, removed });
   } catch (error) { res.status(404).json({ error: error.message }); }
 });
+app.post("/api/backlog/:source/:id/deck", async (req, res) => {
+  try {
+    const removed = await backlogStore.remove(req.params.source, req.params.id);
+    const deckItem = await onDeckStore.upsert(normalizeDeckItem(removed));
+    await completionStore.removeByCanonicalId(deckItem.canonicalId);
+    broadcastBacklogAndCompletions();
+    broadcastState();
+    res.json({ ok: true, deckItem });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
 app.post("/api/backlog/:source/:id/complete", async (req, res) => {
   try {
     const removed = await backlogStore.remove(req.params.source, req.params.id);
-    const completed = await completionStore.complete({ ...removed, rating: req.body?.rating ?? 0 });
+    const completed = await completeItem(removed, req.body?.rating ?? 0);
     broadcastBacklogAndCompletions();
     broadcastState();
     res.json({ ok: true, completed });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+
+app.delete("/api/on-deck/:id", async (req, res) => {
+  try { const removed = await onDeckStore.remove(req.params.id); broadcastBacklogAndCompletions(); broadcastState(); res.json({ ok: true, removed }); }
+  catch (error) { res.status(404).json({ error: error.message }); }
+});
+app.post("/api/on-deck/:id/complete", async (req, res) => {
+  try {
+    const removed = await onDeckStore.remove(req.params.id);
+    const completed = await completeItem(removed, req.body?.rating ?? 0);
+    broadcastBacklogAndCompletions();
+    broadcastState();
+    res.json({ ok: true, completed });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post("/api/on-deck/:id/backlog", async (req, res) => {
+  try {
+    const removed = await onDeckStore.remove(req.params.id);
+    const item = await backlogStore.upsert(removed.source, removed);
+    broadcastBacklogAndCompletions();
+    broadcastState();
+    res.json({ ok: true, item });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
@@ -425,6 +566,27 @@ app.post("/api/current/clear", async (_req, res) => {
   hub.broadcast({ type: "current:update", payload: null });
   broadcastState();
   res.json({ ok: true });
+});
+app.post("/api/current/deck", async (_req, res) => {
+  try {
+    const item = normalizeCurrentToDeckItem();
+    const deckItem = await onDeckStore.upsert(item);
+    await completionStore.removeByCanonicalId(deckItem.canonicalId);
+    await backlogStore.remove(deckItem.source, deckItem.canonicalId).catch(() => null);
+    broadcastBacklogAndCompletions();
+    broadcastState();
+    res.json({ ok: true, deckItem });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post("/api/current/complete", async (req, res) => {
+  try {
+    const item = normalizeCurrentToDeckItem();
+    const completed = await completeItem(item, req.body?.rating ?? 0);
+    await backlogStore.remove(completed.source, completed.canonicalId).catch(() => null);
+    broadcastBacklogAndCompletions();
+    broadcastState();
+    res.json({ ok: true, completed });
+  } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
 async function handleTautulliWebhook(req, res) {

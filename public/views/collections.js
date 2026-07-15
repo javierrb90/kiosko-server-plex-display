@@ -8,28 +8,52 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
   let page = 0;
   let isVisible = false;
   let bgTimer = null;
-  let bgIndex = 0;
+  let bgCurrentSrc = '';
   let controlsMounted = false;
 
-  const sizeMap = {
-    small: { width: 104, gap: 12 },
-    medium: { width: 136, gap: 14 },
-    large: { width: 176, gap: 16 }
-  };
+  const sizeMap = { small: { width: 220, gap: 12, poster: 74, mobileColumns: 2 }, medium: { width: 290, gap: 16, poster: 92, mobileColumns: 3 }, large: { width: 360, gap: 18, poster: 110, mobileColumns: 4 } };
   const typeLabels = { games: 'Juegos', movies: 'Películas', series: 'Series' };
 
   function currentSize() { return ['small','medium','large'].includes(cardSize) ? cardSize : 'medium'; }
   function label(type) { return typeLabels[type] || 'Otros'; }
-  function sourceLabel(source) { return source === 'plex' ? 'Plex' : source === 'playnite' ? 'Playnite' : source; }
+  function sourceLabel(source) { return source === 'plex' ? 'Plex' : source === 'playnite' ? 'Playnite' : 'Otros'; }
   function stars(value = 0) { const n = Math.max(0, Math.min(5, Number(value) || 0)); return `<span class="star-rating">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`; }
   function date(value) { const d = new Date(value); return Number.isFinite(d.getTime()) ? d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : ''; }
   function configuredPageSize() { return clamp(Number(settings.views?.collections?.itemsPerPage), 1, 120, 12); }
+  function showSourceText() { return settings.design?.cards?.showSourceText === true; }
+  function dayStart(date = new Date()) { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; }
+  function dateGroupFor(item = {}) {
+    const value = item.completedAt || item.updatedAt || item.createdAt;
+    const timestamp = Date.parse(value || '');
+    if (!Number.isFinite(timestamp)) return 'PREVIOUS';
+    const today = dayStart();
+    const itemDay = dayStart(timestamp);
+    const diffDays = Math.floor((today.getTime() - itemDay.getTime()) / 86400000);
+    if (diffDays <= 0) return 'TODAY';
+    if (diffDays === 1) return 'YESTERDAY';
+    if (diffDays <= 7) return 'LAST WEEK';
+    return 'PREVIOUS';
+  }
+  function groupedRows(list = []) {
+    const rows = [];
+    let lastGroup = null;
+    for (const item of list) {
+      const group = dateGroupFor(item);
+      if (group !== lastGroup) {
+        rows.push({ kind: 'heading', id: `heading-${group}-${rows.length}`, label: group });
+        lastGroup = group;
+      }
+      rows.push({ kind: 'item', item });
+    }
+    return rows;
+  }
 
-  function sessionKey() { return 'kiosko:v5.4.2:collections'; }
+
+  function sessionKey() { return 'kiosko:v5.5:collections'; }
   function saveSession() { try { sessionStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {} }
   function loadSession() {
     try {
-      const parsed = JSON.parse(sessionStorage.getItem(sessionKey()) || sessionStorage.getItem('kiosko:v5.4:collections') || 'null');
+      const parsed = JSON.parse(sessionStorage.getItem(sessionKey()) || sessionStorage.getItem('kiosko:v5.4.2:collections') || sessionStorage.getItem('kiosko:v5.4:collections') || 'null');
       if (!parsed) return;
       if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(type => ['games','movies','series'].includes(type)));
       if (typeof parsed.search === 'string') search = parsed.search;
@@ -58,16 +82,52 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     return { rows: list.slice(page * pageSize, page * pageSize + pageSize), total: list.length, pages };
   }
 
-  function setBackground(list) {
-    const bg = el?.querySelector('[data-dynamic-bg]'); if (!bg) return;
-    const candidates = list.filter(item => item.backdrop || item.poster);
-    if (!candidates.length) { bg.innerHTML = ''; return; }
-    bgIndex = bgIndex % candidates.length; const src = candidates[bgIndex].backdrop || candidates[bgIndex].poster;
-    bg.innerHTML = `<img src="${escapeAttr(src)}" alt="">`;
+  function backgroundRotationMs() {
+    const seconds = Number(settings.design?.background?.rotationSeconds || 12);
+    return Math.max(3, Math.min(120, Number.isFinite(seconds) ? seconds : 12)) * 1000;
   }
+
+  function backgroundFadeMs() {
+    const seconds = Number(settings.design?.background?.fadeSeconds ?? 0.75);
+    return Math.max(0, Math.min(5, Number.isFinite(seconds) ? seconds : 0.75)) * 1000;
+  }
+
+  function pickBackground(candidates = [], { keepCurrent = false } = {}) {
+    if (!candidates.length) return null;
+    if (keepCurrent && bgCurrentSrc) {
+      const current = candidates.find(item => (item.backdrop || item.poster) === bgCurrentSrc);
+      if (current) return current;
+    }
+    if (candidates.length === 1) return candidates[0];
+    const pool = candidates.filter(item => (item.backdrop || item.poster) !== bgCurrentSrc);
+    return (pool.length ? pool : candidates)[Math.floor(Math.random() * (pool.length ? pool.length : candidates.length))] || candidates[0];
+  }
+
+  function setBackground(items, { randomize = false } = {}) {
+    const bg = el?.querySelector('[data-dynamic-bg]');
+    if (!bg) return;
+    const candidates = items.filter(item => item.backdrop || item.poster);
+    if (!candidates.length) { bg.innerHTML = ''; bg.dataset.src = ''; bgCurrentSrc = ''; return; }
+    const candidate = pickBackground(candidates, { keepCurrent: !randomize });
+    const src = candidate?.backdrop || candidate?.poster;
+    if (!src || bg.dataset.src === src) return;
+    bg.dataset.src = src;
+    bgCurrentSrc = src;
+    const img = document.createElement('img');
+    img.className = 'section-bg__image';
+    img.alt = '';
+    img.src = src;
+    bg.appendChild(img);
+    requestAnimationFrame(() => img.classList.add('is-visible'));
+    const oldImages = [...bg.querySelectorAll('.section-bg__image')].filter(node => node !== img);
+    window.setTimeout(() => oldImages.forEach(node => node.remove()), backgroundFadeMs() + 120);
+  }
+
   function restartBackgroundRotation() {
-    clearInterval(bgTimer); const list = filtered().filter(item => item.backdrop || item.poster); bgIndex = Math.min(bgIndex, Math.max(0, list.length-1)); setBackground(list);
-    if (list.length > 1 && isVisible) bgTimer = setInterval(() => { bgIndex = (bgIndex + 1) % list.length; setBackground(list); }, 12000);
+    clearInterval(bgTimer);
+    const data = filtered().filter(item => item.backdrop || item.poster);
+    setBackground(data, { randomize: false });
+    if (data.length > 1 && isVisible) bgTimer = setInterval(() => setBackground(data, { randomize: true }), backgroundRotationMs());
   }
 
   function renderControls({ force = false } = {}) {
@@ -113,10 +173,16 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     cardSize = ['small','medium','large'].includes(result.cardSize) ? result.cardSize : 'medium';
     search = result.search || '';
     page = 0;
-    bgIndex = 0;
     await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { collections: { cardSize } } }) }).catch(() => {});
     updateControlsState();
     render();
+  }
+
+  function emptyMarkup() {
+    if (!items.length) {
+      return `<div class="grid-empty grid-empty--rich"><strong>Todavía no hay colecciones</strong><p>Marca elementos del backlog como vistos o terminados para construir esta vista.</p></div>`;
+    }
+    return `<div class="grid-empty grid-empty--rich"><strong>No hay resultados con estos filtros</strong><p>Prueba a activar más tipos o cambia la búsqueda actual.</p></div>`;
   }
 
   function render() {
@@ -126,20 +192,26 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     const pager = el.querySelector('.pager');
     pager.hidden = pages <= 1;
     el.querySelector('[data-page-label]').textContent = `${page + 1}/${pages}`;
-    el.querySelector('[data-prev]').disabled = page <= 0; el.querySelector('[data-next]').disabled = page >= pages - 1;
+    el.querySelector('[data-prev]').disabled = page <= 0;
+    el.querySelector('[data-next]').disabled = page >= pages - 1;
     updateControlsState();
     const grid = el.querySelector('.media-grid'); const cfg = sizeMap[currentSize()];
-    grid.style.setProperty('--card-width', `${cfg.width}px`); grid.style.setProperty('--card-gap', `${cfg.gap}px`);
-    if (!rows.length) { grid.innerHTML = `<div class="grid-empty">Todavía no hay elementos con estos filtros.</div>`; restartBackgroundRotation(); saveSession(); return; }
-    grid.innerHTML = rows.map(item => `<article class="media-card completed-card" data-id="${escapeAttr(item.id)}">
-      <div class="media-card__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
-      <div class="media-card__meta">
-        <strong>${escapeHtml(item.title || 'Sin título')}</strong>
-        <span>${escapeHtml(label(item.collectionType))} · ${escapeHtml(sourceLabel(item.source))}</span>
-        ${stars(item.rating)}
-        <time>${escapeHtml(date(item.completedAt))}</time>
-      </div>
-    </article>`).join('');
+    grid.style.setProperty('--card-width', `${cfg.width}px`); grid.style.setProperty('--card-gap', `${cfg.gap}px`); grid.style.setProperty('--card-poster-size', `${cfg.poster}px`); grid.style.setProperty('--mobile-columns', String(cfg.mobileColumns));
+    if (!rows.length) { grid.innerHTML = emptyMarkup(); restartBackgroundRotation(); saveSession(); return; }
+    grid.innerHTML = rows.map(item => {
+      const bg = item.backdrop || item.poster || '';
+      return `<article class="media-card media-card--rich completed-card" data-id="${escapeAttr(item.id)}" data-source="${escapeAttr(item.source)}">
+        ${bg ? `<div class="media-card__bg" style="background-image:url('${escapeAttr(bg)}')"></div>` : ''}
+        <div class="media-card__surface">
+          <div class="media-card__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
+          <div class="media-card__meta">
+            <strong>${escapeHtml(item.title || 'Sin título')}</strong>
+            <span>${escapeHtml(item.subtitle || label(item.collectionType))}</span>
+            <div class="media-card__completion">${stars(item.rating)}<time>${escapeHtml(date(item.completedAt))}</time></div>
+          </div>
+        </div>
+      </article>`;
+    }).join('');
     restartBackgroundRotation();
     saveSession();
   }
@@ -176,7 +248,7 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
         if (event.target.closest('[data-collection-open-controls]')) openControlsModal();
       });
       window.addEventListener('resize', () => { if (isVisible) render(); });
-      document.addEventListener('click', (event) => { const btn = event.target.closest('.rating-picker button'); if (!btn) return; const picker = btn.closest('.rating-picker'); picker.dataset.value = btn.dataset.rating; picker.querySelectorAll('button').forEach(node => { node.textContent = Number(node.dataset.rating) <= Number(btn.dataset.rating) ? '★' : '☆'; }); });
+      document.addEventListener('click', event => { const btn = event.target.closest('.rating-picker button'); if (!btn) return; const picker = btn.closest('.rating-picker'); picker.dataset.value = btn.dataset.rating; picker.querySelectorAll('button').forEach(node => { node.textContent = Number(node.dataset.rating) <= Number(btn.dataset.rating) ? '★' : '☆'; }); });
     },
     show() { isVisible = true; controlsMounted = false; el.classList.add('view--active'); el.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); render(); },
     hide() { isVisible = false; clearInterval(bgTimer); controlsMounted = false; el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); if (controlsRoot) controlsRoot.innerHTML = ''; },
@@ -184,5 +256,5 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
   };
 }
 function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
-function escapeHtml(value) { return String(value ?? '').replace(/[&<>'\"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }
+function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }
 function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }

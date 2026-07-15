@@ -11,11 +11,36 @@ export const DEFAULT_SETTINGS = {
   design: {
     accentColor: "#8fafef",
     fontScale: "medium",
-    density: "comfortable"
+    density: "comfortable",
+    sourceColors: {
+      plex: "#8fafef",
+      playnite: "#8fe1b5",
+      other: "#d8b4fe"
+    },
+    background: {
+      rotationSeconds: 12,
+      opacity: 0.28,
+      blur: 18,
+      overlayColor: "#05070c",
+      overlayOpacity: 0.76,
+      grayscale: 0,
+      fadeSeconds: 1.2
+    },
+    itemBackground: {
+      enabled: true,
+      opacity: 0.32,
+      blur: 12,
+      overlayOpacity: 0.72,
+      grayscale: 0
+    },
+    cards: {
+      radius: 18
+    }
   },
   views: {
     notifications: { enabled: true, itemsPerPage: 50 },
     backlog: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
+    onDeck: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
     current: { enabled: true },
     collections: { enabled: true, cardSize: "medium", itemsPerPage: 12 }
   },
@@ -90,12 +115,10 @@ function sanitize(settings) {
   const s = deepMerge(DEFAULT_SETTINGS, settings || {});
   s.server.port = clampNumber(s.server.port, 1, 65535, 3000);
 
-  // Migraciones desde v4/v5.2: todo lo que apunte al Dashboard vuelve a Backlog.
   if (s.display?.defaultView === "dashboard") s.display.defaultView = "backlog";
-  if (!["backlog", "current-content", "collections"].includes(s.display.defaultView)) s.display.defaultView = "backlog";
+  if (!["backlog", "on-deck", "current-content", "collections"].includes(s.display.defaultView)) s.display.defaultView = "backlog";
   s.display.dockPosition = "top";
 
-  // El oscurecimiento automático, wallpapers del Dashboard y colecciones manuales quedan fuera del modelo v5.3.
   delete s.display.dimEnabled;
   delete s.display.dimTimeoutSeconds;
   delete s.display.dimOpacity;
@@ -109,6 +132,7 @@ function sanitize(settings) {
   if (!isObject(s.views.notifications)) s.views.notifications = { enabled: true, itemsPerPage: 50 };
   s.views.notifications.itemsPerPage = clampNumber(s.views.notifications.itemsPerPage, 1, 50, 50);
   s.views.backlog = { enabled: true, ...(isObject(s.views.backlog) ? s.views.backlog : {}), cardSize: cardSize(s.views.backlog?.cardSize), itemsPerPage: clampNumber(s.views.backlog?.itemsPerPage, 1, 60, 12) };
+  s.views.onDeck = { enabled: true, ...(isObject(s.views.onDeck) ? s.views.onDeck : {}), cardSize: cardSize(s.views.onDeck?.cardSize), itemsPerPage: clampNumber(s.views.onDeck?.itemsPerPage, 1, 120, 12) };
   s.views.current = { enabled: true, ...(isObject(s.views.current) ? s.views.current : {}) };
   s.views.collections = { enabled: true, ...(isObject(s.views.collections) ? s.views.collections : {}), cardSize: cardSize(s.views.collections?.cardSize), itemsPerPage: clampNumber(s.views.collections?.itemsPerPage, 1, 120, 12) };
   delete s.views.dashboard;
@@ -117,6 +141,42 @@ function sanitize(settings) {
   s.design.accentColor = color(s.design.accentColor);
   s.design.fontScale = fontScale(s.design.fontScale);
   s.design.density = density(s.design.density);
+  const oldCards = isObject(s.design.cards) ? { ...s.design.cards } : {};
+
+  if (!isObject(s.design.sourceColors)) s.design.sourceColors = {};
+  s.design.sourceColors.plex = color(s.design.sourceColors.plex, DEFAULT_SETTINGS.design.sourceColors.plex);
+  s.design.sourceColors.playnite = color(s.design.sourceColors.playnite, DEFAULT_SETTINGS.design.sourceColors.playnite);
+  s.design.sourceColors.other = color(s.design.sourceColors.other, DEFAULT_SETTINGS.design.sourceColors.other);
+
+  if (!isObject(s.design.cards)) s.design.cards = {};
+  s.design.cards.backdropOpacity = normalizeOpacity(s.design.cards.backdropOpacity, 0.33);
+  s.design.cards.backdropBlur = clampNumber(s.design.cards.backdropBlur, 0, 36, 14);
+  s.design.cards.overlayOpacity = normalizeOpacity(s.design.cards.overlayOpacity, 0.72);
+  s.design.cards.showSourceText = s.design.cards.showSourceText === true;
+
+  if (!isObject(s.design.background)) s.design.background = {};
+  s.design.background.rotationSeconds = clampNumber(s.design.background.rotationSeconds, 3, 120, 12);
+  s.design.background.opacity = normalizeOpacity(s.design.background.opacity, 0.28);
+  s.design.background.blur = clampNumber(s.design.background.blur, 0, 48, 18);
+  s.design.background.overlayColor = color(s.design.background.overlayColor, "#05070c");
+  s.design.background.overlayOpacity = normalizeOpacity(s.design.background.overlayOpacity, 0.76);
+  s.design.background.grayscale = clampNumber(s.design.background.grayscale, 0, 100, 0);
+  s.design.background.fadeSeconds = clampNumber(s.design.background.fadeSeconds, 0, 5, 1.2);
+
+  if (!isObject(s.design.itemBackground)) s.design.itemBackground = {};
+  if (typeof oldCards !== 'undefined') {
+    if (s.design.itemBackground.opacity === undefined && oldCards.backdropOpacity !== undefined) s.design.itemBackground.opacity = oldCards.backdropOpacity;
+    if (s.design.itemBackground.blur === undefined && oldCards.backdropBlur !== undefined) s.design.itemBackground.blur = oldCards.backdropBlur;
+    if (s.design.itemBackground.overlayOpacity === undefined && oldCards.overlayOpacity !== undefined) s.design.itemBackground.overlayOpacity = oldCards.overlayOpacity;
+  }
+  s.design.itemBackground.enabled = s.design.itemBackground.enabled !== false;
+  s.design.itemBackground.opacity = normalizeOpacity(s.design.itemBackground.opacity, 0.32);
+  s.design.itemBackground.blur = clampNumber(s.design.itemBackground.blur, 0, 36, 12);
+  s.design.itemBackground.overlayOpacity = normalizeOpacity(s.design.itemBackground.overlayOpacity, 0.72);
+  s.design.itemBackground.grayscale = clampNumber(s.design.itemBackground.grayscale, 0, 100, 0);
+
+  const radius = (typeof oldCards !== 'undefined' ? oldCards.radius : undefined) ?? s.design.cards?.radius;
+  s.design.cards = { radius: clampNumber(radius, 0, 32, 18) };
 
   if (!isObject(s.backlog)) s.backlog = { sources: {} };
   if (!isObject(s.backlog.sources)) s.backlog.sources = {};

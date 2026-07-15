@@ -10,7 +10,6 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/api/custom-css/global" data-custom-css="global">
   <link rel="stylesheet" href="/api/custom-css/notifications" data-custom-css="notifications">
-  <link rel="stylesheet" href="/api/custom-css/current" data-custom-css="current">
   <link rel="stylesheet" href="/api/custom-css/collections" data-custom-css="collections">
   <link rel="stylesheet" href="/notification-overlay-critical.css">
 </head>
@@ -21,18 +20,22 @@
         <span class="notifications-trigger__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22a2.4 2.4 0 0 0 2.3-1.7H9.7A2.4 2.4 0 0 0 12 22Zm7-5-1.7-2.2V10a5.3 5.3 0 0 0-4-5.1V3a1.3 1.3 0 1 0-2.6 0v1.9a5.3 5.3 0 0 0-4 5.1v4.8L5 17v1.2h14V17Z"/></svg></span>
         <span class="notifications-trigger__badge" data-notifications-badge hidden>0</span>
       </button>
-      <nav id="dock" class="dock" aria-label="Navegación principal">
-        <button data-nav="backlog" class="dock__item--active" type="button" aria-label="Backlog"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 5h16v3H4v-3Zm0 5h10v3H4v-3Zm13 .5 2 2 3-4 1.6 1.2-4.4 5.8-3.6-3.6L17 15.5Z"/></svg></span><small>Backlog</small></button>
-        <button data-nav="current-content" type="button" aria-label="Actual"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h12a4 4 0 0 1 0 8H9v6H4V5Zm5 4h6.7a1 1 0 0 0 0-2H9v2Zm7.5 4.2 4.5 3.2-4.5 3.2v-6.4Z"/></svg></span><small>Actual</small></button>
-        <button data-nav="collections" type="button" aria-label="Colecciones"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v7H4v-7Zm9 0h7v7h-7v-7Z"/></svg></span><small>Colecciones</small></button>
+      <nav id="dock" class="dock dock--flat" aria-label="Navegación principal">
+        <button data-nav="backlog" class="dock__item--active topbar-button" type="button" aria-label="Backlog"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 5h16v3H4v-3Zm0 5h10v3H4v-3Zm13 .5 2 2 3-4 1.6 1.2-4.4 5.8-3.6-3.6L17 15.5Z"/></svg></span></button>
+        <button data-nav="on-deck" class="topbar-button" type="button" aria-label="On Deck"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v3H5V4Zm0 5h10v3H5V9Zm0 5h8v3H5v-3Zm11.2 1.2V11l4.8 3-4.8 3Z"/></svg></span></button>
+        <button data-nav="current-content" class="topbar-button" type="button" aria-label="Actual"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5Z"/></svg></span></button>
+        <button data-nav="collections" class="topbar-button" type="button" aria-label="Colecciones"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v7H4v-7Zm9 0h7v7h-7v-7Z"/></svg></span></button>
       </nav>
+    </div>
+    <div class="app-topbar__right">
+      <div id="view-controls" class="app-topbar__controls" aria-label="Controles de vista"></div>
       <button id="settings-trigger" class="topbar-button settings-trigger" type="button" aria-label="Abrir opciones"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13.5a7.7 7.7 0 0 0 .1-1.5 7.7 7.7 0 0 0-.1-1.5l2-1.5-2-3.5-2.4 1a7.4 7.4 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A7.4 7.4 0 0 0 7 6L4.6 5l-2 3.5 2 1.5a7.7 7.7 0 0 0-.1 1.5c0 .5 0 1 .1 1.5l-2 1.5 2 3.5 2.4-1a7.4 7.4 0 0 0 2.6 1.5L10 22h4l.4-2.5A7.4 7.4 0 0 0 17 18l2.4 1 2-3.5-2-1.5ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg></button>
     </div>
-    <div id="view-controls" class="app-topbar__controls" aria-label="Controles de vista"></div>
   </header>
 
   <main id="app" aria-live="polite">
     <section class="view" data-view="backlog" aria-hidden="true"></section>
+    <section class="view" data-view="on-deck" aria-hidden="true"></section>
     <section class="view" data-view="current-content" aria-hidden="true"></section>
     <section class="view" data-view="collections" aria-hidden="true"></section>
   </main>
@@ -48,6 +51,7 @@
         </div>
         <button class="notifications-panel__close" type="button" data-close-notifications aria-label="Cerrar">×</button>
       </header>
+      <div class="notifications-panel__filters" data-notifications-overlay-filters></div>
       <div class="notifications-panel__list notifications-panel__list--scroll" data-notifications-overlay-list></div>
       <footer class="notifications-panel__footer">
         <span data-notifications-overlay-count>Últimas notificaciones</span>
