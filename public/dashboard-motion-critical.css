@@ -1,0 +1,21 @@
+/* Critical Dashboard motion rules loaded after custom CSS.
+   Keeps normal Dashboard wallpapers moving when motion is enabled. */
+.dashboard-view:not(.dashboard-view--no-motion) .dashboard-slide--wallpaper img.dashboard-bg-media,
+.dashboard-view:not(.dashboard-view--no-motion) .dashboard-slide--collection img.dashboard-bg-media {
+  transform-origin: center center !important;
+  animation: dashboard-pan-strong 42s ease-in-out infinite alternate !important;
+}
+
+.dashboard-view.dashboard-view--no-motion .dashboard-bg-media {
+  animation: none !important;
+  transform: none !important;
+}
+
+@keyframes dashboard-pan-strong {
+  0% {
+    transform: scale(1.08) translate(-2.2%, -1.2%);
+  }
+  100% {
+    transform: scale(1.18) translate(2.2%, 1.2%);
+  }
+}
