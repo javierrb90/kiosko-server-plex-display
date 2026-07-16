@@ -243,13 +243,17 @@ export class SettingsStore {
   }
 
   async persist() {
-    const content = JSON.stringify(this.settings);
-    this.writeQueue = this.writeQueue.then(async () => {
-      const started = Date.now();
-      await fs.writeFile(this.filePath, content, "utf8");
-      const ms = Date.now() - started;
-      if (ms > 250) console.warn(`[persist] settings.json ${ms}ms`);
-    });
-    return this.writeQueue;
+    this.pendingData = this.settings;
+    if (this.writeTimer) return;
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null;
+      const snapshot = this.pendingData;
+      this.writeQueue = this.writeQueue.then(async () => {
+        const started = Date.now();
+        await fs.writeFile(this.filePath, JSON.stringify(snapshot), "utf8");
+        const ms = Date.now() - started;
+        if (ms > 250) console.warn(`[persist] settings.json ${ms}ms`);
+      }).catch(error => console.error(`[persist] settings.json error:`, error));
+    }, Number(process.env.PERSIST_DEBOUNCE_MS || 350));
   }
 }

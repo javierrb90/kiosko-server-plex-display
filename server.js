@@ -157,6 +157,44 @@ function unreadNotificationCount() {
   return store.countSince(stateStore.get().lastNotificationsViewedAt);
 }
 
+
+function cleanPublicValue(value, depth = 0) {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.slice(0, 40).map(entry => cleanPublicValue(entry, depth + 1)).filter(entry => entry !== undefined);
+  if (typeof value === "object") {
+    if (depth > 2) return value.name || value.title || value.tag || value.label || value.value || undefined;
+    const output = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (["raw", "Raw", "payload", "response", "metadata", "Media", "Image"].includes(key)) continue;
+      const cleaned = cleanPublicValue(entry, depth + 1);
+      if (cleaned !== undefined) output[key] = cleaned;
+    }
+    return output;
+  }
+  return undefined;
+}
+
+function publicItem(item = {}) {
+  if (!item || typeof item !== "object") return item;
+  const meta = cleanPublicValue(item.meta || {}) || {};
+  delete meta.raw;
+  return { ...item, meta };
+}
+
+function publicBacklog() {
+  const data = backlogStore.list();
+  return { plex: (data.plex || []).map(publicItem), playnite: (data.playnite || []).map(publicItem) };
+}
+
+function publicOnDeck() {
+  return onDeckStore.list().map(publicItem);
+}
+
+function publicCompletions() {
+  return completionStore.list().map(publicItem);
+}
+
 function snapshot() {
   return {
     type: "state:snapshot",
@@ -168,10 +206,10 @@ function snapshot() {
       notifications: listNotifications(),
       unreadCount: unreadNotificationCount(),
       settings: publicSettings(),
-      backlog: backlogStore.list(),
-      onDeck: onDeckStore.list(),
+      backlog: publicBacklog(),
+      onDeck: publicOnDeck(),
       onDeckMap: onDeckStore.map(),
-      completions: completionStore.list(),
+      completions: publicCompletions(),
     collectionGroups: collectionGroupStore.list(),
       completionRatings: completionStore.ratingsMap(),
       state: stateStore.get()
@@ -571,16 +609,16 @@ function normalizePlayniteBacklogItem(game = {}) {
 function broadcastBacklogAndCompletions() {
   const completionRatings = completionStore.ratingsMap();
   const collectionGroups = collectionGroupStore.list();
-  hub.broadcast({ type: "backlog:update", payload: { backlog: backlogStore.list(), completionRatings, onDeckMap: onDeckStore.map(), collectionGroups } });
-  hub.broadcast({ type: "on-deck:update", payload: { onDeck: onDeckStore.list(), completionRatings, collectionGroups } });
-  hub.broadcast({ type: "completions:update", payload: completionStore.list() });
+  hub.broadcast({ type: "backlog:update", payload: { backlog: publicBacklog(), completionRatings, onDeckMap: onDeckStore.map(), collectionGroups } });
+  hub.broadcast({ type: "on-deck:update", payload: { onDeck: publicOnDeck(), completionRatings, collectionGroups } });
+  hub.broadcast({ type: "completions:update", payload: publicCompletions() });
 }
 function broadcastCollectionGroups() {
   hub.broadcast({ type: "collection-groups:update", payload: collectionGroupStore.list() });
 }
 
-app.get("/api/backlog", (_req, res) => res.json({ backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() }));
-app.get("/api/on-deck", (_req, res) => res.json({ onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() }));
+app.get("/api/backlog", (_req, res) => res.json({ backlog: publicBacklog(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() }));
+app.get("/api/on-deck", (_req, res) => res.json({ onDeck: publicOnDeck(), completionRatings: completionStore.ratingsMap() }));
 
 app.get("/api/collection-groups", (_req, res) => res.json({ groups: collectionGroupStore.list() }));
 app.post("/api/collection-groups", async (req, res) => {

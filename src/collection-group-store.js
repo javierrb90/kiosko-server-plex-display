@@ -68,13 +68,18 @@ export class CollectionGroupStore {
   }
 
   async persist() {
-    this.writeQueue = this.writeQueue.then(async () => {
-      const started = Date.now();
-      await fs.writeFile(this.filePath, JSON.stringify(this.groups), "utf8");
-      const ms = Date.now() - started;
-      if (ms > 250) console.warn(`[persist] collection-groups.json ${ms}ms`);
-    });
-    return this.writeQueue;
+    this.pendingData = this.groups;
+    if (this.writeTimer) return;
+    this.writeTimer = setTimeout(() => {
+      this.writeTimer = null;
+      const snapshot = this.pendingData;
+      this.writeQueue = this.writeQueue.then(async () => {
+        const started = Date.now();
+        await fs.writeFile(this.filePath, JSON.stringify(snapshot), "utf8");
+        const ms = Date.now() - started;
+        if (ms > 250) console.warn(`[persist] collection-groups.json ${ms}ms`);
+      }).catch(error => console.error(`[persist] collection-groups.json error:`, error));
+    }, Number(process.env.PERSIST_DEBOUNCE_MS || 350));
   }
 
   list() { return this.groups; }

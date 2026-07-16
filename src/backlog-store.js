@@ -5,20 +5,20 @@ import crypto from "node:crypto";
 function now() { return new Date().toISOString(); }
 function clean(value) { return String(value ?? "").trim(); }
 function slug(value) { return clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"; }
-function queueWrite(instance, filePath, data) { const content = JSON.stringify(data); instance.writeQueue = instance.writeQueue.then(async () => {
-    const started = Date.now();
-    await fs.writeFile(filePath, content, "utf8");
-    const ms = Date.now() - started;
-    if (ms > 250) console.warn(`[persist] ${path.basename(filePath)} ${ms}ms`);
-  }); return instance.writeQueue; }
-function normalizeSource(value) { const source = clean(value).toLowerCase(); return source === "plex" || source === "playnite" ? source : "manual"; }
-function normalizeRating(value) { const rating = Number(value); if (!Number.isFinite(rating)) return 0; return Math.max(0, Math.min(5, Math.round(rating))); }
-
-export function canonicalKeyForItem(item = {}) {
-  if (item.canonicalId) return String(item.canonicalId);
-  if (item.source === "playnite") return `playnite:${slug(item.gameId || item.title)}`;
-  if (item.source === "plex") return `plex:${item.collectionType || item.type || "item"}:${item.ratingKey || slug(item.title)}`;
-  return `${normalizeSource(item.source)}:${slug(item.title || item.id)}`;
+function queueWrite(instance, filePath, data) {
+  instance.pendingData = data;
+  if (instance.writeTimer) return Promise.resolve();
+  instance.writeTimer = setTimeout(() => {
+    instance.writeTimer = null;
+    const snapshot = instance.pendingData;
+    instance.writeQueue = instance.writeQueue.then(async () => {
+      const started = Date.now();
+      await fs.writeFile(filePath, JSON.stringify(snapshot), "utf8");
+      const ms = Date.now() - started;
+      if (ms > 250) console.warn(`[persist] ${path.basename(filePath)} ${ms}ms`);
+    }).catch(error => console.error(`[persist] ${path.basename(filePath)} error:`, error));
+  }, Number(process.env.PERSIST_DEBOUNCE_MS || 350));
+  return Promise.resolve();
 }
 
 export class BacklogStore {

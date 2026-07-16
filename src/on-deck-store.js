@@ -32,14 +32,19 @@ function canonicalizePlexSeriesInput(input = {}) {
   };
 }
 function queueWrite(instance, filePath, data) {
-  const content = JSON.stringify(data);
-  instance.writeQueue = instance.writeQueue.then(async () => {
-    const started = Date.now();
-    await fs.writeFile(filePath, content, "utf8");
-    const ms = Date.now() - started;
-    if (ms > 250) console.warn(`[persist] ${path.basename(filePath)} ${ms}ms`);
-  });
-  return instance.writeQueue;
+  instance.pendingData = data;
+  if (instance.writeTimer) return Promise.resolve();
+  instance.writeTimer = setTimeout(() => {
+    instance.writeTimer = null;
+    const snapshot = instance.pendingData;
+    instance.writeQueue = instance.writeQueue.then(async () => {
+      const started = Date.now();
+      await fs.writeFile(filePath, JSON.stringify(snapshot), "utf8");
+      const ms = Date.now() - started;
+      if (ms > 250) console.warn(`[persist] ${path.basename(filePath)} ${ms}ms`);
+    }).catch(error => console.error(`[persist] ${path.basename(filePath)} error:`, error));
+  }, Number(process.env.PERSIST_DEBOUNCE_MS || 350));
+  return Promise.resolve();
 }
 
 export class OnDeckStore {
