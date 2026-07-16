@@ -324,8 +324,10 @@ app.post("/api/simulate/:kind", async (req, res) => {
       };
       runtime.currentContent = { ...runtime.game, source: "playnite", kind: "game" };
       await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
-      if (backlogSources().playniteStarted) {
-        await backlogStore.upsert("playnite", normalizePlayniteBacklogItem(runtime.game));
+      const playniteItem = normalizePlayniteBacklogItem(runtime.game);
+      const deckUpdated = await updateOnDeckActivityFromItem({ ...runtime.game, source: "playnite" });
+      if (!deckUpdated && !isGameInDeckOrCompleted(playniteItem) && backlogSources().playniteStarted) {
+        await backlogStore.upsert("playnite", playniteItem);
         broadcastBacklogAndCompletions();
       }
       hub.broadcast({ type: "current:update", payload: runtime.currentContent });
@@ -491,6 +493,45 @@ function normalizeCurrentToDeckItem(input = runtime.currentContent) {
   return normalizeDeckItem(isGame ? normalizePlayniteBacklogItem(input) : normalizePlexBacklogItem(input));
 }
 
+
+function isGameInDeckOrCompleted(item = {}) {
+  if (item.source !== "playnite") return false;
+  const canonicalId = item.canonicalId || normalizePlayniteBacklogItem(item).canonicalId;
+  return Boolean(onDeckStore.findByCanonicalId(canonicalId) || completionStore.findByCanonicalId(canonicalId));
+}
+
+async function updateOnDeckActivityFromItem(input = {}) {
+  const item = normalizeDeckItem(input.source === "playnite" ? normalizePlayniteBacklogItem(input) : normalizePlexBacklogItem(input));
+  if (!item?.canonicalId) return null;
+  const existing = onDeckStore.findByCanonicalId(item.canonicalId);
+  if (!existing) return null;
+  const updated = await onDeckStore.upsert({
+    ...existing,
+    ...item,
+    addedToDeckAt: existing.addedToDeckAt,
+    lastActivityAt: new Date().toISOString()
+  });
+  broadcastBacklogAndCompletions();
+  return updated;
+}
+
+async function removeWatchedPlexFromBacklog(metadata = {}) {
+  const type = metadata.type || metadata.meta?.plexType || "unknown";
+  const ratingKey = metadata.ratingKey;
+  const canonicalId = metadata.canonicalId;
+  const candidates = [];
+  if (type === "movie" && canonicalId) candidates.push(canonicalId);
+  if (type === "show" && canonicalId) candidates.push(canonicalId);
+  if (ratingKey) candidates.push(`plex:${metadata.collectionType || (type === "movie" ? "movies" : "series")}:${ratingKey}`);
+  if (ratingKey) candidates.push(String(ratingKey));
+
+  for (const id of [...new Set(candidates.filter(Boolean))]) {
+    const removed = await backlogStore.remove("plex", id).catch(() => null);
+    if (removed) return removed;
+  }
+  return null;
+}
+
 async function completeItem(input, rating = 0) {
   const completed = await completionStore.complete({ ...input, rating });
   await onDeckStore.removeByCanonicalId(completed.canonicalId);
@@ -599,8 +640,17 @@ async function handleTautulliWebhook(req, res) {
     runtime.plex = event.plex;
     runtime.currentContent = { ...event.plex, source: "plex", kind: "plex" };
     await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
+    if (event.isWatched) {
+      const removed = await removeWatchedPlexFromBacklog(metadata);
+      if (removed) broadcastBacklogAndCompletions();
+    }
+
+    if (event.startsPlayback) {
+      await updateOnDeckActivityFromItem({ ...metadata, source: "plex" });
+    }
+
     const sources = backlogSources();
-    const shouldAddToBacklog = (event.isLibraryAdded && sources.plexRecentlyAdded) || (event.startsPlayback && sources.plexPlayback);
+    const shouldAddToBacklog = !event.isWatched && ((event.isLibraryAdded && sources.plexRecentlyAdded) || (event.startsPlayback && sources.plexPlayback));
     if (shouldAddToBacklog) {
       const backlogItem = normalizePlexBacklogItem({
         ...metadata,
@@ -695,9 +745,13 @@ async function handlePlayniteWebhook(req, res) {
     runtime.game = game;
     runtime.currentContent = { ...game, source: "playnite", kind: "game" };
     await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
-    if (backlogSources().playniteStarted) {
-      await backlogStore.upsert("playnite", normalizePlayniteBacklogItem(game));
+    const playniteItem = normalizePlayniteBacklogItem(game);
+    const deckUpdated = await updateOnDeckActivityFromItem({ ...game, source: "playnite" });
+    if (!deckUpdated && !isGameInDeckOrCompleted(playniteItem) && backlogSources().playniteStarted) {
+      await backlogStore.upsert("playnite", playniteItem);
       broadcastBacklogAndCompletions();
+    } else if (deckUpdated || isGameInDeckOrCompleted(playniteItem)) {
+      await backlogStore.remove("playnite", playniteItem.canonicalId).catch(() => null);
     }
     console.log("Webhook Playnite recibido", { title: game.title, platforms: game.platforms, hasCover: Boolean(game.cover), hasBackground: Boolean(game.background), payloadBytes: Number(req.headers["content-length"] || 0), persistedAssets: true });
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });

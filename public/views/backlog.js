@@ -65,13 +65,13 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
   }
 
 
-  function sessionKey() { return 'kiosko:v5.5:backlog'; }
+  function sessionKey() { return 'kiosko:v5.7:backlog'; }
   function saveSession() {
-    try { sessionStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {}
+    try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {}
   }
   function loadSession() {
     try {
-      const parsed = JSON.parse(sessionStorage.getItem(sessionKey()) || sessionStorage.getItem('kiosko:v5.4.2:backlog') || sessionStorage.getItem('kiosko:v5.4:backlog') || 'null');
+      const parsed = JSON.parse(localStorage.getItem(sessionKey()) || localStorage.getItem('kiosko:v5.4.2:backlog') || localStorage.getItem('kiosko:v5.4:backlog') || 'null');
       if (!parsed) return;
       if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(type => ['movies','games','series'].includes(type)));
       if (typeof parsed.search === 'string') search = parsed.search;

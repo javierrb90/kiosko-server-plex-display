@@ -49,11 +49,11 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
   }
 
 
-  function sessionKey() { return 'kiosko:v5.5:collections'; }
-  function saveSession() { try { sessionStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {} }
+  function sessionKey() { return 'kiosko:v5.7:collections'; }
+  function saveSession() { try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {} }
   function loadSession() {
     try {
-      const parsed = JSON.parse(sessionStorage.getItem(sessionKey()) || sessionStorage.getItem('kiosko:v5.4.2:collections') || sessionStorage.getItem('kiosko:v5.4:collections') || 'null');
+      const parsed = JSON.parse(localStorage.getItem(sessionKey()) || localStorage.getItem('kiosko:v5.4.2:collections') || localStorage.getItem('kiosko:v5.4:collections') || 'null');
       if (!parsed) return;
       if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(type => ['games','movies','series'].includes(type)));
       if (typeof parsed.search === 'string') search = parsed.search;

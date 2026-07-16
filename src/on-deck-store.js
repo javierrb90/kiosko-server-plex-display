@@ -57,7 +57,7 @@ export class OnDeckStore {
 
   list() { return this.items; }
   findByCanonicalId(canonicalId) { return this.items.find(item => item.canonicalId === canonicalId); }
-  map() { return Object.fromEntries(this.items.map(item => [item.canonicalId, { id: item.id, addedToDeckAt: item.addedToDeckAt }])); }
+  map() { return Object.fromEntries(this.items.map(item => [item.canonicalId, { id: item.id, addedToDeckAt: item.addedToDeckAt, lastActivityAt: item.lastActivityAt, updatedAt: item.updatedAt }])); }
 
   async upsert(input = {}) {
     input = canonicalizePlexSeriesInput(input);

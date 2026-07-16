@@ -23,7 +23,6 @@
       <nav id="dock" class="dock dock--flat" aria-label="Navegación principal">
         <button data-nav="backlog" class="dock__item--active topbar-button" type="button" aria-label="Backlog"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 5h16v3H4v-3Zm0 5h10v3H4v-3Zm13 .5 2 2 3-4 1.6 1.2-4.4 5.8-3.6-3.6L17 15.5Z"/></svg></span></button>
         <button data-nav="on-deck" class="topbar-button" type="button" aria-label="On Deck"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v3H5V4Zm0 5h10v3H5V9Zm0 5h8v3H5v-3Zm11.2 1.2V11l4.8 3-4.8 3Z"/></svg></span></button>
-        <button data-nav="current-content" class="topbar-button" type="button" aria-label="Actual"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5Z"/></svg></span></button>
         <button data-nav="collections" class="topbar-button" type="button" aria-label="Colecciones"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v7H4v-7Zm9 0h7v7h-7v-7Z"/></svg></span></button>
       </nav>
     </div>
@@ -60,6 +59,16 @@
     </section>
   </aside>
   <div id="modal-root" class="ui-modal-root" hidden></div>
+  <aside id="now-playing-mini" class="now-playing-mini" aria-live="polite" hidden>
+    <button class="now-playing-mini__body" type="button" data-now-playing-open aria-label="Abrir reproducción actual">
+      <span class="now-playing-mini__poster" data-now-playing-poster></span>
+      <span class="now-playing-mini__copy">
+        <strong data-now-playing-title>Actual</strong>
+        <small data-now-playing-subtitle></small>
+      </span>
+    </button>
+    <button class="now-playing-mini__close" type="button" data-now-playing-close aria-label="Ocultar reproducción actual">×</button>
+  </aside>
   <div id="ui-toast-root" class="ui-toast-root" aria-live="polite"></div>
   <script>if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));</script>
   <script type="module" src="/app.js"></script>

@@ -23,6 +23,10 @@ const modalRoot = document.getElementById('modal-root');
 const settingsTrigger = document.getElementById('settings-trigger');
 const viewControls = document.getElementById('view-controls');
 const uiToastRoot = document.getElementById('ui-toast-root');
+const nowPlayingMini = document.getElementById('now-playing-mini');
+const nowPlayingPoster = document.querySelector('[data-now-playing-poster]');
+const nowPlayingTitle = document.querySelector('[data-now-playing-title]');
+const nowPlayingSubtitle = document.querySelector('[data-now-playing-subtitle]');
 const ui = createUi({ modalRoot, toastRoot: uiToastRoot });
 
 const state = {
@@ -38,7 +42,10 @@ const state = {
   overlayNotifications: [],
   notificationSourceFilter: 'all',
   initialViewResolved: false,
-  localNavigationAt: 0
+  localNavigationAt: 0,
+  currentContent: null,
+  nowPlayingDismissed: false,
+  nowPlayingHighlightTimer: null
 };
 
 
@@ -59,6 +66,12 @@ function writeLocalView(id) {
   try {
     localStorage.setItem(LOCAL_VIEW_KEY, id);
   } catch {}
+}
+
+
+function buildBacklogMap(backlog = {}) {
+  const rows = [...(backlog.plex || []), ...(backlog.playnite || [])];
+  return Object.fromEntries(rows.filter(item => item?.canonicalId).map(item => [item.canonicalId, { id: item.id, source: item.source }]));
 }
 
 const views = new ViewManager(appRoot, { debug });
@@ -337,6 +350,42 @@ function showActionToast({ title, subtitle = '', action = null, notification = n
 function showNotificationToast(notification) {
   return showActionToast({ title: notification.title || 'Nueva notificación', subtitle: notification.subtitle || notification.source || '', notification, action: () => openNotificationsOverlay().catch(debugError) });
 }
+
+function currentPoster(content = {}) {
+  return content.cover || content.poster || content.posterUrl || content.coverPath || content.background || content.backdrop || content.backdropUrl || '';
+}
+function currentSubtitle(content = {}) {
+  if (Array.isArray(content.platforms) && content.platforms.length) return content.platforms.join(' · ');
+  return content.subtitle || content.year || content.type || '';
+}
+function updateNowPlayingMini(content = state.currentContent, { highlight = false, forceOpen = false } = {}) {
+  state.currentContent = content || null;
+  if (!nowPlayingMini) return;
+  const shouldShow = Boolean(content) && (!state.nowPlayingDismissed || forceOpen);
+  nowPlayingMini.hidden = !shouldShow;
+  nowPlayingMini.classList.toggle('now-playing-mini--hidden', !shouldShow);
+  if (!content) return;
+
+  const title = content.title || 'Contenido actual';
+  const subtitle = currentSubtitle(content);
+  const poster = currentPoster(content);
+  if (nowPlayingTitle) nowPlayingTitle.textContent = title;
+  if (nowPlayingSubtitle) nowPlayingSubtitle.textContent = subtitle || (content.source === 'playnite' || content.kind === 'game' ? 'Jugando ahora' : 'Reproduciendo');
+  if (nowPlayingPoster) {
+    nowPlayingPoster.innerHTML = poster ? `<img src="${escapeAttr(poster)}" alt="">` : `<span>${escapeHtml(title.slice(0,1) || '▶')}</span>`;
+  }
+
+  if (highlight) {
+    nowPlayingMini.classList.add('now-playing-mini--highlight');
+    clearTimeout(state.nowPlayingHighlightTimer);
+    state.nowPlayingHighlightTimer = setTimeout(() => nowPlayingMini.classList.remove('now-playing-mini--highlight'), 4200);
+  }
+}
+function openCurrentContentFromMini() {
+  if (!state.currentContent) return;
+  navigate('current-content', { reason: 'mini actual' });
+}
+
 function shouldToastCurrent(content = {}) {
   if (!content) return false;
   if (content.source === 'playnite' || content.kind === 'game' || content.event === 'game_started') return true;
@@ -344,9 +393,8 @@ function shouldToastCurrent(content = {}) {
 }
 function showCurrentToast(content = {}) {
   if (!shouldToastCurrent(content)) return;
-  const title = content?.title || 'Contenido actual';
-  const prefix = content?.source === 'playnite' || content?.kind === 'game' ? 'Jugando ahora' : 'Reproduciendo';
-  return showActionToast({ title: `${prefix}: ${title}`, subtitle: content?.subtitle || '', action: () => navigate('current-content', { reason: 'toast actual' }) });
+  state.nowPlayingDismissed = false;
+  updateNowPlayingMini(content, { highlight: true, forceOpen: true });
 }
 /* legacy */
 
@@ -359,6 +407,7 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
   if (!id) return;
   if (state.privacyLocked && !force) return;
   state.activeView = id;
+  document.body.dataset.activeView = id;
   if (persist) {
     state.localNavigationAt = Date.now();
     writeLocalView(id);
@@ -378,7 +427,8 @@ function applyState(payload = {}) {
   updateNotificationsTrigger();
   views.update('backlog', { backlog: payload.backlog || {}, completionRatings: payload.completionRatings || {}, onDeckMap: payload.onDeckMap || {}, settings: state.settings });
   views.update('on-deck', { onDeck: payload.onDeck || [], completionRatings: payload.completionRatings || {}, settings: state.settings });
-  views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: payload.onDeckMap || {}, completionRatings: payload.completionRatings || {}, settings: state.settings });
+  views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: payload.onDeckMap || {}, backlogMap: buildBacklogMap(payload.backlog || {}), completionRatings: payload.completionRatings || {}, settings: state.settings });
+  updateNowPlayingMini(payload.currentContent || null);
   views.update('collections', { completions: payload.completions || [], settings: state.settings });
   const defaultView = VALID_VIEWS.has(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog';
   const localView = readLocalView(defaultView);
@@ -405,9 +455,9 @@ const socket = new SocketClient({
       views.update('collections', { settings: state.settings });
       return;
     }
-    if (message.type === 'backlog:update') { views.update('backlog', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
+    if (message.type === 'backlog:update') { views.update('backlog', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(message.payload?.backlog || {}) }); return; }
     if (message.type === 'on-deck:update') { views.update('on-deck', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
-    if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], settings: state.settings }); return; }
+    if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], settings: state.settings }); views.update('current-content', { completionRatings: Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])) }); return; }
     if (message.type === 'custom-css:update') { refreshCustomCss(message.payload?.name); return; }
     if (message.type === 'notifications:open') { openNotificationsOverlay().catch(debugError); return; }
     if (message.type === 'privacy:update') {
@@ -416,9 +466,9 @@ const socket = new SocketClient({
       if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy update', force: true });
       return;
     }
-    if (message.type === 'current:update') { views.update('current-content', { currentContent: message.payload }); if (message.payload) showCurrentToast(message.payload); return; }
-    if (message.type === 'plex:update') { views.update('current-content', { currentContent: { ...(message.payload || {}), source: 'plex', kind: 'plex' } }); if (message.payload) showCurrentToast({ ...(message.payload || {}), source: 'plex', kind: 'plex' }); return; }
-    if (message.type === 'game:update') { views.update('current-content', { currentContent: { ...(message.payload || {}), source: 'playnite', kind: 'game' } }); if (message.payload) showCurrentToast({ ...(message.payload || {}), source: 'playnite', kind: 'game' }); return; }
+    if (message.type === 'current:update') { views.update('current-content', { currentContent: message.payload }); if (message.payload) showCurrentToast(message.payload); else updateNowPlayingMini(null); return; }
+    if (message.type === 'plex:update') { const current = { ...(message.payload || {}), source: 'plex', kind: 'plex' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
+    if (message.type === 'game:update') { const current = { ...(message.payload || {}), source: 'playnite', kind: 'game' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
     if (message.type === 'notifications:cleared') {
       state.overlayNotifications = [];
       state.unreadCount = 0;
@@ -450,6 +500,15 @@ dock.addEventListener('click', event => {
   navigate(btn.dataset.nav, { reason: 'dock' });
 });
 notificationsTrigger?.addEventListener('click', event => { event.stopPropagation(); openNotificationsOverlay().catch(debugError); });
+nowPlayingMini?.addEventListener('click', event => {
+  if (event.target.closest('[data-now-playing-close]')) {
+    state.nowPlayingDismissed = true;
+    nowPlayingMini.hidden = true;
+    nowPlayingMini.classList.add('now-playing-mini--hidden');
+    return;
+  }
+  if (event.target.closest('[data-now-playing-open]')) openCurrentContentFromMini();
+});
 toast.addEventListener('click', () => { if (!state.privacyLocked) { toast.classList.remove('event-toast--visible'); const action = state.latestToastAction; state.latestToastAction = null; if (typeof action === 'function') action(); else openNotificationsOverlay().catch(debugError); } });
 notificationsOverlay.addEventListener('click', event => {
   if (event.target.closest('[data-close-notifications]')) closeNotificationsOverlay();

@@ -19,12 +19,17 @@ export function normalizeTautulliEvent(payload, metadata) {
   const libraryAdded = new Set([
     "recentlyadded", "libraryadded", "added", "mediaadded", "newmedia"
   ]);
+  const watchedEvents = new Set([
+    "watched", "markedwatched", "mediawatched", "watchedmedia",
+    "playbackwatched", "viewed", "scrobbled", "media.scrobble", "scrobble"
+  ]);
 
   let event = String(rawEvent || "unknown").toLowerCase().trim();
   if (playbackStarts.has(eventKey)) event = "play";
   else if (eventKey === "pause" || eventKey === "playbackpause") event = "pause";
   else if (eventKey === "stop" || eventKey === "playbackstop") event = "stop";
   else if (libraryAdded.has(eventKey)) event = "recently_added";
+  else if (watchedEvents.has(eventKey)) event = "watched";
 
   return {
     rawEvent: String(rawEvent || "unknown"),
@@ -33,6 +38,7 @@ export function normalizeTautulliEvent(payload, metadata) {
     endsPlayback: playbackEnds.has(eventKey),
     isPlayback: playbackStarts.has(eventKey) || playbackEnds.has(eventKey),
     isLibraryAdded: libraryAdded.has(eventKey),
+    isWatched: watchedEvents.has(eventKey),
     plex: { ...metadata, event }
   };
 }
