@@ -5,6 +5,28 @@ import crypto from "node:crypto";
 function now() { return new Date().toISOString(); }
 function clean(value) { return String(value ?? "").trim(); }
 function slug(value) { return clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"; }
+
+function normalizeSource(value) {
+  const source = clean(value).toLowerCase();
+  return source === "plex" || source === "playnite" ? source : "manual";
+}
+function normalizeRating(value) {
+  const rating = Number(value);
+  if (!Number.isFinite(rating)) return 0;
+  return Math.max(0, Math.min(5, Math.round(rating)));
+}
+export function canonicalKeyForItem(item = {}) {
+  if (item.canonicalId) return String(item.canonicalId);
+  const source = normalizeSource(item.source);
+  if (source === "playnite") return `playnite:${slug(item.gameId || item.title || item.id)}`;
+  if (source === "plex") {
+    const type = item.collectionType || item.type || item.meta?.plexType || "item";
+    const key = item.canonicalRatingKey || item.meta?.canonicalRatingKey || item.ratingKey || item.meta?.ratingKey || item.id || item.title;
+    return `plex:${type}:${key ? String(key) : slug(item.title || item.id)}`;
+  }
+  return `${source}:${slug(item.title || item.id)}`;
+}
+
 function queueWrite(instance, filePath, data) {
   instance.pendingData = data;
   if (instance.writeTimer) return Promise.resolve();
