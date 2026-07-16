@@ -101,7 +101,7 @@ function snapshot() {
     }
   };
 }
-function broadcastState() { hub.broadcast(snapshot()); }
+function broadcastState() { /* v5.6.14: snapshots are HTTP-only; WebSocket sends specific events. */ }
 function publicSettings() { return settingsStore.get(); }
 async function buildExportPayload() {
   let customCss = "";
@@ -129,14 +129,12 @@ async function navigate(viewId, reason = "manual", { force = false } = {}) {
   }
   runtime.activeView = viewId;
   await stateStore.update({ activeView: viewId });
-  console.log(`Navegando a vista: ${viewId}`, { reason });
-  hub.broadcast({ type: "view:show", payload: { id: viewId, reason } });
+  console.log(`Navegación local registrada: ${viewId}`, { reason });
   return true;
 }
 async function publishNotification(notification, { navigateToNotifications = false } = {}) {
   hub.broadcast({ type: "notification:new", payload: notification });
-  if (navigateToNotifications) await navigate("notifications", "notificación");
-  broadcastState();
+  if (navigateToNotifications) hub.broadcast({ type: "notifications:open", payload: { reason: "notificación" } });
 }
 function normalizeEnabledPlaybackEvent(event = "") {
   return String(event || "").toLowerCase().trim().replace(/[\s_-]+/g, "");
@@ -157,7 +155,7 @@ function backlogSources() {
 
 wss.on("connection", ws => {
   console.log("WebSocket conectado");
-  hub.send(ws, snapshot());
+  hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length, onDeck: onDeckStore.list().length, completions: completionStore.list().length }));
@@ -170,7 +168,7 @@ app.put("/api/state", async (req, res) => {
   if (patch.privacyLocked === true) {
     runtime.activeView = "backlog";
     await stateStore.update({ activeView: "backlog" });
-    hub.broadcast({ type: "view:show", payload: { id: "backlog", reason: "privacy lock" } });
+    hub.broadcast({ type: "privacy:update", payload: { privacyLocked: true } });
   }
   broadcastState();
   res.json(stateStore.get());

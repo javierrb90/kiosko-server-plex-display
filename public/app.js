@@ -395,7 +395,7 @@ function applyState(payload = {}) {
 const socket = new SocketClient({
   onMessage(message) {
     debug('Mensaje WebSocket recibido', message?.type, message?.payload);
-    if (message.type === 'state:snapshot') return applyState(message.payload);
+    if (message.type === 'state:snapshot') return; // snapshots are HTTP-only after v5.6.14
     if (message.type === 'settings:update') {
       state.settings = message.payload;
       applyDesign(state.settings);
@@ -409,6 +409,13 @@ const socket = new SocketClient({
     if (message.type === 'on-deck:update') { views.update('on-deck', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
     if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], settings: state.settings }); return; }
     if (message.type === 'custom-css:update') { refreshCustomCss(message.payload?.name); return; }
+    if (message.type === 'notifications:open') { openNotificationsOverlay().catch(debugError); return; }
+    if (message.type === 'privacy:update') {
+      state.privacyLocked = Boolean(message.payload?.privacyLocked);
+      updateNotificationsTrigger();
+      if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy update', force: true });
+      return;
+    }
     if (message.type === 'current:update') { views.update('current-content', { currentContent: message.payload }); if (message.payload) showCurrentToast(message.payload); return; }
     if (message.type === 'plex:update') { views.update('current-content', { currentContent: { ...(message.payload || {}), source: 'plex', kind: 'plex' } }); if (message.payload) showCurrentToast({ ...(message.payload || {}), source: 'plex', kind: 'plex' }); return; }
     if (message.type === 'game:update') { views.update('current-content', { currentContent: { ...(message.payload || {}), source: 'playnite', kind: 'game' } }); if (message.payload) showCurrentToast({ ...(message.payload || {}), source: 'playnite', kind: 'game' }); return; }
@@ -424,17 +431,12 @@ const socket = new SocketClient({
       state.unreadCount += 1;
       state.overlayNotifications.unshift({ ...message.payload, unread: true });
       state.overlayNotifications = state.overlayNotifications.slice(0, 50);
-      renderNotificationsOverlay();
+      if (state.notificationsOverlayOpen) renderNotificationsOverlay();
       updateNotificationsTrigger();
       showNotificationToast(message.payload);
       return;
     }
-    if (message.type === 'view:show') {
-      const id = message.payload?.id || 'backlog';
-      if (id === 'notifications') { openNotificationsOverlay().catch(debugError); return; }
-      // View changes are local per browser/device; ignore remote navigation broadcasts.
-      return;
-    }
+    if (message.type === 'view:show') return; // navigation is local per browser/device
   },
   onOpen() { debug('WebSocket conectado'); },
   onClose() { debug('WebSocket desconectado; se reintentará la conexión'); },
