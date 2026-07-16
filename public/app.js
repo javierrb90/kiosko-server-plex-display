@@ -494,11 +494,16 @@ function applyState(payload = {}) {
   state.unreadCount = Number(payload.unreadCount || 0);
   updateNotificationsTrigger();
   state.collectionGroups = payload.collectionGroups || [];
-  views.update('backlog', { backlog: payload.backlog || {}, completionRatings: payload.completionRatings || {}, onDeckMap: payload.onDeckMap || {}, collectionGroups: state.collectionGroups, settings: state.settings });
-  views.update('on-deck', { onDeck: payload.onDeck || [], completionRatings: payload.completionRatings || {}, collectionGroups: state.collectionGroups, settings: state.settings });
-  views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: payload.onDeckMap || {}, backlogMap: buildBacklogMap(payload.backlog || {}), completionRatings: payload.completionRatings || {}, settings: state.settings });
+  state.backlog = payload.backlog || {};
+  state.onDeck = payload.onDeck || [];
+  state.completions = payload.completions || [];
+  state.completionRatings = payload.completionRatings || {};
+  state.onDeckMap = payload.onDeckMap || {};
+  views.update('backlog', { backlog: state.backlog, completionRatings: state.completionRatings, onDeckMap: state.onDeckMap, collectionGroups: state.collectionGroups, settings: state.settings });
+  views.update('on-deck', { onDeck: state.onDeck, completionRatings: state.completionRatings, collectionGroups: state.collectionGroups, settings: state.settings });
+  views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: state.onDeckMap, backlogMap: buildBacklogMap(state.backlog), completionRatings: state.completionRatings, settings: state.settings });
   updateNowPlayingMini(payload.currentContent || null);
-  views.update('collections', { completions: payload.completions || [], collectionGroups: state.collectionGroups, settings: state.settings });
+  views.update('collections', { completions: state.completions, collectionGroups: state.collectionGroups, settings: state.settings });
   const defaultView = VALID_VIEWS.has(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog';
   const localView = readLocalView(defaultView);
 
@@ -511,10 +516,103 @@ function applyState(payload = {}) {
   if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy snapshot', force: true });
 }
 
+
+function normalizeBacklogData(backlog = {}) {
+  return { plex: Array.isArray(backlog.plex) ? backlog.plex : [], playnite: Array.isArray(backlog.playnite) ? backlog.playnite : [] };
+}
+function removeFromBacklogState(item = {}) {
+  state.backlog = normalizeBacklogData(state.backlog);
+  const source = item.source === 'plex' || item.source === 'playnite' ? item.source : null;
+  const matches = entry => entry?.id === item.id || entry?.canonicalId === item.canonicalId;
+  if (source && Array.isArray(state.backlog[source])) state.backlog[source] = state.backlog[source].filter(entry => !matches(entry));
+  else {
+    state.backlog.plex = state.backlog.plex.filter(entry => !matches(entry));
+    state.backlog.playnite = state.backlog.playnite.filter(entry => !matches(entry));
+  }
+}
+function upsertBacklogState(item = {}) {
+  if (!item?.source) return;
+  state.backlog = normalizeBacklogData(state.backlog);
+  const source = item.source === 'plex' || item.source === 'playnite' ? item.source : 'playnite';
+  state.backlog[source] = [item, ...(state.backlog[source] || []).filter(entry => entry.id !== item.id && entry.canonicalId !== item.canonicalId)];
+}
+function removeFromDeckState(item = {}) {
+  state.onDeck = (state.onDeck || []).filter(entry => entry.id !== item.id && entry.canonicalId !== item.canonicalId);
+}
+function upsertDeckState(item = {}) {
+  if (!item) return;
+  state.onDeck = [item, ...(state.onDeck || []).filter(entry => entry.id !== item.id && entry.canonicalId !== item.canonicalId)];
+}
+function removeFromCompletionsState(item = {}) {
+  state.completions = (state.completions || []).filter(entry => entry.id !== item.id && entry.canonicalId !== item.canonicalId);
+}
+function upsertCompletionState(item = {}) {
+  if (!item) return;
+  state.completions = [item, ...(state.completions || []).filter(entry => entry.id !== item.id && entry.canonicalId !== item.canonicalId)];
+}
+function applyCompletionRatings(ratings) {
+  if (ratings) state.completionRatings = ratings;
+}
+function applyOnDeckMap(map) {
+  if (map) state.onDeckMap = map;
+}
+function refreshDataViews() {
+  views.update('backlog', { backlog: state.backlog || {}, completionRatings: state.completionRatings || {}, onDeckMap: state.onDeckMap || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('on-deck', { onDeck: state.onDeck || [], completionRatings: state.completionRatings || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('collections', { completions: state.completions || [], collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('current-content', { onDeckMap: state.onDeckMap || {}, backlogMap: buildBacklogMap(state.backlog || {}), completionRatings: state.completionRatings || {} });
+}
+function applyItemDelta(message = {}) {
+  const payload = message.payload || {};
+  switch (message.type) {
+    case 'item:backlog-removed':
+      removeFromBacklogState(payload.item || payload);
+      break;
+    case 'item:moved-to-deck':
+      if (payload.removed) removeFromBacklogState(payload.removed);
+      if (payload.completionRemoved) removeFromCompletionsState(payload.completionRemoved);
+      upsertDeckState(payload.deckItem);
+      applyCompletionRatings(payload.completionRatings);
+      applyOnDeckMap(payload.onDeckMap);
+      break;
+    case 'item:moved-to-backlog':
+      if (payload.removed) removeFromDeckState(payload.removed);
+      upsertBacklogState(payload.backlogItem);
+      applyCompletionRatings(payload.completionRatings);
+      applyOnDeckMap(payload.onDeckMap);
+      break;
+    case 'item:completed':
+      if (payload.from === 'backlog' && payload.removed) removeFromBacklogState(payload.removed);
+      if (payload.from === 'on-deck' && payload.removed) removeFromDeckState(payload.removed);
+      if (payload.removed && !payload.from) { removeFromBacklogState(payload.removed); removeFromDeckState(payload.removed); }
+      upsertCompletionState(payload.completed);
+      applyCompletionRatings(payload.completionRatings);
+      applyOnDeckMap(payload.onDeckMap);
+      break;
+    case 'item:deck-removed':
+      removeFromDeckState(payload.item || payload);
+      applyOnDeckMap(payload.onDeckMap);
+      break;
+    case 'item:completion-updated':
+      upsertCompletionState(payload.completed);
+      applyCompletionRatings(payload.completionRatings);
+      break;
+    case 'item:completion-removed':
+      removeFromCompletionsState(payload.item || payload);
+      applyCompletionRatings(payload.completionRatings);
+      break;
+    default:
+      return false;
+  }
+  refreshDataViews();
+  return true;
+}
+
 const socket = new SocketClient({
   onMessage(message) {
     debug('Mensaje WebSocket recibido', message?.type, message?.payload);
     if (message.type === 'state:snapshot') return; // snapshots are HTTP-only after v5.6.14
+    if (applyItemDelta(message)) return;
     if (message.type === 'settings:update') {
       state.settings = message.payload;
       applyDesign(state.settings);
@@ -524,9 +622,9 @@ const socket = new SocketClient({
       views.update('collections', { settings: state.settings });
       return;
     }
-    if (message.type === 'backlog:update') { views.update('backlog', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(message.payload?.backlog || {}) }); return; }
-    if (message.type === 'on-deck:update') { views.update('on-deck', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
-    if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { completionRatings: Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])) }); return; }
+    if (message.type === 'backlog:update') { state.backlog = message.payload?.backlog || state.backlog || {}; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; if (message.payload?.onDeckMap) state.onDeckMap = message.payload.onDeckMap; views.update('backlog', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(state.backlog || {}) }); return; }
+    if (message.type === 'on-deck:update') { state.onDeck = message.payload?.onDeck || state.onDeck || []; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; views.update('on-deck', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
+    if (message.type === 'completions:update') { state.completions = message.payload || []; state.completionRatings = Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])); views.update('collections', { completions: state.completions, collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { completionRatings: state.completionRatings }); return; }
     if (message.type === 'collection-groups:update') { state.collectionGroups = message.payload || []; views.update('backlog', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('on-deck', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('collections', { collectionGroups: state.collectionGroups, settings: state.settings }); return; }
     if (message.type === 'custom-css:update') { refreshCustomCss(message.payload?.name); return; }
     if (message.type === 'notifications:open') { openNotificationsOverlay().catch(debugError); return; }
