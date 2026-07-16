@@ -1776,3 +1776,99 @@ body,
   max-height: min(58dvh, 420px);
   overflow: auto;
 }
+
+
+/* v5.6.12 mobile background performance mode
+   Full-screen blur/filter animations are expensive on mobile GPUs.
+   Keep the visual identity but make transitions much cheaper. */
+@media (max-width: 820px), (pointer: coarse) {
+  :root {
+    --section-bg-mobile-blur: min(var(--section-bg-blur, 18px), 7px);
+  }
+
+  .section-bg__image,
+  .section-bg .section-bg__image,
+  .section-bg > img,
+  .media-bg-img,
+  #app > section[data-view] > .section-bg .section-bg__image,
+  #app > section[data-view] > div[data-section-bg] .section-bg__image,
+  #app > section[data-view="on-deck"] .deck-view > .section-bg[data-dynamic-bg] .section-bg__image {
+    filter: blur(var(--section-bg-mobile-blur)) grayscale(var(--section-bg-grayscale, 0%)) saturate(1.02) !important;
+    transform: none !important;
+    transition: opacity 180ms ease !important;
+    will-change: opacity !important;
+  }
+
+  .section-bg__image.is-visible,
+  .media-bg-img--visible,
+  #app > section[data-view="on-deck"] .deck-view > .section-bg[data-dynamic-bg] .section-bg__image.is-visible {
+    transform: none !important;
+  }
+
+  .section-bg .section-bg__image,
+  .section-bg > img {
+    animation: none !important;
+  }
+
+  .section-bg,
+  .media-bg-img {
+    transition: opacity 180ms ease !important;
+    will-change: auto !important;
+  }
+
+  /* Reduce oversized offscreen rendering area on mobile */
+  #app > section[data-view] > .section-bg,
+  #app > section[data-view] > div.section-bg,
+  #app > section[data-view] > div[data-section-bg],
+  .section-bg--view {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+  }
+
+  #app > section[data-view] > .section-bg .section-bg__image,
+  #app > section[data-view] > div[data-section-bg] .section-bg__image,
+  #app > section[data-view="on-deck"] .deck-view > .section-bg[data-dynamic-bg] .section-bg__image {
+    inset: -2% !important;
+    width: 104% !important;
+    height: 104% !important;
+    min-height: 104% !important;
+  }
+
+  /* View transitions: opacity only on mobile to avoid layout/compositor stutter */
+  #app > section[data-view] {
+    transition: opacity 150ms ease, visibility 150ms ease !important;
+    transform: none !important;
+  }
+
+  #app > section[data-view][aria-hidden="false"],
+  #app > section[data-view].view--active {
+    transform: none !important;
+  }
+
+  /* Card backdrops are nice on desktop; on mobile keep them cheap */
+  .media-card__bg {
+    filter: none !important;
+    opacity: .16 !important;
+    transform: none !important;
+  }
+}
+
+/* Respect OS reduced-motion preference everywhere */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+
+  #app > section[data-view],
+  .section-bg__image,
+  .media-bg-img {
+    transition: opacity 120ms ease !important;
+    transform: none !important;
+  }
+}

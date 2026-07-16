@@ -36,7 +36,9 @@ const state = {
   latestToastAction: null,
   notificationsOverlayOpen: false,
   overlayNotifications: [],
-  notificationSourceFilter: 'all'
+  notificationSourceFilter: 'all',
+  initialViewResolved: false,
+  localNavigationAt: 0
 };
 
 const views = new ViewManager(appRoot, { debug });
@@ -332,6 +334,7 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
   if (!id) return;
   if (state.privacyLocked && !force) return;
   state.activeView = id;
+  if (persist) state.localNavigationAt = Date.now();
   views.show(id, { reason });
   dock.querySelectorAll('button').forEach(btn => btn.classList.toggle('dock__item--active', btn.dataset.nav === id));
   if (persist) api('/api/state', { method: 'PUT', body: JSON.stringify({ activeView: id }) }).catch(debugError);
@@ -354,8 +357,15 @@ function applyState(payload = {}) {
     : (['backlog', 'on-deck', 'current-content', 'collections'].includes(payload.state?.activeView)
       ? payload.state.activeView
       : (['backlog', 'on-deck', 'current-content', 'collections'].includes(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog'));
-  if (!views.activeId || views.activeId !== rememberedView) navigate(rememberedView, { persist: false, reason: 'vista recordada', force: true });
-  if (state.privacyLocked) navigate('backlog', { persist: false, reason: 'privacy snapshot', force: true });
+
+  // Important: snapshots update data, but must not steal the current local view after boot.
+  // This avoids mobile jumps when the WebSocket reconnects or a delayed snapshot arrives.
+  if (!state.initialViewResolved) {
+    state.initialViewResolved = true;
+    navigate(rememberedView, { persist: false, reason: 'vista inicial recordada', force: true });
+  }
+
+  if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy snapshot', force: true });
 }
 
 const socket = new SocketClient({
@@ -398,6 +408,11 @@ const socket = new SocketClient({
     if (message.type === 'view:show') {
       const id = message.payload?.id || 'backlog';
       if (id === 'notifications') { openNotificationsOverlay().catch(debugError); return; }
+
+      // Avoid view jumps caused by WebSocket echoes/reconnects right after a local navigation.
+      const recentLocalNavigation = Date.now() - Number(state.localNavigationAt || 0) < 2500;
+      if (recentLocalNavigation && id !== views.activeId) return;
+
       closeNotificationsOverlay();
       navigate(id, { persist: false, reason: message.payload?.reason || 'servidor' });
     }
