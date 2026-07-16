@@ -1,3 +1,5 @@
+import { openItemDetail } from '/core/item-detail.js';
+
 export function createBacklogView({ api, ui, controlsRoot } = {}) {
   let el;
   let backlog = { plex: [], playnite: [] };
@@ -260,45 +262,13 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
 
   function findItem(source, id) { return rawItems().find(item => item.source === source && item.id === id); }
 
-  async function askRating(item) {
-    return ui.open({
-      title: item.source === 'plex' ? 'Marcar como visto' : 'Marcar como terminado',
-      className: 'ui-modal-root--rating',
-      body: `<div class="rating-modal">
-        <div class="rating-modal__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : ''}</div>
-        <div class="rating-modal__copy"><h3>${escapeHtml(item.title || 'Sin título')}</h3><p>${escapeHtml(item.subtitle || sourceLabel(item.source))}</p>
-        <fieldset class="rating-picker">
-          ${[1,2,3,4,5].map(n => `<button type="button" data-rating="${n}" aria-label="${n} estrellas">☆</button>`).join('')}
-        </fieldset></div>
-      </div>`,
-      actions: [
-        { label: 'Cancelar', value: null },
-        { label: 'Confirmar', variant: 'primary', onClick: (root) => Number(root.querySelector('.rating-picker')?.dataset.value || 0) }
-      ]
-    });
-  }
-
   async function openItem(item) {
-    return ui.actionSheet({
-      title: item.title || 'Item',
-      actions: [
-        { id: 'deck', label: 'Añadir a On Deck', description: 'Moverlo a lo que quieres seguir ahora', run: async () => {
-          await api(`/api/backlog/${item.source}/${item.id}/deck`, { method: 'POST' });
-          ui.toast('Añadido a On Deck');
-        }},
-        { id: 'complete', label: actionLabel(item), description: 'Valorar, mover a Colecciones y retirar del Backlog', run: async () => {
-          const rating = await askRating(item);
-          if (rating === null) return;
-          await api(`/api/backlog/${item.source}/${item.id}/complete`, { method: 'POST', body: JSON.stringify({ rating }) });
-          ui.toast(item.source === 'plex' ? 'Marcado como visto' : 'Marcado como terminado');
-        }},
-        { id: 'delete', label: 'Eliminar del backlog', description: 'Quitar de este listado', run: async () => {
-          const ok = await ui.confirm({ title: 'Eliminar del backlog', message: '¿Quitar este elemento del backlog?', confirmText: 'Eliminar', danger: true });
-          if (!ok) return;
-          await api(`/api/backlog/${item.source}/${item.id}`, { method: 'DELETE' });
-          ui.toast('Elemento eliminado');
-        }}
-      ]
+    return openItemDetail({
+      ui,
+      api,
+      item,
+      context: 'backlog',
+      toast: message => ui.toast(message)
     });
   }
 

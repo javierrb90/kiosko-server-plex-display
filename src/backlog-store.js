@@ -33,6 +33,24 @@ export class BacklogStore {
   async persist() { return queueWrite(this, this.filePath, this.data); }
 }
 
+
+function mergedMetadata(input = {}, existing = {}) {
+  return {
+    ...(existing.meta || {}),
+    ...(input.meta || {}),
+    platforms: input.platforms || input.meta?.platforms || existing.platforms || existing.meta?.platforms || [],
+    developers: input.developers || input.meta?.developers || existing.developers || existing.meta?.developers || [],
+    publishers: input.publishers || input.meta?.publishers || existing.publishers || existing.meta?.publishers || [],
+    genres: input.genres || input.meta?.genres || existing.genres || existing.meta?.genres || [],
+    releaseYear: input.releaseYear || input.year || input.meta?.releaseYear || existing.releaseYear || existing.year || existing.meta?.releaseYear || "",
+    playtime: input.playtime || input.meta?.playtime || existing.playtime || existing.meta?.playtime || null,
+    ratingKey: input.ratingKey || input.meta?.ratingKey || existing.ratingKey || existing.meta?.ratingKey || null,
+    canonicalRatingKey: input.canonicalRatingKey || input.meta?.canonicalRatingKey || existing.canonicalRatingKey || existing.meta?.canonicalRatingKey || null,
+    plexType: input.type || input.meta?.plexType || existing.type || existing.meta?.plexType || null,
+    gameId: input.gameId || input.meta?.gameId || existing.gameId || existing.meta?.gameId || null
+  };
+}
+
 export class CompletionStore {
   constructor(dataDir) { this.filePath = path.join(dataDir, "completed-items.json"); this.items = []; this.writeQueue = Promise.resolve(); }
   async init() { await fs.mkdir(path.dirname(this.filePath), { recursive: true }); try { const parsed = JSON.parse(await fs.readFile(this.filePath, "utf8")); this.items = Array.isArray(parsed) ? parsed : []; } catch (error) { if (error.code !== "ENOENT") console.error("No se pudieron cargar completados:", error); } await this.persist(); }
@@ -41,8 +59,58 @@ export class CompletionStore {
   ratingsMap() { return Object.fromEntries(this.items.map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])); }
   async complete(input = {}) {
     const date = now(); const canonicalId = canonicalKeyForItem(input); const rating = normalizeRating(input.rating); const existing = this.findByCanonicalId(canonicalId);
-    if (existing) { Object.assign(existing, { ...input, canonicalId, rating, title: clean(input.title || existing.title || "Sin título") || "Sin título", subtitle: clean(input.subtitle || existing.subtitle || (Array.isArray(input.meta?.platforms) ? input.meta.platforms.join(" · ") : "")), completedAt: input.completedAt || date, updatedAt: date, meta: { ...(existing.meta || {}), ...(input.meta || {}) } }); await this.persist(); return existing; }
-    const item = { id: crypto.randomUUID(), source: normalizeSource(input.source), type: input.type || "item", collectionType: input.collectionType || (input.source === "playnite" ? "games" : "plex"), canonicalId, title: clean(input.title || "Sin título") || "Sin título", subtitle: clean(input.subtitle || (Array.isArray(input.meta?.platforms) ? input.meta.platforms.join(" · ") : "")), poster: input.poster ?? input.posterUrl ?? input.cover ?? null, backdrop: input.backdrop ?? input.backdropUrl ?? input.background ?? null, year: input.year || "", rating, ratingKey: input.ratingKey || null, gameId: input.gameId || null, completedAt: input.completedAt || date, createdAt: date, updatedAt: date, meta: input.meta || {} };
+    if (existing) {
+      const meta = mergedMetadata(input, existing);
+      Object.assign(existing, {
+        ...input,
+        canonicalId,
+        rating,
+        title: clean(input.title || existing.title || "Sin título") || "Sin título",
+        subtitle: clean(input.subtitle || existing.subtitle || (Array.isArray(meta.platforms) ? meta.platforms.join(" · ") : "")),
+        poster: input.poster ?? input.posterUrl ?? input.cover ?? existing.poster ?? null,
+        backdrop: input.backdrop ?? input.backdropUrl ?? input.background ?? existing.backdrop ?? null,
+        year: input.year || input.releaseYear || existing.year || meta.releaseYear || "",
+        releaseYear: input.releaseYear || input.year || existing.releaseYear || meta.releaseYear || "",
+        platforms: meta.platforms || [],
+        developers: meta.developers || [],
+        publishers: meta.publishers || [],
+        genres: meta.genres || [],
+        playtime: meta.playtime || null,
+        ratingKey: input.ratingKey || existing.ratingKey || meta.ratingKey || null,
+        gameId: input.gameId || existing.gameId || meta.gameId || null,
+        completedAt: input.completedAt || date,
+        updatedAt: date,
+        meta
+      });
+      await this.persist(); return existing;
+    }
+    const meta = mergedMetadata(input);
+    const item = {
+      ...input,
+      id: crypto.randomUUID(),
+      source: normalizeSource(input.source),
+      type: input.type || "item",
+      collectionType: input.collectionType || (input.source === "playnite" ? "games" : "plex"),
+      canonicalId,
+      title: clean(input.title || "Sin título") || "Sin título",
+      subtitle: clean(input.subtitle || (Array.isArray(meta.platforms) ? meta.platforms.join(" · ") : "")),
+      poster: input.poster ?? input.posterUrl ?? input.cover ?? null,
+      backdrop: input.backdrop ?? input.backdropUrl ?? input.background ?? null,
+      year: input.year || input.releaseYear || meta.releaseYear || "",
+      releaseYear: input.releaseYear || input.year || meta.releaseYear || "",
+      platforms: meta.platforms || [],
+      developers: meta.developers || [],
+      publishers: meta.publishers || [],
+      genres: meta.genres || [],
+      playtime: meta.playtime || null,
+      rating,
+      ratingKey: input.ratingKey || meta.ratingKey || null,
+      gameId: input.gameId || meta.gameId || null,
+      completedAt: input.completedAt || date,
+      createdAt: date,
+      updatedAt: date,
+      meta
+    };
     this.items.unshift(item); await this.persist(); return item;
   }
   async update(id, patch = {}) { const item = this.items.find(entry => entry.id === id); if (!item) throw new Error("Item completado no encontrado."); if (patch.rating !== undefined) item.rating = normalizeRating(patch.rating); if (patch.title !== undefined) item.title = clean(patch.title || item.title || "Sin título") || "Sin título"; if (patch.completedAt !== undefined) item.completedAt = patch.completedAt || item.completedAt; item.updatedAt = now(); await this.persist(); return item; }

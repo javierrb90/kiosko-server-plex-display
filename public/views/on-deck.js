@@ -1,3 +1,5 @@
+import { openItemDetail } from '/core/item-detail.js';
+
 export function createOnDeckView({ api, ui, controlsRoot } = {}) {
   let el;
   let items = [];
@@ -101,12 +103,15 @@ export function createOnDeckView({ api, ui, controlsRoot } = {}) {
     saveSession();
   }
   function find(id) { return items.find(item => item.id === id); }
-  async function askRating(item) { return ui.open({ title: item.source === 'plex' ? 'Marcar como visto' : 'Marcar como terminado', className: 'ui-modal-root--rating', body: `<div class="rating-modal"><div class="rating-modal__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : ''}</div><div class="rating-modal__copy"><h3>${escapeHtml(item.title || 'Sin título')}</h3><p>${escapeHtml(item.subtitle || label(item))}</p><fieldset class="rating-picker">${[1,2,3,4,5].map(n => `<button type="button" data-rating="${n}">☆</button>`).join('')}</fieldset></div></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Confirmar', variant: 'primary', onClick: root => Number(root.querySelector('.rating-picker')?.dataset.value || 0) }] }); }
-  async function openItem(item) { return ui.actionSheet({ title: item.title || 'On Deck', actions: [
-    { id: 'complete', variant: 'primary', label: item.source === 'plex' ? 'Marcar como visto' : 'Marcar como terminado', description: 'Mover a Colecciones y sacar de On Deck', run: async () => { const rating = await askRating(item); if (rating === null) return; await api(`/api/on-deck/${item.id}/complete`, { method: 'POST', body: JSON.stringify({ rating }) }); ui.toast('Movido a Colecciones'); } },
-    { id: 'backlog', label: 'Devolver al Backlog', description: 'Sacarlo de On Deck y devolverlo a pendientes', run: async () => { await api(`/api/on-deck/${item.id}/backlog`, { method: 'POST' }); ui.toast('Devuelto al Backlog'); } },
-    { id: 'delete', label: 'Quitar de On Deck', description: 'No lo marca como terminado', run: async () => { const ok = await ui.confirm({ title: 'Quitar de On Deck', message: '¿Quitar este elemento de On Deck?', confirmText: 'Quitar' }); if (!ok) return; await api(`/api/on-deck/${item.id}`, { method: 'DELETE' }); ui.toast('Quitado de On Deck'); } }
-  ]}); }
+  async function openItem(item) {
+    return openItemDetail({
+      ui,
+      api,
+      item,
+      context: 'on-deck',
+      toast: message => ui.toast(message)
+    });
+  }
   return { id: 'on-deck', mount(target) { el = target; loadSession(); el.innerHTML = `<div class="app-section deck-view"><div class="section-bg" data-dynamic-bg></div><header class="section-title"><h1>On Deck <span data-section-count>0</span></h1></header><section class="media-grid" aria-label="On Deck"></section><footer class="pager"><button data-prev aria-label="Página anterior">‹</button><span data-page-label>1/1</span><button data-next aria-label="Página siguiente">›</button></footer></div>`; el.addEventListener('click', async event => { if (event.target.closest('[data-prev]')) { page -= 1; render(); return; } if (event.target.closest('[data-next]')) { page += 1; render(); return; } const card = event.target.closest('.media-card'); if (card) { const item = find(card.dataset.id); if (item) await openItem(item); } }); controlsRoot?.addEventListener('click', event => { if (isVisible && event.target.closest('[data-deck-open-controls]')) openControlsModal(); }); document.addEventListener('click', event => { const btn = event.target.closest('.rating-picker button'); if (!btn) return; const picker = btn.closest('.rating-picker'); picker.dataset.value = btn.dataset.rating; picker.querySelectorAll('button').forEach(node => { node.textContent = Number(node.dataset.rating) <= Number(btn.dataset.rating) ? '★' : '☆'; }); }); }, show() { isVisible = true; controlsMounted = false; el.classList.add('view--active'); el.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); render(); }, hide() { isVisible = false; controlsMounted = false; if (bgTimer) clearInterval(bgTimer); el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); if (controlsRoot) controlsRoot.innerHTML = ''; }, update(data = {}) { if (Array.isArray(data.onDeck)) items = data.onDeck; if (data.completionRatings) ratings = data.completionRatings; if (data.settings) { settings = data.settings; cardSize = settings.views?.onDeck?.cardSize || cardSize; } if (isVisible) { render(); restartBackgroundRotation(); } } };
 }
 function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
