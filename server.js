@@ -49,10 +49,77 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`Kiosko Media Center v5.9.11 escuchando en ${host}:${port}`);
+  console.log(`Kiosko Media Center v5.9.21 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
+}
+
+
+const diagnosticsMetrics = {
+  startedAt: new Date().toISOString(),
+  requests: [],
+  actions: [],
+  broadcasts: [],
+  payloads: [],
+  snapshots: [],
+  persists: []
+};
+function pushMetric(bucket, entry, limit = 80) {
+  const list = diagnosticsMetrics[bucket];
+  if (!Array.isArray(list)) return;
+  list.push({ at: new Date().toISOString(), ...entry });
+  if (list.length > limit) list.splice(0, list.length - limit);
+}
+async function fileStatSafe(filePath) {
+  try {
+    const stat = await fs.stat(filePath);
+    return { exists: true, bytes: stat.size, modifiedAt: stat.mtime.toISOString() };
+  } catch (error) {
+    return { exists: false, bytes: 0, error: error.code || error.message };
+  }
+}
+async function dataFileDiagnostics() {
+  const files = [
+    "state.json",
+    "settings.json",
+    "backlog.json",
+    "on-deck.json",
+    "completed-items.json",
+    "collection-groups.json",
+    "notifications.json",
+    "notification-idempotency.json"
+  ];
+  const entries = {};
+  for (const name of files) entries[name] = await fileStatSafe(path.join(DATA_DIR, name));
+  return entries;
+}
+function dataCounts() {
+  const backlog = backlogStore.list();
+  return {
+    backlog: {
+      plex: Array.isArray(backlog.plex) ? backlog.plex.length : 0,
+      playnite: Array.isArray(backlog.playnite) ? backlog.playnite.length : 0,
+      total: (Array.isArray(backlog.plex) ? backlog.plex.length : 0) + (Array.isArray(backlog.playnite) ? backlog.playnite.length : 0)
+    },
+    onDeck: onDeckStore.list().length,
+    completions: completionStore.list().length,
+    collectionGroups: collectionGroupStore.list().length,
+    notifications: store.list({ page: 1, limit: 1 }).total
+  };
+}
+function runtimeDiagnosticsSummary() {
+  return {
+    uptimeSeconds: Math.round(process.uptime()),
+    memory: process.memoryUsage(),
+    wsClients: hub?.clientCount?.() || 0,
+    activeView: runtime?.activeView || null,
+    currentContent: runtime?.currentContent ? {
+      source: runtime.currentContent.source || runtime.currentContent.kind || null,
+      title: runtime.currentContent.title || null,
+      type: runtime.currentContent.type || null
+    } : null
+  };
 }
 
 app.use(express.json({ limit: `${maxPayloadMb}mb` }));
@@ -64,7 +131,9 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const ms = Date.now() - started;
     const noisy = req.path.startsWith("/assets/") || req.path === "/favicon.ico";
-    if (process.env.DEBUG_HTTP === "1" && !noisy) console.log(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms from ${req.ip || req.socket?.remoteAddress || "unknown"}`);
+    const entry = { method: req.method, url: req.originalUrl, status: res.statusCode, ms, ip: req.ip || req.socket?.remoteAddress || "unknown" };
+    if (req.path.startsWith("/api/")) pushMetric("requests", entry);
+    if (process.env.DEBUG_HTTP === "1" && !noisy) console.log(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms from ${entry.ip}`);
     else if (req.path.startsWith("/api/") && ms > slowApiThresholdMs) console.warn(`[slow-api] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms`);
   });
   next();
@@ -82,10 +151,16 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.get("/api/diagnostics", (_req, res) => {
+app.get("/api/diagnostics", async (_req, res) => {
   const addresses = getLocalAddresses();
+  const snapshotStarted = Date.now();
+  const snapshotPayload = snapshot().payload;
+  const snapshotBytes = approxBytes(snapshotPayload);
+  const files = await dataFileDiagnostics();
   res.json({
     ok: true,
+    app: "Kiosko Media Center",
+    version: "v5.9.21",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -95,7 +170,23 @@ app.get("/api/diagnostics", (_req, res) => {
     dockerLikely: isProbablyDocker(),
     interfaces: addresses,
     suggestedUrls: [`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`, ...addresses.map(entry => `http://${entry.address}:${PORT}`)],
-    uptimeSeconds: Math.round(process.uptime()),
+    runtime: runtimeDiagnosticsSummary(),
+    config: {
+      debugHttp: process.env.DEBUG_HTTP === "1",
+      traceItems: process.env.TRACE_ITEMS === "1",
+      traceWs: process.env.TRACE_WS === "1",
+      slowApiLogMs: slowApiThresholdMs,
+      tracePayloadBytes: Number(process.env.TRACE_PAYLOAD_BYTES || 250000),
+      persistDebounceMs: Number(process.env.PERSIST_DEBOUNCE_MS || 350),
+      maxPayloadMb
+    },
+    counts: dataCounts(),
+    files,
+    payloads: {
+      snapshotBytes,
+      snapshotBuildMs: Date.now() - snapshotStarted
+    },
+    recent: diagnosticsMetrics,
     time: new Date().toISOString()
   });
 });
@@ -140,7 +231,7 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v5.9.11 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v5.9.21 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
@@ -202,6 +293,7 @@ function approxBytes(value) {
 }
 function tracePayload(label, payload) {
   const bytes = approxBytes(payload);
+  pushMetric("payloads", { label, bytes });
   if (TRACE_ITEMS || bytes > Number(process.env.TRACE_PAYLOAD_BYTES || 250000)) console.log(`[payload] ${label} bytes=${bytes}`);
   return bytes;
 }
@@ -211,7 +303,8 @@ function traceStep(label, started) {
 }
 function broadcastDelta(type, payload = {}) {
   tracePayload(type, payload);
-  const result = hub.broadcast({ type, payload }, { trace: true });
+  const result = hub.broadcast({ type, payload }, { trace: TRACE_ITEMS || process.env.TRACE_WS === "1" });
+  pushMetric("broadcasts", { type, clients: result.clients, bytes: result.bytes, ms: result.ms });
   if (TRACE_ITEMS) console.log(`[delta] ${type} clients=${result.clients} bytes=${result.bytes} ms=${result.ms}`);
 }
 function traceActionStart(name, req) {
@@ -220,7 +313,9 @@ function traceActionStart(name, req) {
   return started;
 }
 function traceActionEnd(name, started, extra = {}) {
-  console.log(`[action:end] ${name} ${Date.now() - started}ms ${Object.entries(extra).map(([k,v]) => `${k}=${v}`).join(" ")}`);
+  const ms = Date.now() - started;
+  pushMetric("actions", { name, ms, ...extra });
+  console.log(`[action:end] ${name} ${ms}ms ${Object.entries(extra).map(([k,v]) => `${k}=${v}`).join(" ")}`);
 }
 
 function snapshot() {
@@ -308,8 +403,10 @@ app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
   const bytes = tracePayload("snapshot", payload);
+  const ms = Date.now() - started;
+  pushMetric("snapshots", { ms, bytes, wsClients: hub.clientCount() });
   res.json(payload);
-  if (TRACE_ITEMS || Date.now() - started > 500) console.log(`[snapshot] ${Date.now() - started}ms bytes=${bytes} ws=${hub.clientCount()}`);
+  if (TRACE_ITEMS || ms > 500) console.log(`[snapshot] ${ms}ms bytes=${bytes} ws=${hub.clientCount()}`);
 });
 app.get("/api/state", (_req, res) => res.json(stateStore.get()));
 app.put("/api/state", async (req, res) => {
