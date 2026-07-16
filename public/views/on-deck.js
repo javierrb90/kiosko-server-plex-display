@@ -5,7 +5,10 @@ export function createOnDeckView({ api, ui, controlsRoot } = {}) {
   let items = [];
   let ratings = {};
   let settings = {};
-  let activeTypes = new Set(['movies', 'games', 'series']);
+  let collectionGroups = [];
+  let activeGroupIds = new Set();
+  let groupMatch = 'any';
+  let activeTypes = new Set(['games','movies','series']);
   let cardSize = 'medium';
   let search = '';
   let page = 0;
@@ -22,21 +25,23 @@ export function createOnDeckView({ api, ui, controlsRoot } = {}) {
   function ratingFor(item) { return ratings?.[item.canonicalId]?.rating || 0; }
   function configuredPageSize() { return clamp(Number(settings.views?.onDeck?.itemsPerPage), 1, 120, 12); }
   function countsByType() { return items.reduce((acc, item) => { const type = typeFor(item); acc[type] = (acc[type] || 0) + 1; return acc; }, { movies: 0, games: 0, series: 0 }); }
-  function filtered() { const q = search.trim().toLowerCase(); return items.filter(item => activeTypes.has(typeFor(item))).filter(item => !q || `${item.title || ''} ${item.subtitle || ''} ${label(item)}`.toLowerCase().includes(q)).sort((a,b) => Date.parse(b.lastActivityAt || b.updatedAt || b.addedToDeckAt || 0) - Date.parse(a.lastActivityAt || a.updatedAt || a.addedToDeckAt || 0)); }
+  function filtered(applyGroups = true) { const q = search.trim().toLowerCase(); return items.filter(item => activeTypes.has(typeFor(item))).filter(item => !applyGroups || itemMatchesActiveGroups(item)).filter(item => !q || `${item.title || ''} ${item.subtitle || ''} ${label(item)}`.toLowerCase().includes(q)).sort((a,b) => Date.parse(b.lastActivityAt || b.updatedAt || b.addedToDeckAt || 0) - Date.parse(a.lastActivityAt || a.updatedAt || a.addedToDeckAt || 0)); }
   function visible() { const list = filtered(); const pageSize = configuredPageSize(); const pages = Math.max(1, Math.ceil(list.length / pageSize)); page = Math.max(0, Math.min(page, pages - 1)); return { rows: list.slice(page * pageSize, page * pageSize + pageSize), total: list.length, pages }; }
 
   function sessionKey() { return 'kiosko:v5.7:on-deck'; }
   function saveSession() {
-    try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {}
+    try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize, activeGroupIds: [...activeGroupIds], groupMatch })); } catch {}
   }
   function loadSession() {
     try {
       const parsed = JSON.parse(localStorage.getItem(sessionKey()) || 'null');
       if (!parsed) return;
-      if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(type => ['movies','games','series'].includes(type)));
+      if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(type => ['games','movies','series'].includes(type)));
       if (typeof parsed.search === 'string') search = parsed.search;
       if (Number.isFinite(Number(parsed.page))) page = Math.max(0, Number(parsed.page));
       if (['small','medium','large'].includes(parsed.cardSize)) cardSize = parsed.cardSize;
+      if (Array.isArray(parsed.activeGroupIds)) activeGroupIds = new Set(parsed.activeGroupIds);
+      if (['any','all'].includes(parsed.groupMatch)) groupMatch = parsed.groupMatch;
     } catch {}
   }
 
@@ -87,18 +92,105 @@ export function createOnDeckView({ api, ui, controlsRoot } = {}) {
     bgTimer = setInterval(apply, seconds * 1000);
   }
 
-  function updateControlsState() { if (!controlsRoot || !isVisible) return; const meta = controlsRoot.querySelector('[data-deck-filter-meta]'); if (meta) meta.textContent = `${activeTypes.size}/3 · ${currentSize().slice(0,1).toUpperCase()}`; }
-  function renderControls({ force = false } = {}) { if (!controlsRoot || !isVisible) return; if (!force && controlsMounted) return; controlsMounted = true; controlsRoot.innerHTML = `<button type="button" class="view-actions-button view-filter-button" data-deck-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-deck-filter-meta></span></button>`; updateControlsState(); }
+  function updateControlsState() { if (!controlsRoot || !isVisible) return; const meta = controlsRoot.querySelector('[data-deck-filter-meta]'); if (meta) meta.textContent = `${activeTypes.size}/3 · ${currentSize().slice(0,1).toUpperCase()}${activeGroupIds.size ? ` · ${activeGroupIds.size} grupo(s)` : ''}`; }
+  function renderControls({ force = false } = {}) { if (!controlsRoot || !isVisible) return; if (!force && controlsMounted) return; controlsMounted = true; controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-deck-quick-search value="${escapeAttr(search)}" placeholder="Buscar en On Deck" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button" data-deck-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-deck-filter-meta></span></button></div>`; controlsRoot.querySelector('[data-deck-quick-search]')?.addEventListener('input', event => { search = event.target.value || ''; page = 0; render(); }); updateControlsState(); }
   async function openControlsModal() {
     const counts = countsByType();
-    const body = `<div class="controls-modal"><section class="controls-modal__section"><h3>Tipos</h3><div class="controls-modal__checks">${['games','movies','series'].map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-type="${type}" ${activeTypes.has(type) ? 'checked' : ''}><span>${typeLabels[type]}</span><small>${counts[type] || 0}</small></label>`).join('')}</div></section><section class="controls-modal__section"><h3>Tamaño de carátula</h3><div class="controls-modal__sizes">${[['small','S'],['medium','M'],['large','L']].map(([value,label]) => `<label class="controls-modal__toggle"><input type="radio" name="deck-size" value="${value}" ${currentSize() === value ? 'checked' : ''}><span>${label}</span></label>`).join('')}</div></section><section class="controls-modal__section"><h3>Búsqueda</h3><label class="ui-field"><span>Filtrar por título o detalle</span><input type="search" data-control-search value="${escapeAttr(search)}" placeholder="Buscar" autocomplete="off"></label></section></div>`;
-    const result = await ui.open({ title: 'Vista On Deck', body, actions: [{ label: 'Cancelar', value: null }, { label: 'Aplicar', variant: 'primary', onClick: root => ({ activeTypes: [...root.querySelectorAll('[data-filter-type]:checked')].map(input => input.dataset.filterType), cardSize: root.querySelector('input[name="deck-size"]:checked')?.value || currentSize(), search: root.querySelector('[data-control-search]')?.value || '' }) }] });
-    if (!result) return; activeTypes = new Set(result.activeTypes.filter(type => ['games','movies','series'].includes(type))); if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']); cardSize = ['small','medium','large'].includes(result.cardSize) ? result.cardSize : 'medium'; search = result.search || ''; page = 0; await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { onDeck: { cardSize } } }) }).catch(() => {}); render();
+    const body = `<div class="controls-modal">\n      <section class="controls-modal__section controls-modal__section--mobile-search"><h3>Búsqueda</h3><label class="ui-field"><span>Buscar</span><input type="search" data-control-search value="${escapeAttr(search)}" placeholder="Buscar" autocomplete="off"></label></section><section class="controls-modal__section"><h3>Tipos</h3><div class="controls-modal__checks">${['games','movies','series'].map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-type="${type}" ${activeTypes.has(type) ? 'checked' : ''}><span>${typeLabels[type]}</span><small>${counts[type] || 0}</small></label>`).join('')}</div></section><section class="controls-modal__section"><h3>Tamaño de carátula</h3><div class="controls-modal__sizes">${[['small','S'],['medium','M'],['large','L']].map(([value,label]) => `<label class="controls-modal__toggle"><input type="radio" name="deck-size" value="${value}" ${currentSize() === value ? 'checked' : ''}><span>${label}</span></label>`).join('')}</div></section><section class="controls-modal__section"><h3>Grupos</h3><div class="controls-modal__checks groups-filter">${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span data-group-chip="${escapeAttr(group.id)}">${escapeHtml(group.name)}</span><small>${activeGroupCount(group)} · ${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">Todavía no hay grupos.</p>'}</div><div class="segmented-control" role="group" aria-label="Coincidencia de grupos"><label><input type="radio" name="deck-group-match" value="any" ${groupMatch === 'any' ? 'checked' : ''}><span>Cualquiera</span></label><label><input type="radio" name="deck-group-match" value="all" ${groupMatch === 'all' ? 'checked' : ''}><span>Todos</span></label></div></section></div>`;
+    const result = await ui.open({ title: 'Vista On Deck', body, actions: [{ label: 'Cancelar', value: null }, { label: 'Aplicar', variant: 'primary', onClick: root => ({ activeTypes: [...root.querySelectorAll('[data-filter-type]:checked')].map(input => input.dataset.filterType), cardSize: root.querySelector('input[name="deck-size"]:checked')?.value || currentSize(),
+          search: root.querySelector('[data-control-search]')?.value || search, activeGroupIds: [...root.querySelectorAll('[data-filter-group]:checked')].map(input => input.dataset.filterGroup), groupMatch: root.querySelector('input[name="deck-group-match"]:checked')?.value || 'any' }) }] });
+    if (!result) return; activeTypes = new Set(result.activeTypes.filter(type => ['games','movies','series'].includes(type))); if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']); cardSize = ['small','medium','large'].includes(result.cardSize) ? result.cardSize : 'medium'; activeGroupIds = new Set((result.activeGroupIds || []).filter(Boolean)); groupMatch = ['any','all'].includes(result.groupMatch) ? result.groupMatch : 'any';
+    search = result.search || search; page = 0; await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { onDeck: { cardSize } } }) }).catch(() => {}); render();
   }
   function emptyMarkup() { return !items.length ? `<div class="grid-empty grid-empty--rich"><strong>On Deck está vacío</strong><p>Añade aquí contenido desde Backlog o Actual para tenerlo controlado.</p></div>` : `<div class="grid-empty grid-empty--rich"><strong>No hay resultados</strong><p>Prueba a cambiar los filtros.</p></div>`; }
+
+  function groupItemKeys(item = {}) {
+    const meta = item.meta || {};
+    const keys = [
+      item.canonicalId,
+      meta.canonicalId,
+      item.id,
+      item.gameId,
+      meta.gameId,
+      item.ratingKey,
+      meta.ratingKey,
+      item.grandparentRatingKey ? `plex:show:${item.grandparentRatingKey}` : null,
+      meta.grandparentRatingKey ? `plex:show:${meta.grandparentRatingKey}` : null
+    ].filter(Boolean).map(String);
+    return [...new Set(keys)];
+  }
+  function fieldValues(item = {}, field = '') {
+    const meta = item.meta || {};
+    const asArray = value => Array.isArray(value) ? value : (value ? [value] : []);
+    const platformCandidates = [...asArray(item.platforms), ...asArray(meta.platforms), ...asArray(item.platform), ...asArray(meta.platform), item.subtitle];
+    const valueMap = {
+      title: [item.title],
+      source: [item.source],
+      type: [item.collectionType, item.type, meta.plexType],
+      year: [item.year, item.releaseYear, meta.releaseYear],
+      platform: platformCandidates,
+      platforms: platformCandidates,
+      genre: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)],
+      genres: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)],
+      developer: [...asArray(item.developers), ...asArray(meta.developers), ...asArray(item.developer), ...asArray(meta.developer)],
+      publisher: [...asArray(item.publishers), ...asArray(meta.publishers), ...asArray(item.publisher), ...asArray(meta.publisher)]
+    };
+    return (valueMap[field] || [item[field], meta[field]]).flat().filter(Boolean).map(value => String(value).toLowerCase());
+  }
+  function itemInGroup(item = {}, group = {}) {
+    const keys = groupItemKeys(item);
+    const ids = Array.isArray(group.manualItemIds) ? group.manualItemIds.map(String) : [];
+    const manualKeys = Array.isArray(group.manualItemKeys) ? group.manualItemKeys.map(String) : [];
+    if (keys.some(key => ids.includes(key) || manualKeys.includes(key))) return true;
+    if (group.mode === 'manual') return false;
+    const rules = group.rules || [];
+    if (!rules.length) return false;
+    const checks = rules.map(rule => {
+      const values = fieldValues(item, rule.field);
+      const needle = String(rule.value || '').toLowerCase();
+      if (!needle) return false;
+      return rule.operator === 'equals' ? values.some(value => value === needle) : values.some(value => value.includes(needle));
+    });
+    return (group.match || 'all') === 'any' ? checks.some(Boolean) : checks.every(Boolean);
+  }
+  function groupMatchesItem(group = {}, item = {}) { return itemInGroup(item, group); }
+  function itemMatchesActiveGroups(item = {}) {
+    const ids = [...activeGroupIds];
+    if (!ids.length) return true;
+    const groups = ids.map(id => collectionGroups.find(group => group.id === id)).filter(Boolean);
+    if (!groups.length) return true;
+    const checks = groups.map(group => groupMatchesItem(group, item));
+    return groupMatch === 'all' ? checks.every(Boolean) : checks.some(Boolean);
+  }
+
+  function typeFilterBarMarkup() {
+    const types = ["games", "movies", "series"];
+    return `<div class="type-filter-bar">${types.map(type => `<button type="button" data-toggle-type="${type}" class="${activeTypes.has(type) ? 'is-active' : ''}">${escapeHtml(typeLabels[type] || type)}</button>`).join('')}</div>`;
+  }
+  function activeGroupCount(group = {}, list = null) {
+    const pool = list || filtered(false);
+    return pool.filter(item => groupMatchesItem(group, item)).length;
+  }
+  function groupMatchToggleMarkup() {
+    if (activeGroupIds.size < 2) return '';
+    return `<div class="active-filter-match"><button type="button" data-group-match-set="any" class="${groupMatch === 'any' ? 'is-active' : ''}">Cualquiera</button><button type="button" data-group-match-set="all" class="${groupMatch === 'all' ? 'is-active' : ''}">Todos</button></div>`;
+  }
+
+  function activeFiltersMarkup() {
+    const groupChips = [...activeGroupIds].map(id => collectionGroups.find(group => group.id === id)).filter(Boolean);
+    const groupHtml = groupChips.map(group => `<span class="active-filter-chip" data-active-group="${escapeAttr(group.id)}">${escapeHtml(group.name)} <button type="button" data-clear-group="${escapeAttr(group.id)}" aria-label="Quitar grupo">×</button></span>`).join('');
+    return groupHtml ? `<div class="active-filter-panel active-filter-panel--compact"><div class="active-filter-groups"><span>Grupos</span><div class="active-filter-chips">${groupHtml}</div>${groupMatchToggleMarkup()}</div></div>` : '';
+  }
+
+  function cardGroupsMarkup(item = {}) {
+    const groups = collectionGroups.filter(group => itemInGroup(item, group));
+    if (!groups.length) return '';
+    return `<div class="media-card__groups">${groups.slice(0, 3).map(group => `<span data-group-chip="${escapeAttr(group.id)}">${escapeHtml(group.name)}</span>`).join('')}${groups.length > 3 ? `<span>+${groups.length - 3}</span>` : ''}</div>`;
+  }
+
   function render() {
-    if (!el || !isVisible) return; const { rows, total, pages } = visible(); el.querySelector('[data-section-count]').textContent = `${total}`; const pager = el.querySelector('.pager'); pager.hidden = pages <= 1; el.querySelector('[data-page-label]').textContent = `${page + 1}/${pages}`; el.querySelector('[data-prev]').disabled = page <= 0; el.querySelector('[data-next]').disabled = page >= pages - 1; updateControlsState(); const grid = el.querySelector('.media-grid'); const cfg = sizeMap[currentSize()]; grid.style.setProperty('--card-width', `${cfg.width}px`); grid.style.setProperty('--card-gap', `${cfg.gap}px`); grid.style.setProperty('--card-poster-size', `${cfg.poster}px`); grid.style.setProperty('--mobile-columns', String(cfg.mobileColumns)); if (!rows.length) { grid.innerHTML = emptyMarkup(); restartBackgroundRotation(); saveSession(); return; }
-    grid.innerHTML = rows.map(item => { const bg = item.backdrop || item.poster || ''; const rating = ratingFor(item); return `<article class="media-card media-card--rich" data-id="${escapeAttr(item.id)}" data-source="${escapeAttr(item.source)}">${bg ? `<div class="media-card__bg" style="background-image:url('${escapeAttr(bg)}')"></div>` : ''}<div class="media-card__surface"><div class="media-card__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div><div class="media-card__meta"><strong>${escapeHtml(item.title || 'Sin título')}</strong><span>${escapeHtml(item.subtitle || label(item))}</span>${rating ? `<div class="media-card__completion">${stars(rating)}</div>` : ''}</div></div></article>`; }).join('');
+    if (!el || !isVisible) return; const { rows, total, pages } = visible(); el.querySelector('[data-section-count]').textContent = `${total}`; const title = el.querySelector('.section-title'); if (title) { let node = title.querySelector('[data-active-filter-chips]'); if (!node) { node = document.createElement('div'); node.dataset.activeFilterChips = '1'; title.appendChild(node); } node.innerHTML = activeFiltersMarkup(); let typeNode = title.querySelector('[data-type-filter-bar]'); if (!typeNode) { typeNode = document.createElement('div'); typeNode.dataset.typeFilterBar = '1'; title.appendChild(typeNode); } typeNode.innerHTML = typeFilterBarMarkup(); } const pager = el.querySelector('.pager'); pager.hidden = pages <= 1; el.querySelector('[data-page-label]').textContent = `${page + 1}/${pages}`; el.querySelector('[data-prev]').disabled = page <= 0; el.querySelector('[data-next]').disabled = page >= pages - 1; updateControlsState(); const grid = el.querySelector('.media-grid'); const cfg = sizeMap[currentSize()]; grid.style.setProperty('--card-width', `${cfg.width}px`); grid.style.setProperty('--card-gap', `${cfg.gap}px`); grid.style.setProperty('--card-poster-size', `${cfg.poster}px`); grid.style.setProperty('--mobile-columns', String(cfg.mobileColumns)); if (!rows.length) { grid.innerHTML = emptyMarkup(); restartBackgroundRotation(); saveSession(); return; }
+    grid.innerHTML = rows.map(item => { const bg = item.backdrop || item.poster || ''; const rating = ratingFor(item); return `<article class="media-card media-card--rich" data-id="${escapeAttr(item.id)}" data-source="${escapeAttr(item.source)}">${bg ? `<div class="media-card__bg" style="background-image:url('${escapeAttr(bg)}')"></div>` : ''}<div class="media-card__surface"><div class="media-card__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div><div class="media-card__meta"><strong>${escapeHtml(item.title || 'Sin título')}</strong><span>${escapeHtml(item.subtitle || label(item))}</span>${rating ? `<div class="media-card__completion">${stars(rating)}</div>` : ''}${cardGroupsMarkup(item)}</div></div></article>`; }).join('');
     restartBackgroundRotation();
     saveSession();
   }
@@ -109,10 +201,11 @@ export function createOnDeckView({ api, ui, controlsRoot } = {}) {
       api,
       item,
       context: 'on-deck',
-      toast: message => ui.toast(message)
+      toast: message => ui.toast(message),
+      collectionGroups
     });
   }
-  return { id: 'on-deck', mount(target) { el = target; loadSession(); el.innerHTML = `<div class="app-section deck-view"><div class="section-bg" data-dynamic-bg></div><header class="section-title"><h1>On Deck <span data-section-count>0</span></h1></header><section class="media-grid" aria-label="On Deck"></section><footer class="pager"><button data-prev aria-label="Página anterior">‹</button><span data-page-label>1/1</span><button data-next aria-label="Página siguiente">›</button></footer></div>`; el.addEventListener('click', async event => { if (event.target.closest('[data-prev]')) { page -= 1; render(); return; } if (event.target.closest('[data-next]')) { page += 1; render(); return; } const card = event.target.closest('.media-card'); if (card) { const item = find(card.dataset.id); if (item) await openItem(item); } }); controlsRoot?.addEventListener('click', event => { if (isVisible && event.target.closest('[data-deck-open-controls]')) openControlsModal(); }); document.addEventListener('click', event => { const btn = event.target.closest('.rating-picker button'); if (!btn) return; const picker = btn.closest('.rating-picker'); picker.dataset.value = btn.dataset.rating; picker.querySelectorAll('button').forEach(node => { node.textContent = Number(node.dataset.rating) <= Number(btn.dataset.rating) ? '★' : '☆'; }); }); }, show() { isVisible = true; controlsMounted = false; el.classList.add('view--active'); el.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); render(); }, hide() { isVisible = false; controlsMounted = false; if (bgTimer) clearInterval(bgTimer); el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); if (controlsRoot) controlsRoot.innerHTML = ''; }, update(data = {}) { if (Array.isArray(data.onDeck)) items = data.onDeck; if (data.completionRatings) ratings = data.completionRatings; if (data.settings) { settings = data.settings; cardSize = settings.views?.onDeck?.cardSize || cardSize; } if (isVisible) { render(); restartBackgroundRotation(); } } };
+  return { id: 'on-deck', mount(target) { el = target; loadSession(); el.innerHTML = `<div class="app-section deck-view"><div class="section-bg" data-dynamic-bg></div><header class="section-title"><h1>On Deck <span data-section-count>0</span></h1></header><section class="media-grid" aria-label="On Deck"></section><footer class="pager"><button data-prev aria-label="Página anterior">‹</button><span data-page-label>1/1</span><button data-next aria-label="Página siguiente">›</button></footer></div>`; el.addEventListener('click', async event => { if (event.target.closest('[data-prev]')) { page -= 1; render(); return; } if (event.target.closest('[data-next]')) { page += 1; render(); return; } const typeButton = event.target.closest('[data-toggle-type]'); if (typeButton) { const type = typeButton.dataset.toggleType; if (activeTypes.has(type)) activeTypes.delete(type); else activeTypes.add(type); if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']); page = 0; render(); return; } const clearGroup = event.target.closest('[data-clear-group]'); if (clearGroup) { activeGroupIds.delete(clearGroup.dataset.clearGroup); page = 0; render(); return; } const groupMatchButton = event.target.closest('[data-group-match-set]'); if (groupMatchButton) { groupMatch = groupMatchButton.dataset.groupMatchSet || 'any'; page = 0; render(); return; } const chip = event.target.closest('[data-group-chip]'); if (chip) { activeGroupIds = new Set([chip.dataset.groupChip]); groupMatch = 'any'; page = 0; render(); return; } const card = event.target.closest('.media-card'); if (card) { const item = find(card.dataset.id); if (item) await openItem(item); } }); controlsRoot?.addEventListener('click', event => { if (isVisible && event.target.closest('[data-deck-open-controls]')) openControlsModal(); }); document.addEventListener('click', event => { const btn = event.target.closest('.rating-picker button'); if (!btn) return; const picker = btn.closest('.rating-picker'); picker.dataset.value = btn.dataset.rating; picker.querySelectorAll('button').forEach(node => { node.textContent = Number(node.dataset.rating) <= Number(btn.dataset.rating) ? '★' : '☆'; }); }); }, show() { isVisible = true; controlsMounted = false; el.classList.add('view--active'); el.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); render(); }, hide() { isVisible = false; controlsMounted = false; if (bgTimer) clearInterval(bgTimer); el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); if (controlsRoot) controlsRoot.innerHTML = ''; }, update(data = {}) { if (Array.isArray(data.onDeck)) items = data.onDeck; if (data.completionRatings) ratings = data.completionRatings; if (Array.isArray(data.collectionGroups)) collectionGroups = data.collectionGroups; if (data.settings) { settings = data.settings; cardSize = settings.views?.onDeck?.cardSize || cardSize; } if (isVisible) { render(); restartBackgroundRotation(); } } };
 }
 function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>\'\"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }

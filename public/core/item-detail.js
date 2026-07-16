@@ -44,10 +44,19 @@ function metadataRows(item = {}) {
   const playtime = item.playtime || item.meta?.playtime || null;
 
   if (releaseYear) rows.push(['Año', releaseYear]);
-  if (Array.isArray(platforms) && platforms.length) rows.push(['Plataforma', platforms.join(' · ')]);
-  if (Array.isArray(developers) && developers.length) rows.push(['Desarrollador', developers.join(' · ')]);
-  if (Array.isArray(publishers) && publishers.length) rows.push(['Publisher', publishers.join(' · ')]);
-  if (Array.isArray(genres) && genres.length) rows.push(['Géneros', genres.join(' · ')]);
+  const cleanList = values => (Array.isArray(values) ? values : [values]).flat().filter(Boolean).map(value => {
+    if (typeof value === 'string' || typeof value === 'number') return String(value);
+    if (typeof value === 'object') return value.tag || value.name || value.title || value.label || value.value || '';
+    return '';
+  }).filter(Boolean);
+  const platformList = cleanList(platforms);
+  const developerList = cleanList(developers);
+  const publisherList = cleanList(publishers);
+  const genreList = cleanList(genres);
+  if (platformList.length) rows.push(['Plataforma', platformList.join(' · ')]);
+  if (developerList.length) rows.push(['Desarrollador', developerList.join(' · ')]);
+  if (publisherList.length) rows.push(['Publisher', publisherList.join(' · ')]);
+  if (genreList.length) rows.push(['Géneros', genreList.join(' · ')]);
   if (playtime) rows.push(['Tiempo jugado', String(playtime)]);
   if (item.type && item.source === 'plex') rows.push(['Tipo', item.type]);
   if (item.completedAt) rows.push(['Fecha', new Date(item.completedAt).toLocaleDateString('es-ES')]);
@@ -63,16 +72,60 @@ function ratingControlMarkup(item = {}, context = '') {
 }
 
 
+function groupItemKeys(item = {}) {
+  const meta = item.meta || {};
+  const keys = [
+    item.canonicalId,
+    meta.canonicalId,
+    item.id,
+    item.gameId,
+    meta.gameId,
+    item.ratingKey,
+    meta.ratingKey,
+    item.grandparentRatingKey ? `plex:show:${item.grandparentRatingKey}` : null,
+    meta.grandparentRatingKey ? `plex:show:${meta.grandparentRatingKey}` : null,
+    item.parentRatingKey && (item.type === 'episode' || item.type === 'season') ? `plex:show:${item.parentRatingKey}` : null
+  ].filter(Boolean).map(String);
+  return [...new Set(keys)];
+}
+function fieldValues(item = {}, field = '') {
+  const meta = item.meta || {};
+  const asArray = value => Array.isArray(value) ? value : (value ? [value] : []);
+  const platformCandidates = [...asArray(item.platforms), ...asArray(meta.platforms), ...asArray(item.platform), ...asArray(meta.platform), item.subtitle];
+  const valueMap = {
+    title: [item.title],
+    source: [item.source],
+    type: [item.collectionType, item.type, meta.plexType],
+    year: [item.year, item.releaseYear, meta.releaseYear],
+    platform: platformCandidates,
+    platforms: platformCandidates,
+    genre: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)],
+    genres: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)],
+    developer: [...asArray(item.developers), ...asArray(meta.developers), ...asArray(item.developer), ...asArray(meta.developer)],
+    publisher: [...asArray(item.publishers), ...asArray(meta.publishers), ...asArray(item.publisher), ...asArray(meta.publisher)]
+  };
+  return (valueMap[field] || [item[field], meta[field]]).flat().filter(Boolean).map(value => String(value).toLowerCase());
+}
 function itemInGroup(item = {}, group = {}) {
-  const keys = [item.id, item.canonicalId, item.gameId, item.ratingKey].filter(Boolean).map(String);
+  const keys = groupItemKeys(item);
   const ids = Array.isArray(group.manualItemIds) ? group.manualItemIds.map(String) : [];
   const manualKeys = Array.isArray(group.manualItemKeys) ? group.manualItemKeys.map(String) : [];
-  return keys.some(key => ids.includes(key) || manualKeys.includes(key));
+  if (keys.some(key => ids.includes(key) || manualKeys.includes(key))) return true;
+  if (group.mode === 'manual') return false;
+  const rules = group.rules || [];
+  if (!rules.length) return false;
+  const checks = rules.map(rule => {
+    const values = fieldValues(item, rule.field);
+    const needle = String(rule.value || '').toLowerCase();
+    if (!needle) return false;
+    return rule.operator === 'equals' ? values.some(value => value === needle) : values.some(value => value.includes(needle));
+  });
+  return (group.match || 'all') === 'any' ? checks.some(Boolean) : checks.every(Boolean);
 }
 function groupsMarkup(item = {}, context = '', collectionGroups = []) {
-  if (context !== 'collections') return '';
+  if (!['backlog', 'on-deck', 'collections', 'current'].includes(context)) return '';
   const activeGroups = collectionGroups.filter(group => itemInGroup(item, group));
-  return `<div class="item-detail__groups" data-detail-groups><span>Grupos</span><div class="item-detail__group-list">${activeGroups.length ? activeGroups.map(group => `<span class="item-detail__group-chip">${escapeHtml(group.name)}</span>`).join('') : '<small>Sin grupos manuales</small>'}<button type="button" class="item-detail__group-add" data-detail-action="groups" aria-label="Añadir a grupos">+</button></div><div class="item-detail__group-picker" data-detail-group-picker hidden></div></div>`;
+  return `<div class="item-detail__groups item-detail__groups--compact" data-detail-groups><div class="item-detail__groups-head"><span>Grupos</span><button type="button" class="item-detail__group-add" data-detail-action="groups" aria-label="Añadir a grupos">+</button></div>${activeGroups.length ? `<div class="item-detail__group-list">${activeGroups.map(group => `<span class="item-detail__group-chip">${escapeHtml(group.name)}</span>`).join('')}</div>` : ''}<div class="item-detail__group-picker" data-detail-group-picker hidden></div></div>`;
 }
 
 function detailActionsMarkup(context = '') {
@@ -184,9 +237,10 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   function renderInlineGroupPicker(root) {
     const picker = root.querySelector('[data-detail-group-picker]');
     if (!picker) return;
-    if (!item.id) {
+    const keys = groupItemKeys(item);
+    if (!keys.length) {
       picker.hidden = false;
-      picker.innerHTML = `<p class="settings-help">Primero hay que guardar el item en Colecciones.</p>`;
+      picker.innerHTML = `<p class="settings-help">No hay una clave estable para este item.</p>`;
       return;
     }
     if (!collectionGroups.length) {
@@ -199,18 +253,20 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   }
 
   async function saveInlineGroups(root) {
-    if (!item.id || busy) return;
+    if (busy) return;
+    const keys = groupItemKeys(item);
+    const primaryKey = keys[0];
+    if (!primaryKey) { toast('No hay una clave estable para este item'); return; }
     busy = true;
     const picker = root.querySelector('[data-detail-group-picker]');
     const selected = new Set([...root.querySelectorAll('[data-group-pick]:checked')].map(input => input.dataset.groupPick));
-    const keys = itemKeys();
     for (const group of collectionGroups) {
       const active = itemInGroup(item, group);
       if (selected.has(group.id) && !active) {
-        await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items`, { method: 'POST', body: JSON.stringify({ itemId: item.id, itemKeys: keys }) });
+        await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items`, { method: 'POST', body: JSON.stringify({ itemId: primaryKey, itemKeys: keys }) });
       }
       if (!selected.has(group.id) && active) {
-        await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+        await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items/${encodeURIComponent(primaryKey)}`, { method: 'DELETE', body: JSON.stringify({ itemKeys: keys }) });
       }
     }
     await refreshGroups();

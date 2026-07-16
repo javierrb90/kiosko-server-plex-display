@@ -48,36 +48,11 @@ function isProbablyDocker() {
 
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
-  const urls = [
-    `http://127.0.0.1:${port}`,
-    `http://localhost:${port}`,
-    ...addresses.map(entry => `http://${entry.address}:${port}`)
-  ];
-
-  console.log("");
-  console.log("────────────────────────────────────────────");
-  console.log("Kiosko Media Center · diagnóstico de arranque");
-  console.log("────────────────────────────────────────────");
-  console.log(`NODE_ENV: ${process.env.NODE_ENV || "no definido"}`);
-  console.log(`Puerto: ${port}`);
-  console.log(`Bind/host: ${host}`);
-  console.log(`DATA_DIR: ${DATA_DIR}`);
-  console.log(`Docker probable: ${isProbablyDocker() ? "sí" : "no"}`);
-  console.log(`PID: ${process.pid}`);
-  console.log(`CWD: ${process.cwd()}`);
-  console.log("Interfaces IPv4 detectadas:");
-  if (addresses.length) {
-    for (const entry of addresses) console.log(`- ${entry.name}: ${entry.address}`);
-  } else {
-    console.log("- ninguna interfaz IPv4 externa detectada");
-  }
-  console.log("URLs locales sugeridas:");
-  for (const url of urls) console.log(`- ${url}`);
-  console.log("Pruebas rápidas:");
-  console.log(`- curl -v http://127.0.0.1:${port}/api/health`);
-  console.log(`- curl -v http://127.0.0.1:${port}/api/diagnostics`);
-  console.log("────────────────────────────────────────────");
-  console.log("");
+  const firstLan = addresses[0]?.address;
+  console.log(`Kiosko Media Center v5.9.11 escuchando en ${host}:${port}`);
+  console.log(`Datos persistentes: ${DATA_DIR}`);
+  if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
+  console.log(`Diagnóstico: /api/health · /api/diagnostics`);
 }
 
 app.use(express.json({ limit: `${maxPayloadMb}mb` }));
@@ -88,7 +63,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const ms = Date.now() - started;
     const noisy = req.path.startsWith("/assets/") || req.path === "/favicon.ico";
-    if (!noisy) console.log(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms from ${req.ip || req.socket?.remoteAddress || "unknown"}`);
+    if (process.env.DEBUG_HTTP === "1" && !noisy) console.log(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms from ${req.ip || req.socket?.remoteAddress || "unknown"}`);
   });
   next();
 });
@@ -134,7 +109,7 @@ const backlogStore = new BacklogStore(DATA_DIR);
 const completionStore = new CompletionStore(DATA_DIR);
 const collectionGroupStore = new CollectionGroupStore(DATA_DIR);
 const onDeckStore = new OnDeckStore(DATA_DIR);
-await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), onDeckStore.init()]);
+await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), collectionGroupStore.init(), onDeckStore.init()]);
 
 const plex = new PlexService(settingsStore.get().plex || {});
 
@@ -163,7 +138,7 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v5.8.3-diagnostics escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v5.9.11 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
@@ -640,7 +615,7 @@ app.post("/api/collection-groups/:id/items", async (req, res) => {
 });
 app.delete("/api/collection-groups/:id/items/:itemId", async (req, res) => {
   try {
-    const group = await collectionGroupStore.removeItem(req.params.id, req.params.itemId, { exclude: req.query.exclude === "1" });
+    const group = await collectionGroupStore.removeItem(req.params.id, req.params.itemId, { exclude: req.query.exclude === "1", itemKeys: req.body?.itemKeys || [] });
     broadcastCollectionGroups();
     res.json({ ok: true, group });
   } catch (error) { res.status(404).json({ error: error.message }); }

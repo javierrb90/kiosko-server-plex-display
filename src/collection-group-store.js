@@ -114,11 +114,12 @@ export class CollectionGroupStore {
     return group;
   }
 
-  async removeItem(id, itemId, { exclude = false } = {}) {
+  async removeItem(id, itemId, { exclude = false, itemKeys = [] } = {}) {
     const group = this.get(id);
     if (!group) throw new Error("Grupo no encontrado.");
-    group.manualItemIds = unique((group.manualItemIds || []).filter(value => value !== itemId));
-    group.manualItemKeys = unique((group.manualItemKeys || []).filter(value => value !== itemId));
+    const removalKeys = new Set([itemId, ...(itemKeys || [])].filter(Boolean).map(String));
+    group.manualItemIds = unique((group.manualItemIds || []).filter(value => !removalKeys.has(String(value))));
+    group.manualItemKeys = unique((group.manualItemKeys || []).filter(value => !removalKeys.has(String(value))));
     if (exclude && group.mode !== "manual") group.excludedItemIds = unique([...(group.excludedItemIds || []), itemId]);
     group.updatedAt = now();
     await this.persist();
