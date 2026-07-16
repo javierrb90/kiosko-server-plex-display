@@ -1,0 +1,21 @@
+# v5.7 · Now Playing, On Deck activo y filtros locales
+
+- Actual sale del dock principal.
+- Nueva mini-card persistente de contenido actual:
+  - visible si hay reproducción/juego actual;
+  - semitransparente por defecto;
+  - se resalta al recibir contenido nuevo;
+  - botón de cerrar;
+  - reaparece cuando entra nuevo contenido;
+  - click abre la vista Actual.
+- On Deck se ordena por actividad reciente (`lastActivityAt`).
+- Si se reproduce una serie/juego que ya está en On Deck, se mueve arriba.
+- Juegos únicos:
+  - si están en On Deck o Colecciones, no vuelven a Backlog;
+  - si se lanzan estando en On Deck, actualizan actividad.
+- Tautulli watched:
+  - base preparada para eliminar del Backlog por `ratingKey` del item visto;
+  - evita borrar una serie completa si el evento corresponde a un episodio.
+- Filtros/estado por vista pasan a `localStorage` local por dispositivo.
+- Paginación flotante centrada en la parte inferior.
+- Padding inferior para que las cards no queden tapadas por el pager/mini-card.
