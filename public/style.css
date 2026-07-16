@@ -1872,3 +1872,25 @@ body,
     transform: none !important;
   }
 }
+
+
+/* v5.6.13 local view sync + Vivaldi mobile dock stability */
+.dock button:not(.dock__item--active) {
+  box-shadow: none !important;
+}
+
+@media (max-width: 820px), (pointer: coarse) {
+  .dock button,
+  .topbar-button,
+  .notifications-trigger,
+  .settings-trigger,
+  .view-actions-button {
+    transition: background-color 100ms ease, border-color 100ms ease, opacity 100ms ease !important;
+  }
+
+  .dock button:not(.dock__item--active) {
+    background: transparent !important;
+    border-color: rgba(255,255,255,.08) !important;
+    color: var(--text-muted) !important;
+  }
+}

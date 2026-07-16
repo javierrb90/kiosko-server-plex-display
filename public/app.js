@@ -6,7 +6,7 @@ import { createCollectionsView } from "/views/collections.js";
 import { createOnDeckView } from "/views/on-deck.js";
 import { createCurrentContentView } from "/views/current-content.js";
 
-const debug = (...args) => console.log('[Kiosko UI]', ...args);
+const debug = () => {};
 const debugError = (...args) => console.error('[Kiosko UI]', ...args);
 const settingsTrace = () => {}; // trazas desactivadas en build estable
 
@@ -40,6 +40,26 @@ const state = {
   initialViewResolved: false,
   localNavigationAt: 0
 };
+
+
+const LOCAL_VIEW_KEY = 'kiosko:active-view';
+const VALID_VIEWS = new Set(['backlog', 'on-deck', 'current-content', 'collections']);
+
+function readLocalView(fallback = 'backlog') {
+  try {
+    const value = localStorage.getItem(LOCAL_VIEW_KEY);
+    return VALID_VIEWS.has(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeLocalView(id) {
+  if (!VALID_VIEWS.has(id)) return;
+  try {
+    localStorage.setItem(LOCAL_VIEW_KEY, id);
+  } catch {}
+}
 
 const views = new ViewManager(appRoot, { debug });
 
@@ -249,12 +269,17 @@ async function loadOverlayNotifications() {
 }
 async function openNotificationsOverlay({ markViewed = true } = {}) {
   if (state.privacyLocked) return;
-  await loadOverlayNotifications().catch(debugError);
-  if (markViewed) await markNotificationsViewed();
   state.notificationsOverlayOpen = true;
   notificationsOverlay.hidden = false;
   notificationsOverlay.setAttribute('aria-hidden', 'false');
   document.body.classList.add('notifications-overlay-open');
+
+  // Show the panel immediately, then do the heavier notification work after paint.
+  requestAnimationFrame(() => {
+    loadOverlayNotifications()
+      .then(() => markViewed ? markNotificationsViewed() : null)
+      .catch(debugError);
+  });
 }
 function closeNotificationsOverlay() {
   state.notificationsOverlayOpen = false;
@@ -334,7 +359,10 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
   if (!id) return;
   if (state.privacyLocked && !force) return;
   state.activeView = id;
-  if (persist) state.localNavigationAt = Date.now();
+  if (persist) {
+    state.localNavigationAt = Date.now();
+    writeLocalView(id);
+  }
   views.show(id, { reason });
   dock.querySelectorAll('button').forEach(btn => btn.classList.toggle('dock__item--active', btn.dataset.nav === id));
   if (persist) api('/api/state', { method: 'PUT', body: JSON.stringify({ activeView: id }) }).catch(debugError);
@@ -352,17 +380,13 @@ function applyState(payload = {}) {
   views.update('on-deck', { onDeck: payload.onDeck || [], completionRatings: payload.completionRatings || {}, settings: state.settings });
   views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: payload.onDeckMap || {}, completionRatings: payload.completionRatings || {}, settings: state.settings });
   views.update('collections', { completions: payload.completions || [], settings: state.settings });
-  const rememberedView = ['backlog', 'on-deck', 'current-content', 'collections'].includes(payload.activeView)
-    ? payload.activeView
-    : (['backlog', 'on-deck', 'current-content', 'collections'].includes(payload.state?.activeView)
-      ? payload.state.activeView
-      : (['backlog', 'on-deck', 'current-content', 'collections'].includes(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog'));
+  const defaultView = VALID_VIEWS.has(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog';
+  const localView = readLocalView(defaultView);
 
-  // Important: snapshots update data, but must not steal the current local view after boot.
-  // This avoids mobile jumps when the WebSocket reconnects or a delayed snapshot arrives.
+  // Snapshots are data sync only. View is local per browser/device.
   if (!state.initialViewResolved) {
     state.initialViewResolved = true;
-    navigate(rememberedView, { persist: false, reason: 'vista inicial recordada', force: true });
+    navigate(localView, { persist: false, reason: 'vista local inicial', force: true });
   }
 
   if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy snapshot', force: true });
@@ -408,13 +432,8 @@ const socket = new SocketClient({
     if (message.type === 'view:show') {
       const id = message.payload?.id || 'backlog';
       if (id === 'notifications') { openNotificationsOverlay().catch(debugError); return; }
-
-      // Avoid view jumps caused by WebSocket echoes/reconnects right after a local navigation.
-      const recentLocalNavigation = Date.now() - Number(state.localNavigationAt || 0) < 2500;
-      if (recentLocalNavigation && id !== views.activeId) return;
-
-      closeNotificationsOverlay();
-      navigate(id, { persist: false, reason: message.payload?.reason || 'servidor' });
+      // View changes are local per browser/device; ignore remote navigation broadcasts.
+      return;
     }
   },
   onOpen() { debug('WebSocket conectado'); },
