@@ -4,6 +4,9 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
   let el;
   let items = [];
   let settings = {};
+  let collectionGroups = [];
+  let activeGroupIds = new Set();
+  let groupMatch = 'any';
   let activeTypes = new Set(['games', 'movies', 'series']);
   let cardSize = 'medium';
   let search = '';
@@ -52,7 +55,7 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
 
 
   function sessionKey() { return 'kiosko:v5.7:collections'; }
-  function saveSession() { try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize })); } catch {} }
+  function saveSession() { try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize, activeGroupIds: [...activeGroupIds], groupMatch })); } catch {} }
   function loadSession() {
     try {
       const parsed = JSON.parse(localStorage.getItem(sessionKey()) || localStorage.getItem('kiosko:v5.4.2:collections') || localStorage.getItem('kiosko:v5.4:collections') || 'null');
@@ -61,6 +64,8 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
       if (typeof parsed.search === 'string') search = parsed.search;
       if (Number.isFinite(Number(parsed.page))) page = Math.max(0, Number(parsed.page));
       if (['small','medium','large'].includes(parsed.cardSize)) cardSize = parsed.cardSize;
+      if (Array.isArray(parsed.activeGroupIds)) activeGroupIds = new Set(parsed.activeGroupIds);
+      if (['any','all'].includes(parsed.groupMatch)) groupMatch = parsed.groupMatch;
     } catch {}
   }
 
@@ -68,10 +73,82 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     return items.reduce((acc, item) => { const type = item.collectionType; if (['games','movies','series'].includes(type)) acc[type] = (acc[type] || 0) + 1; return acc; }, { games: 0, movies: 0, series: 0 });
   }
 
+
+  function fieldValues(item = {}, field = '') {
+    const meta = item.meta || {};
+    const asArray = value => Array.isArray(value) ? value : (value ? [value] : []);
+    const platformCandidates = [
+      ...asArray(item.platforms),
+      ...asArray(meta.platforms),
+      ...asArray(item.platform),
+      ...asArray(meta.platform),
+      item.subtitle
+    ];
+    const genreCandidates = [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)];
+    const developerCandidates = [...asArray(item.developers), ...asArray(meta.developers), ...asArray(item.developer), ...asArray(meta.developer)];
+    const publisherCandidates = [...asArray(item.publishers), ...asArray(meta.publishers), ...asArray(item.publisher), ...asArray(meta.publisher)];
+    const valueMap = {
+      title: [item.title],
+      source: [item.source],
+      type: [item.collectionType, item.type, meta.plexType],
+      year: [item.year, item.releaseYear, meta.releaseYear],
+      platform: platformCandidates,
+      platforms: platformCandidates,
+      genre: genreCandidates,
+      genres: genreCandidates,
+      developer: developerCandidates,
+      developers: developerCandidates,
+      publisher: publisherCandidates,
+      publishers: publisherCandidates
+    };
+    return (valueMap[field] || [item[field], meta[field]]).flat().filter(Boolean).map(value => String(value).toLowerCase());
+  }
+  function itemKeys(item = {}) {
+    return [item.id, item.canonicalId, item.gameId, item.ratingKey].filter(Boolean).map(String);
+  }
+  function groupMatchesItem(group = {}, item = {}) {
+    const keys = itemKeys(item);
+    const excluded = (group.excludedItemIds || []).map(String);
+    if (keys.some(key => excluded.includes(key))) return false;
+    const manualIds = (group.manualItemIds || []).map(String);
+    const manualKeys = (group.manualItemKeys || []).map(String);
+    if (keys.some(key => manualIds.includes(key) || manualKeys.includes(key))) return true;
+    if (group.mode === 'manual') return false;
+    const rules = group.rules || [];
+    if (!rules.length) return false;
+    const checks = rules.map(rule => {
+      const values = fieldValues(item, rule.field);
+      const needle = String(rule.value || '').toLowerCase();
+      if (!needle) return false;
+      if (rule.operator === 'equals') return values.some(value => value === needle);
+      return values.some(value => value.includes(needle));
+    });
+    return (group.match || 'all') === 'any' ? checks.some(Boolean) : checks.every(Boolean);
+  }
+  async function refreshCollectionGroups() {
+    const response = await api('/api/collection-groups').catch(() => null);
+    if (response?.groups) {
+      collectionGroups = response.groups;
+      activeGroupIds = new Set([...activeGroupIds].filter(id => collectionGroups.some(group => group.id === id)));
+      controlsMounted = false;
+    }
+    return collectionGroups;
+  }
+
+  function itemMatchesActiveGroups(item = {}) {
+    const ids = [...activeGroupIds];
+    if (!ids.length) return true;
+    const groups = ids.map(id => collectionGroups.find(group => group.id === id)).filter(Boolean);
+    if (!groups.length) return true;
+    const checks = groups.map(group => groupMatchesItem(group, item));
+    return groupMatch === 'all' ? checks.every(Boolean) : checks.some(Boolean);
+  }
+
   function filtered() {
     const q = search.trim().toLowerCase();
     return items
       .filter(item => activeTypes.has(item.collectionType))
+      .filter(itemMatchesActiveGroups)
       .filter(item => !q || `${item.title || ''} ${label(item.collectionType)} ${sourceLabel(item.source)}`.toLowerCase().includes(q))
       .sort((a,b)=>Date.parse(b.completedAt||0)-Date.parse(a.completedAt||0));
   }
@@ -136,36 +213,52 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     if (!controlsRoot || !isVisible) return;
     if (!force && controlsMounted) return;
     controlsMounted = true;
-    controlsRoot.innerHTML = `<button type="button" class="view-actions-button view-filter-button" data-collection-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-collection-filter-meta></span></button>`;
+    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><span class="sr-only">Buscar en Colecciones</span><input type="search" data-collection-quick-search value="${escapeAttr(search)}" placeholder="Buscar en colecciones" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button" data-collection-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-collection-filter-meta></span></button></div>`;
+    const searchInput = controlsRoot.querySelector('[data-collection-quick-search]');
+    searchInput?.addEventListener('input', event => { search = event.target.value || ''; page = 0; render(); });
     updateControlsState();
   }
 
   function updateControlsState() {
     if (!controlsRoot || !isVisible) return;
     const meta = controlsRoot.querySelector('[data-collection-filter-meta]');
-    if (meta) meta.textContent = `${activeTypes.size}/3 · ${currentSize().slice(0,1).toUpperCase()}`;
+    if (meta) meta.textContent = `${activeTypes.size}/3 · ${currentSize().slice(0,1).toUpperCase()} · ${configuredPageSize()}${activeGroupIds.size ? ` · ${activeGroupIds.size} grupo(s)` : ''}`;
   }
 
   async function openControlsModal() {
+    await refreshCollectionGroups();
     const counts = countsByType();
     const body = `<div class="controls-modal">
       <section class="controls-modal__section"><h3>Tipos</h3><div class="controls-modal__checks">
         ${['games','movies','series'].map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-type="${type}" ${activeTypes.has(type) ? 'checked' : ''}><span>${typeLabels[type]}</span><small>${counts[type] || 0}</small></label>`).join('')}
       </div></section>
-      <section class="controls-modal__section"><h3>Tamaño de carátula</h3><div class="controls-modal__sizes">
-        ${[['small','S'],['medium','M'],['large','L']].map(([value,label]) => `<label class="controls-modal__toggle"><input type="radio" name="collection-size" value="${value}" ${currentSize() === value ? 'checked' : ''}><span>${label}</span></label>`).join('')}
-      </div></section>
-      <section class="controls-modal__section"><h3>Búsqueda</h3><label class="ui-field"><span>Filtrar por título o detalle</span><input type="search" data-control-search value="${escapeAttr(search)}" placeholder="Buscar" autocomplete="off"></label></section>
+      <section class="controls-modal__section"><h3>Vista</h3>
+        <div class="controls-modal__sizes">
+          ${[['small','S'],['medium','M'],['large','L']].map(([value,label]) => `<label class="controls-modal__toggle"><input type="radio" name="collection-size" value="${value}" ${currentSize() === value ? 'checked' : ''}><span>${label}</span></label>`).join('')}
+        </div>
+        <label class="ui-field"><span>Items por página</span><input data-items-per-page type="number" min="1" max="120" value="${escapeAttr(configuredPageSize())}"></label>
+      </section>
+      <section class="controls-modal__section"><h3>Grupos</h3>
+        <div class="controls-modal__checks groups-filter">
+          ${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">Todavía no hay grupos. Puedes crearlos en Opciones → Colecciones.</p>'}
+        </div>
+        <div class="segmented-control" role="group" aria-label="Coincidencia de grupos">
+          <label><input type="radio" name="group-match" value="any" ${groupMatch === 'any' ? 'checked' : ''}><span>Cualquiera</span></label>
+          <label><input type="radio" name="group-match" value="all" ${groupMatch === 'all' ? 'checked' : ''}><span>Todos</span></label>
+        </div>
+      </section>
     </div>`;
     const result = await ui.open({
-      title: 'Vista de Colecciones',
+      title: 'Filtros de Colecciones',
       body,
       actions: [
         { label: 'Cancelar', value: null },
         { label: 'Aplicar', variant: 'primary', onClick: root => ({
           activeTypes: [...root.querySelectorAll('[data-filter-type]:checked')].map(input => input.dataset.filterType),
           cardSize: root.querySelector('input[name="collection-size"]:checked')?.value || currentSize(),
-          search: root.querySelector('[data-control-search]')?.value || ''
+          itemsPerPage: Number(root.querySelector('[data-items-per-page]')?.value || configuredPageSize()),
+          activeGroupIds: [...root.querySelectorAll('[data-filter-group]:checked')].map(input => input.dataset.filterGroup),
+          groupMatch: root.querySelector('input[name="group-match"]:checked')?.value || 'any'
         }) }
       ]
     });
@@ -173,9 +266,14 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     activeTypes = new Set(result.activeTypes.filter(type => ['games','movies','series'].includes(type)));
     if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']);
     cardSize = ['small','medium','large'].includes(result.cardSize) ? result.cardSize : 'medium';
-    search = result.search || '';
+    activeGroupIds = new Set((result.activeGroupIds || []).filter(Boolean));
+    groupMatch = ['any','all'].includes(result.groupMatch) ? result.groupMatch : 'any';
+    await refreshCollectionGroups();
     page = 0;
-    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { collections: { cardSize } } }) }).catch(() => {});
+    const itemsPerPage = Math.max(1, Math.min(120, Number(result.itemsPerPage) || configuredPageSize()));
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { collections: { cardSize, itemsPerPage } } }) }).catch(() => {});
+    settings.views = settings.views || {};
+    settings.views.collections = { ...(settings.views.collections || {}), cardSize, itemsPerPage };
     updateControlsState();
     render();
   }
@@ -225,7 +323,8 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
       api,
       item,
       context: 'collections',
-      toast: message => ui.toast(message)
+      toast: message => ui.toast(message),
+      collectionGroups
     });
   }
 
@@ -245,11 +344,13 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
         if (event.target.closest('[data-collection-open-controls]')) openControlsModal();
       });
       window.addEventListener('resize', () => { if (isVisible) render(); });
+      window.addEventListener('kiosko:collection-groups-changed', async () => { await refreshCollectionGroups(); if (isVisible) render(); });
+      window.addEventListener('kiosko:collections-changed', async () => { await refreshCollectionGroups(); if (isVisible) render(); });
       document.addEventListener('click', event => { const btn = event.target.closest('.rating-picker button'); if (!btn) return; const picker = btn.closest('.rating-picker'); picker.dataset.value = btn.dataset.rating; picker.querySelectorAll('button').forEach(node => { node.textContent = Number(node.dataset.rating) <= Number(btn.dataset.rating) ? '★' : '☆'; }); });
     },
     show() { isVisible = true; controlsMounted = false; el.classList.add('view--active'); el.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); render(); },
     hide() { isVisible = false; clearInterval(bgTimer); controlsMounted = false; el.classList.remove('view--active'); el.setAttribute('aria-hidden', 'true'); if (controlsRoot) controlsRoot.innerHTML = ''; },
-    update(data = {}) { if (Array.isArray(data.completions)) items = data.completions; if (data.settings) { settings = data.settings; cardSize = settings.views?.collections?.cardSize || cardSize; } if (isVisible) render(); }
+    update(data = {}) { if (Array.isArray(data.completions)) items = data.completions; if (Array.isArray(data.collectionGroups)) { collectionGroups = data.collectionGroups; activeGroupIds = new Set([...activeGroupIds].filter(id => collectionGroups.some(group => group.id === id))); controlsMounted = false; } if (data.settings) { settings = data.settings; cardSize = settings.views?.collections?.cardSize || cardSize; } if (isVisible) render(); }
   };
 }
 function clamp(value, min, max, fallback) { const n = Number(value); return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback; }

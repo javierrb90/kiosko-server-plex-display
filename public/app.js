@@ -45,6 +45,7 @@ const state = {
   initialViewResolved: false,
   localNavigationAt: 0,
   currentContent: null,
+  collectionGroups: [],
   nowPlayingDismissed: false,
   nowPlayingHighlightTimer: null
 };
@@ -438,7 +439,8 @@ function applyState(payload = {}) {
   views.update('on-deck', { onDeck: payload.onDeck || [], completionRatings: payload.completionRatings || {}, settings: state.settings });
   views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: payload.onDeckMap || {}, backlogMap: buildBacklogMap(payload.backlog || {}), completionRatings: payload.completionRatings || {}, settings: state.settings });
   updateNowPlayingMini(payload.currentContent || null);
-  views.update('collections', { completions: payload.completions || [], settings: state.settings });
+  state.collectionGroups = payload.collectionGroups || [];
+  views.update('collections', { completions: payload.completions || [], collectionGroups: state.collectionGroups, settings: state.settings });
   const defaultView = VALID_VIEWS.has(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog';
   const localView = readLocalView(defaultView);
 
@@ -466,7 +468,8 @@ const socket = new SocketClient({
     }
     if (message.type === 'backlog:update') { views.update('backlog', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(message.payload?.backlog || {}) }); return; }
     if (message.type === 'on-deck:update') { views.update('on-deck', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
-    if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], settings: state.settings }); views.update('current-content', { completionRatings: Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])) }); return; }
+    if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { completionRatings: Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])) }); return; }
+    if (message.type === 'collection-groups:update') { state.collectionGroups = message.payload || []; views.update('collections', { collectionGroups: state.collectionGroups, settings: state.settings }); return; }
     if (message.type === 'custom-css:update') { refreshCustomCss(message.payload?.name); return; }
     if (message.type === 'notifications:open') { openNotificationsOverlay().catch(debugError); return; }
     if (message.type === 'privacy:update') {
@@ -577,6 +580,36 @@ async function downloadExport() {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+
+function renderCollectionGroupRows(groups = []) {
+  return groups.length ? groups.map(group => `<article class="collection-group-row" data-group-id="${escapeAttr(group.id)}"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.mode || 'manual')} · ${(group.rules || []).length} regla(s)</small></div><button type="button" class="ui-action-button ui-action-button--danger" data-delete-group="${escapeAttr(group.id)}">Eliminar</button></article>`).join('') : '<p class="settings-help">Todavía no hay grupos creados.</p>';
+}
+function collectionGroupsSettingsMarkup(groups = []) {
+  const fieldOptions = [
+    ['platform','Plataforma'], ['genre','Género'], ['developer','Desarrollador'], ['publisher','Publisher'],
+    ['year','Año'], ['source','Fuente'], ['type','Tipo'], ['title','Título']
+  ];
+  return `<div class="settings-fieldset"><h4>Grupos de Colecciones</h4>
+    <div class="collection-groups-manager" data-groups-manager>
+      ${groups.length ? groups.map(group => `<article class="collection-group-row" data-group-id="${escapeAttr(group.id)}"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.mode || 'manual')} · ${(group.rules || []).length} regla(s)</small></div><button type="button" class="ui-action-button ui-action-button--danger" data-delete-group="${escapeAttr(group.id)}">Eliminar</button></article>`).join('') : '<p class="settings-help">Todavía no hay grupos creados.</p>'}
+    </div>
+    <div class="collection-group-create settings-inline-create">
+      <h4>Crear grupo</h4>
+      <label class="ui-field"><span>Nombre</span><input data-new-group-name type="text" placeholder="Nintendo DS"></label>
+      <div class="segmented-control" role="group" aria-label="Tipo de grupo">
+        <label><input type="radio" name="settings-new-group-mode" value="manual" checked><span>Manual</span></label>
+        <label><input type="radio" name="settings-new-group-mode" value="dynamic"><span>Dinámico</span></label>
+        <label><input type="radio" name="settings-new-group-mode" value="mixed"><span>Mixto</span></label>
+      </div>
+      <div class="segmented-control segmented-control--wrap" role="group" aria-label="Campo dinámico">
+        ${fieldOptions.map(([value,label], index) => `<label><input type="radio" name="settings-new-group-field" value="${value}" ${index === 0 ? 'checked' : ''}><span>${label}</span></label>`).join('')}
+      </div>
+      <label class="ui-field"><span>Valor dinámico</span><input data-new-group-value type="text" placeholder="Nintendo DS"></label>
+      <button type="button" class="ui-action-button" data-create-group>Crear grupo</button>
+    </div>
+  </div>`;
+}
+
 async function openSettingsModal() {
   const s = state.settings || await api('/api/settings');
   const customCss = await loadCustomCssText('global').catch(() => '');
@@ -589,7 +622,7 @@ async function openSettingsModal() {
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
-        ['general','General'], ['design','Visual'], ['sources','Fuentes'], ['notifications','Avisos'], ['plex','Plex'], ['data','Datos'], ['debug','Debug'], ['css','CSS']
+        ['general','General'], ['design','Visual'], ['sources','Fuentes'], ['notifications','Avisos'], ['plex','Plex'], ['collections','Colecciones'], ['data','Datos'], ['debug','Debug'], ['css','CSS']
       ].map(([id,label], index) => `<button type="button" data-settings-tab="${id}" class="${index === 0 ? 'is-active' : ''}">${label}</button>`).join('')}
     </nav>
     <div class="settings-tabs__panels">
@@ -597,7 +630,6 @@ async function openSettingsModal() {
         <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colecciones</option></select></label>
         <label class="ui-field"><span>Items por página · Backlog</span><input data-setting="backlogItemsPerPage" type="number" min="1" max="60" value="${escapeAttr(s.views?.backlog?.itemsPerPage || 12)}"></label>
         <label class="ui-field"><span>Items por página · On Deck</span><input data-setting="onDeckItemsPerPage" type="number" min="1" max="120" value="${escapeAttr(s.views?.onDeck?.itemsPerPage || 12)}"></label>
-        <label class="ui-field"><span>Items por página · Colecciones</span><input data-setting="collectionsItemsPerPage" type="number" min="1" max="120" value="${escapeAttr(s.views?.collections?.itemsPerPage || 12)}"></label>
       </section>
       <section data-settings-panel="design" class="settings-tab-panel"><h3>Visual</h3>
         <div class="settings-fieldset"><h4>Colores</h4>
@@ -644,6 +676,9 @@ async function openSettingsModal() {
       <section data-settings-panel="plex" class="settings-tab-panel"><h3>Plex</h3>
         <label class="ui-field"><span>URL</span><input data-setting="plexUrl" type="text" value="${escapeAttr(s.plex?.url || '')}" placeholder="http://IP:32400"></label>
         <label class="ui-field"><span>Token</span><input data-setting="plexToken" type="password" value="${escapeAttr(s.plex?.token || '')}"></label>
+      </section>
+      <section data-settings-panel="collections" class="settings-tab-panel"><h3>Colecciones</h3>
+        ${collectionGroupsSettingsMarkup(state.collectionGroups || [])}
       </section>
       <section data-settings-panel="data" class="settings-tab-panel"><h3>Datos y mantenimiento</h3>
         <div class="settings-actions-grid">
@@ -697,7 +732,7 @@ async function openSettingsModal() {
           views: {
             backlog: { cardSize: get('backlogSize')?.value || 'medium', itemsPerPage: Number(get('backlogItemsPerPage')?.value || 12) },
             onDeck: { cardSize: get('onDeckSize')?.value || 'medium', itemsPerPage: Number(get('onDeckItemsPerPage')?.value || 12) },
-            collections: { cardSize: get('collectionsSize')?.value || 'medium', itemsPerPage: Number(get('collectionsItemsPerPage')?.value || 12) }
+            collections: { cardSize: get('collectionsSize')?.value || s.views?.collections?.cardSize || 'medium', itemsPerPage: Number(get('collectionsItemsPerPage')?.value || s.views?.collections?.itemsPerPage || 12) }
           },
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
           notifications: { toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
@@ -715,6 +750,48 @@ async function openSettingsModal() {
       modalRoot.querySelectorAll('[data-settings-tab]').forEach(node => node.classList.toggle('is-active', node === btn));
       modalRoot.querySelectorAll('[data-settings-panel]').forEach(panel => panel.classList.toggle('is-active', panel.dataset.settingsPanel === tab));
     }));
+
+    modalRoot.querySelector('[data-create-group]')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      if (button.dataset.busy === '1') return;
+      const name = modalRoot.querySelector('[data-new-group-name]')?.value || '';
+      if (!name.trim()) { ui.toast('Pon un nombre para el grupo'); return; }
+      const mode = modalRoot.querySelector('input[name="settings-new-group-mode"]:checked')?.value || 'manual';
+      const field = modalRoot.querySelector('input[name="settings-new-group-field"]:checked')?.value || 'platform';
+      const value = modalRoot.querySelector('[data-new-group-value]')?.value || '';
+      const payload = { name, mode };
+      if (['dynamic','mixed'].includes(mode) && value.trim()) payload.rules = [{ field, operator: 'contains', value }];
+      button.dataset.busy = '1';
+      button.disabled = true;
+      const created = await api('/api/collection-groups', { method: 'POST', body: JSON.stringify(payload) }).catch(error => { ui.toast(error.message || 'No se pudo crear el grupo'); return null; });
+      button.dataset.busy = '0';
+      button.disabled = false;
+      if (created?.group) {
+        state.collectionGroups = [created.group, ...(state.collectionGroups || []).filter(group => group.id !== created.group.id)];
+        const seen = new Set();
+        state.collectionGroups = state.collectionGroups.filter(group => {
+          const signature = `${String(group.name || '').toLowerCase().trim()}::${group.mode || 'manual'}::${(group.rules || []).map(rule => `${rule.field}:${rule.operator || 'contains'}:${String(rule.value || '').toLowerCase().trim()}`).sort().join('|')}`;
+          if (seen.has(signature)) return false;
+          seen.add(signature);
+          return true;
+        });
+        const manager = modalRoot.querySelector('[data-groups-manager]');
+        if (manager) manager.innerHTML = renderCollectionGroupRows(state.collectionGroups || []);
+        ui.toast('Grupo creado');
+      }
+    });
+    modalRoot.addEventListener('click', async event => {
+      const button = event.target.closest('[data-delete-group]');
+      if (!button) return;
+      const id = button.dataset.deleteGroup;
+      const ok = await ui.confirm({ title: 'Eliminar grupo', message: '¿Eliminar este grupo? Los items no se eliminarán.', confirmText: 'Eliminar', danger: true });
+      if (!ok) return;
+      await api(`/api/collection-groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      state.collectionGroups = (state.collectionGroups || []).filter(group => group.id !== id);
+      button.closest('[data-group-id]')?.remove();
+      ui.toast('Grupo eliminado');
+    });
+
     bindColorFieldPreviews(modalRoot);
     const readVisualDesignPatch = () => {
       const root = modalRoot;

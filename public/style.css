@@ -3060,3 +3060,212 @@ body[data-active-view="current-content"] .now-playing-mini {
     height: 40px !important;
   }
 }
+
+
+/* v5.9.3 · Collection groups from diagnostics */
+.collection-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.collection-search input {
+  width: min(320px, 42vw);
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.055);
+  color: #fff;
+  padding: 0 16px;
+  font-weight: 800;
+  outline: none;
+}
+
+.collection-search input::placeholder {
+  color: rgba(255,255,255,.52);
+}
+
+.groups-filter {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.segmented-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.segmented-control label {
+  cursor: pointer;
+}
+
+.segmented-control input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented-control span {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.055);
+  color: #fff;
+  font-weight: 850;
+}
+
+.segmented-control input:checked + span {
+  background: color-mix(in srgb, var(--accent-color) 26%, rgba(255,255,255,.08));
+  border-color: color-mix(in srgb, var(--accent-color) 52%, rgba(255,255,255,.16));
+}
+
+.segmented-control--wrap span {
+  min-height: 34px;
+  font-size: .86rem;
+}
+
+select,
+select option {
+  background: #111827;
+  color: #fff;
+}
+
+.collection-groups-manager {
+  display: grid;
+  gap: 10px;
+}
+
+.collection-group-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.045);
+}
+
+.collection-group-row div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.collection-group-row small {
+  color: var(--text-muted);
+}
+
+.settings-inline-create {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+
+.item-detail__groups {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 4px;
+}
+
+.item-detail__groups > span {
+  color: var(--text-muted);
+  font-size: .82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.item-detail__group-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.item-detail__group-chip {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.055);
+  font-weight: 850;
+}
+
+.item-detail__group-add {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.14);
+  background: color-mix(in srgb, var(--accent-color) 24%, rgba(255,255,255,.06));
+  color: #fff;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.groups-picker {
+  display: grid;
+  gap: 10px;
+}
+
+@media (max-width: 820px) {
+  .collection-toolbar {
+    width: 100%;
+  }
+  .collection-search {
+    flex: 1;
+    min-width: 0;
+  }
+  .collection-search input {
+    width: 100%;
+  }
+}
+
+
+/* v5.9.5 dynamic item detail actions */
+.item-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.item-detail__actions .ui-modal__button {
+  min-height: 44px;
+}
+
+.ui-modal-root--item-detail .ui-modal__footer:empty {
+  display: none !important;
+}
+
+
+/* v5.9.6 inline group picker + listener fixes */
+.item-detail__group-picker {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.09);
+  background: rgba(255,255,255,.04);
+}
+
+.groups-picker--inline {
+  display: grid;
+  gap: 8px;
+}
+
+.item-detail__group-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}

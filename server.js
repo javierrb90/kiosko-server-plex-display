@@ -15,6 +15,7 @@ import { SettingsStore } from "./src/settings-store.js";
 import { StateStore } from "./src/state-store.js";
 import { AssetService } from "./src/asset-service.js";
 import { BacklogStore, CompletionStore } from "./src/backlog-store.js";
+import { CollectionGroupStore } from "./src/collection-group-store.js";
 import { OnDeckStore } from "./src/on-deck-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -131,6 +132,7 @@ const stateStore = new StateStore(DATA_DIR);
 const assetService = new AssetService(DATA_DIR);
 const backlogStore = new BacklogStore(DATA_DIR);
 const completionStore = new CompletionStore(DATA_DIR);
+const collectionGroupStore = new CollectionGroupStore(DATA_DIR);
 const onDeckStore = new OnDeckStore(DATA_DIR);
 await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), onDeckStore.init()]);
 
@@ -193,6 +195,7 @@ function snapshot() {
       onDeck: onDeckStore.list(),
       onDeckMap: onDeckStore.map(),
       completions: completionStore.list(),
+    collectionGroups: collectionGroupStore.list(),
       completionRatings: completionStore.ratingsMap(),
       state: stateStore.get()
     }
@@ -214,6 +217,7 @@ async function buildExportPayload() {
     backlog: backlogStore.list(),
     onDeck: onDeckStore.list(),
     completions: completionStore.list(),
+    collectionGroups: collectionGroupStore.list(),
     notifications: store.list({ page: 1, limit: 50 }).items,
     customCss
   };
@@ -596,9 +600,52 @@ function broadcastBacklogAndCompletions() {
   hub.broadcast({ type: "on-deck:update", payload: { onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() } });
   hub.broadcast({ type: "completions:update", payload: completionStore.list() });
 }
+function broadcastCollectionGroups() {
+  hub.broadcast({ type: "collection-groups:update", payload: collectionGroupStore.list() });
+}
 
 app.get("/api/backlog", (_req, res) => res.json({ backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() }));
 app.get("/api/on-deck", (_req, res) => res.json({ onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() }));
+
+app.get("/api/collection-groups", (_req, res) => res.json({ groups: collectionGroupStore.list() }));
+app.post("/api/collection-groups", async (req, res) => {
+  try {
+    const group = await collectionGroupStore.create(req.body || {});
+    broadcastCollectionGroups();
+    res.status(201).json({ ok: true, group });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.patch("/api/collection-groups/:id", async (req, res) => {
+  try {
+    const group = await collectionGroupStore.update(req.params.id, req.body || {});
+    broadcastCollectionGroups();
+    res.json({ ok: true, group });
+  } catch (error) { res.status(404).json({ error: error.message }); }
+});
+app.delete("/api/collection-groups/:id", async (req, res) => {
+  try {
+    const removed = await collectionGroupStore.remove(req.params.id);
+    broadcastCollectionGroups();
+    res.json({ ok: true, removed });
+  } catch (error) { res.status(404).json({ error: error.message }); }
+});
+app.post("/api/collection-groups/:id/items", async (req, res) => {
+  try {
+    const itemId = req.body?.itemId;
+    if (!itemId) return res.status(400).json({ error: "Falta itemId." });
+    const group = await collectionGroupStore.addItem(req.params.id, itemId, req.body?.itemKeys || []);
+    broadcastCollectionGroups();
+    res.json({ ok: true, group });
+  } catch (error) { res.status(404).json({ error: error.message }); }
+});
+app.delete("/api/collection-groups/:id/items/:itemId", async (req, res) => {
+  try {
+    const group = await collectionGroupStore.removeItem(req.params.id, req.params.itemId, { exclude: req.query.exclude === "1" });
+    broadcastCollectionGroups();
+    res.json({ ok: true, group });
+  } catch (error) { res.status(404).json({ error: error.message }); }
+});
+
 
 function normalizeCurrentToDeckItem(input = runtime.currentContent) {
   if (!input) throw new Error("No hay contenido actual.");
