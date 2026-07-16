@@ -58,12 +58,14 @@ function printStartupDiagnostics(port, host = "0.0.0.0") {
 app.use(express.json({ limit: `${maxPayloadMb}mb` }));
 
 
+const slowApiThresholdMs = Number(process.env.SLOW_API_LOG_MS || 750);
 app.use((req, res, next) => {
   const started = Date.now();
   res.on("finish", () => {
     const ms = Date.now() - started;
     const noisy = req.path.startsWith("/assets/") || req.path === "/favicon.ico";
     if (process.env.DEBUG_HTTP === "1" && !noisy) console.log(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms from ${req.ip || req.socket?.remoteAddress || "unknown"}`);
+    else if (req.path.startsWith("/api/") && ms > slowApiThresholdMs) console.warn(`[slow-api] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms`);
   });
   next();
 });
@@ -246,7 +248,6 @@ app.put("/api/state", async (req, res) => {
     await stateStore.update({ activeView: "backlog" });
     hub.broadcast({ type: "privacy:update", payload: { privacyLocked: true } });
   }
-  broadcastState();
   res.json(stateStore.get());
 });
 
@@ -255,14 +256,12 @@ app.put("/api/settings", async (req, res) => {
   const next = await settingsStore.update(req.body || {});
   plex.setConfig(next.plex || {});
   hub.broadcast({ type: "settings:update", payload: next });
-  broadcastState();
   res.json(next);
 });
 app.post("/api/settings/reset", async (_req, res) => {
   const next = await settingsStore.reset();
   plex.setConfig(next.plex || {});
   hub.broadcast({ type: "settings:update", payload: next });
-  broadcastState();
   res.json(next);
 });
 app.get("/api/export", async (_req, res) => {
@@ -294,7 +293,6 @@ app.get("/api/notifications", (req, res) => res.json(store.list({ ...req.query, 
 app.delete("/api/notifications", async (_req, res) => {
   await store.clear();
   hub.broadcast({ type: "notifications:cleared", payload: { ok: true } });
-  broadcastState();
   res.json({ ok: true });
 });
 
@@ -571,8 +569,10 @@ function normalizePlayniteBacklogItem(game = {}) {
 }
 
 function broadcastBacklogAndCompletions() {
-  hub.broadcast({ type: "backlog:update", payload: { backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() } });
-  hub.broadcast({ type: "on-deck:update", payload: { onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() } });
+  const completionRatings = completionStore.ratingsMap();
+  const collectionGroups = collectionGroupStore.list();
+  hub.broadcast({ type: "backlog:update", payload: { backlog: backlogStore.list(), completionRatings, onDeckMap: onDeckStore.map(), collectionGroups } });
+  hub.broadcast({ type: "on-deck:update", payload: { onDeck: onDeckStore.list(), completionRatings, collectionGroups } });
   hub.broadcast({ type: "completions:update", payload: completionStore.list() });
 }
 function broadcastCollectionGroups() {
@@ -677,8 +677,7 @@ app.delete("/api/backlog/:source/:id", async (req, res) => {
   try {
     const removed = await backlogStore.remove(req.params.source, req.params.id);
     broadcastBacklogAndCompletions();
-    broadcastState();
-    res.json({ ok: true, removed });
+      res.json({ ok: true, removed });
   } catch (error) { res.status(404).json({ error: error.message }); }
 });
 app.post("/api/backlog/:source/:id/deck", async (req, res) => {
@@ -687,8 +686,7 @@ app.post("/api/backlog/:source/:id/deck", async (req, res) => {
     const deckItem = await onDeckStore.upsert(normalizeDeckItem(removed));
     await completionStore.removeByCanonicalId(deckItem.canonicalId);
     broadcastBacklogAndCompletions();
-    broadcastState();
-    res.json({ ok: true, deckItem });
+      res.json({ ok: true, deckItem });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 app.post("/api/backlog/:source/:id/complete", async (req, res) => {
@@ -696,8 +694,7 @@ app.post("/api/backlog/:source/:id/complete", async (req, res) => {
     const removed = await backlogStore.remove(req.params.source, req.params.id);
     const completed = await completeItem(removed, req.body?.rating ?? 0);
     broadcastBacklogAndCompletions();
-    broadcastState();
-    res.json({ ok: true, completed });
+      res.json({ ok: true, completed });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
@@ -710,8 +707,7 @@ app.post("/api/on-deck/:id/complete", async (req, res) => {
     const removed = await onDeckStore.remove(req.params.id);
     const completed = await completeItem(removed, req.body?.rating ?? 0);
     broadcastBacklogAndCompletions();
-    broadcastState();
-    res.json({ ok: true, completed });
+      res.json({ ok: true, completed });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 app.post("/api/on-deck/:id/backlog", async (req, res) => {
@@ -719,8 +715,7 @@ app.post("/api/on-deck/:id/backlog", async (req, res) => {
     const removed = await onDeckStore.remove(req.params.id);
     const item = await backlogStore.upsert(removed.source, removed);
     broadcastBacklogAndCompletions();
-    broadcastState();
-    res.json({ ok: true, item });
+      res.json({ ok: true, item });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
@@ -738,7 +733,6 @@ app.post("/api/current/clear", async (_req, res) => {
   runtime.currentContent = null;
   await stateStore.update({ lastCurrent: null });
   hub.broadcast({ type: "current:update", payload: null });
-  broadcastState();
   res.json({ ok: true });
 });
 app.post("/api/current/deck", async (_req, res) => {
@@ -748,8 +742,7 @@ app.post("/api/current/deck", async (_req, res) => {
     await completionStore.removeByCanonicalId(deckItem.canonicalId);
     await backlogStore.remove(deckItem.source, deckItem.canonicalId).catch(() => null);
     broadcastBacklogAndCompletions();
-    broadcastState();
-    res.json({ ok: true, deckItem });
+      res.json({ ok: true, deckItem });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 app.post("/api/current/complete", async (req, res) => {
@@ -758,8 +751,7 @@ app.post("/api/current/complete", async (req, res) => {
     const completed = await completeItem(item, req.body?.rating ?? 0);
     await backlogStore.remove(completed.source, completed.canonicalId).catch(() => null);
     broadcastBacklogAndCompletions();
-    broadcastState();
-    res.json({ ok: true, completed });
+      res.json({ ok: true, completed });
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 

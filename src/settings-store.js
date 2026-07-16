@@ -243,8 +243,13 @@ export class SettingsStore {
   }
 
   async persist() {
-    const content = JSON.stringify(this.settings, null, 2);
-    this.writeQueue = this.writeQueue.then(() => fs.writeFile(this.filePath, content, "utf8"));
+    const content = JSON.stringify(this.settings);
+    this.writeQueue = this.writeQueue.then(async () => {
+      const started = Date.now();
+      await fs.writeFile(this.filePath, content, "utf8");
+      const ms = Date.now() - started;
+      if (ms > 250) console.warn(`[persist] settings.json ${ms}ms`);
+    });
     return this.writeQueue;
   }
 }

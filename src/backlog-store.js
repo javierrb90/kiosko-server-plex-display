@@ -5,7 +5,12 @@ import crypto from "node:crypto";
 function now() { return new Date().toISOString(); }
 function clean(value) { return String(value ?? "").trim(); }
 function slug(value) { return clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"; }
-function queueWrite(instance, filePath, data) { const content = JSON.stringify(data, null, 2); instance.writeQueue = instance.writeQueue.then(() => fs.writeFile(filePath, content, "utf8")); return instance.writeQueue; }
+function queueWrite(instance, filePath, data) { const content = JSON.stringify(data); instance.writeQueue = instance.writeQueue.then(async () => {
+    const started = Date.now();
+    await fs.writeFile(filePath, content, "utf8");
+    const ms = Date.now() - started;
+    if (ms > 250) console.warn(`[persist] ${path.basename(filePath)} ${ms}ms`);
+  }); return instance.writeQueue; }
 function normalizeSource(value) { const source = clean(value).toLowerCase(); return source === "plex" || source === "playnite" ? source : "manual"; }
 function normalizeRating(value) { const rating = Number(value); if (!Number.isFinite(rating)) return 0; return Math.max(0, Math.min(5, Math.round(rating))); }
 

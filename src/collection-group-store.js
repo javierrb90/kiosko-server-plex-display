@@ -65,11 +65,15 @@ export class CollectionGroupStore {
     } catch (error) {
       if (error.code !== "ENOENT") console.error("No se pudieron cargar grupos de colecciones:", error);
     }
-    await this.persist();
   }
 
   async persist() {
-    this.writeQueue = this.writeQueue.then(() => fs.writeFile(this.filePath, JSON.stringify(this.groups, null, 2), "utf8"));
+    this.writeQueue = this.writeQueue.then(async () => {
+      const started = Date.now();
+      await fs.writeFile(this.filePath, JSON.stringify(this.groups), "utf8");
+      const ms = Date.now() - started;
+      if (ms > 250) console.warn(`[persist] collection-groups.json ${ms}ms`);
+    });
     return this.writeQueue;
   }
 

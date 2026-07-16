@@ -27,7 +27,6 @@ export class StateStore {
     } catch (error) {
       if (error.code !== "ENOENT") console.error("No se pudo cargar state.json:", error);
     }
-    await this.persist();
   }
   get() { return this.state; }
   async update(patch) {
@@ -36,8 +35,13 @@ export class StateStore {
     return this.state;
   }
   async persist() {
-    const content = JSON.stringify(this.state, null, 2);
-    this.writeQueue = this.writeQueue.then(() => fs.writeFile(this.filePath, content, "utf8"));
+    const content = JSON.stringify(this.state);
+    this.writeQueue = this.writeQueue.then(async () => {
+      const started = Date.now();
+      await fs.writeFile(this.filePath, content, "utf8");
+      const ms = Date.now() - started;
+      if (ms > 250) console.warn(`[persist] state.json ${ms}ms`);
+    });
     return this.writeQueue;
   }
 }

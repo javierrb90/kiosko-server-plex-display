@@ -169,10 +169,13 @@ export class EventStore {
   }
 
   async atomicWriteJson(filePath, data) {
-    const content = JSON.stringify(data, null, 2);
+    const content = JSON.stringify(data);
     const tmpPath = `${filePath}.tmp`;
     await fs.mkdir(path.dirname(filePath), { recursive: true });
+    const started = Date.now();
     await fs.writeFile(tmpPath, content, "utf8");
     await fs.rename(tmpPath, filePath);
+    const ms = Date.now() - started;
+    if (ms > 250) console.warn(`[persist] ${path.basename(filePath)} ${ms}ms`);
   }
 }
