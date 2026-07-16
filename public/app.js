@@ -565,6 +565,11 @@ function refreshDataViews() {
 function applyItemDelta(message = {}) {
   const payload = message.payload || {};
   switch (message.type) {
+    case 'item:backlog-upserted':
+      upsertBacklogState(payload.item || payload.backlogItem);
+      applyCompletionRatings(payload.completionRatings);
+      applyOnDeckMap(payload.onDeckMap);
+      break;
     case 'item:backlog-removed':
       removeFromBacklogState(payload.item || payload);
       break;

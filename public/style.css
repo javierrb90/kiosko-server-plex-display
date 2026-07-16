@@ -3785,3 +3785,21 @@ select option {
     flex: 0 0 auto !important;
   }
 }
+
+
+/* v5.9.22 backlog related On Deck notice */
+.media-card__notice {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(160, 190, 255, .28);
+  background: rgba(160, 190, 255, .10);
+  color: rgba(220, 232, 255, .86);
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .01em;
+}

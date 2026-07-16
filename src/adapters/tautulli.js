@@ -17,7 +17,8 @@ export function normalizeTautulliEvent(payload, metadata) {
     "media.pause", "media.stop"
   ]);
   const libraryAdded = new Set([
-    "recentlyadded", "libraryadded", "added", "mediaadded", "newmedia"
+    "recentlyadded", "libraryadded", "added", "mediaadded", "newmedia",
+    "created", "create", "mediacreated", "librarycreated"
   ]);
   const watchedEvents = new Set([
     "watched", "markedwatched", "mediawatched", "watchedmedia",

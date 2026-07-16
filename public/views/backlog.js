@@ -28,6 +28,18 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
   function actionLabel(item) { return item.source === 'plex' ? 'Marcar como visto' : 'Marcar como terminado'; }
   function stars(value = 0) { const n = Math.max(0, Math.min(5, Number(value) || 0)); return `<span class="star-rating" aria-label="${n} de 5">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`; }
   function ratingFor(item) { return ratings?.[item.canonicalId]?.rating || 0; }
+
+  function relatedOnDeckKey(item = {}) {
+    return item.meta?.relatedOnDeckCanonicalId || item.meta?.relatedSeriesCanonicalId || null;
+  }
+  function isRelatedToOnDeck(item = {}) {
+    const key = relatedOnDeckKey(item);
+    return Boolean(key && onDeckMap?.[key]);
+  }
+  function relatedOnDeckMarkup(item = {}) {
+    return isRelatedToOnDeck(item) ? `<div class="media-card__notice">Serie en On Deck</div>` : '';
+  }
+
   function configuredPageSize() { return clamp(Number(settings.views?.backlog?.itemsPerPage), 1, 60, 12); }
   function itemDate(item) { return Date.parse(item.lastActivityAt || item.updatedAt || item.createdAt || ''); }
   function startOfToday() { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
@@ -351,6 +363,7 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
             <strong>${escapeHtml(item.title || 'Sin título')}</strong>
             <span>${escapeHtml(item.subtitle || labelForItem(item))}</span>
             ${rating ? `<div class="media-card__completion">${stars(rating)}</div>` : ''}
+            ${relatedOnDeckMarkup(item)}
             ${cardGroupsMarkup(item)}
           </div>
         </div>

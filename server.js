@@ -621,6 +621,58 @@ async function cachePlexMetadataAssets(metadata = {}) {
   return normalized;
 }
 
+
+function plexSeriesCanonicalIdForMetadata(metadata = {}) {
+  const key = metadata.grandparentRatingKey || metadata.parentRatingKey || metadata.canonicalRatingKey || metadata.ratingKey || metadata.meta?.grandparentRatingKey || metadata.meta?.canonicalRatingKey;
+  return key ? `plex:series:${key}` : null;
+}
+
+function normalizePlexCreatedBacklogItem(metadata = {}, event = {}) {
+  const base = normalizePlexBacklogItem({
+    ...metadata,
+    meta: {
+      ...(metadata.meta || {}),
+      backlogSource: "plex_recently_added",
+      tautulliEvent: event.rawEvent || event.event || "created"
+    }
+  });
+
+  const plexType = metadata.type || metadata.meta?.plexType || "unknown";
+  if (plexType !== "episode") return base;
+
+  const episodeCanonicalId = metadata.ratingKey ? `plex:episode:${metadata.ratingKey}` : base.canonicalId;
+  const seriesCanonicalId = plexSeriesCanonicalIdForMetadata(metadata);
+  const episodeTitle = metadata.raw?.title || metadata.meta?.originalTitle || "";
+  const episodeCode = String(metadata.subtitle || "").split("·").pop()?.trim() || "";
+  const subtitleParts = ["Nuevo episodio"];
+  if (episodeCode) subtitleParts.push(episodeCode);
+  if (episodeTitle && !String(metadata.subtitle || "").includes(episodeTitle)) subtitleParts.push(episodeTitle);
+
+  return {
+    ...base,
+    type: "episode",
+    collectionType: "series",
+    canonicalId: episodeCanonicalId,
+    ratingKey: metadata.ratingKey,
+    title: metadata.showTitle || base.title || "Serie Plex",
+    subtitle: subtitleParts.join(" · ") || metadata.subtitle || "Nuevo episodio",
+    meta: {
+      ...(base.meta || {}),
+      plexType: "episode",
+      originalType: "episode",
+      originalRatingKey: metadata.ratingKey || null,
+      originalTitle: episodeTitle || metadata.title || null,
+      originalSubtitle: metadata.subtitle || null,
+      relatedSeriesCanonicalId: seriesCanonicalId,
+      relatedOnDeckCanonicalId: seriesCanonicalId,
+      createdEpisodeRatingKey: metadata.ratingKey || null,
+      createdEpisodeTitle: episodeTitle || null,
+      createdEpisodeCode: episodeCode || null,
+      createdFromTautulli: true
+    }
+  };
+}
+
 function normalizePlexBacklogItem(metadata = {}) {
   return {
     source: "plex",
@@ -996,16 +1048,47 @@ async function handleTautulliWebhook(req, res) {
     const sources = backlogSources();
     const shouldAddToBacklog = !event.isWatched && ((event.isLibraryAdded && sources.plexRecentlyAdded) || (event.startsPlayback && sources.plexPlayback));
     if (shouldAddToBacklog) {
-      const backlogItem = normalizePlexBacklogItem({
-        ...metadata,
-        meta: {
-          ...(metadata.meta || {}),
-          backlogSource: event.isLibraryAdded ? "plex_recently_added" : "plex_playback",
-          tautulliEvent: event.rawEvent
-        }
+      const isCreatedEpisode = event.isLibraryAdded && (metadata.type || metadata.meta?.plexType) === "episode";
+      const backlogItem = isCreatedEpisode
+        ? normalizePlexCreatedBacklogItem(metadata, event)
+        : normalizePlexBacklogItem({
+            ...metadata,
+            meta: {
+              ...(metadata.meta || {}),
+              backlogSource: event.isLibraryAdded ? "plex_recently_added" : "plex_playback",
+              tautulliEvent: event.rawEvent
+            }
+          });
+      const relatedOnDeckCanonicalId = backlogItem.meta?.relatedOnDeckCanonicalId || null;
+      const relatedDeckItem = relatedOnDeckCanonicalId ? onDeckStore.findByCanonicalId(relatedOnDeckCanonicalId) : null;
+      console.log("[tautulli] backlog candidate", {
+        rawEvent: event.rawEvent,
+        event: event.event,
+        ratingKey: metadata.ratingKey,
+        plexType: metadata.type,
+        canonicalId: backlogItem.canonicalId,
+        relatedOnDeckCanonicalId,
+        relatedOnDeck: Boolean(relatedDeckItem)
       });
-      await backlogStore.upsert("plex", backlogItem);
-      broadcastBacklogAndCompletions();
+      const savedBacklogItem = await backlogStore.upsert("plex", backlogItem);
+      const payload = { item: publicItem(savedBacklogItem), onDeckMap: onDeckStore.map(), completionRatings: completionStore.ratingsMap() };
+      broadcastDelta("item:backlog-upserted", payload);
+      console.log("[tautulli] backlog upserted", {
+        id: savedBacklogItem.id,
+        title: savedBacklogItem.title,
+        canonicalId: savedBacklogItem.canonicalId,
+        relatedOnDeck: Boolean(relatedDeckItem)
+      });
+    } else {
+      console.log("[tautulli] backlog skipped", {
+        rawEvent: event.rawEvent,
+        event: event.event,
+        isWatched: event.isWatched,
+        isLibraryAdded: event.isLibraryAdded,
+        startsPlayback: event.startsPlayback,
+        plexRecentlyAdded: sources.plexRecentlyAdded,
+        plexPlayback: sources.plexPlayback
+      });
     }
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
 
