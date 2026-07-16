@@ -45,7 +45,6 @@ const state = {
   initialViewResolved: false,
   localNavigationAt: 0,
   currentContent: null,
-  collectionGroups: [],
   nowPlayingDismissed: false,
   nowPlayingHighlightTimer: null
 };
@@ -439,8 +438,7 @@ function applyState(payload = {}) {
   views.update('on-deck', { onDeck: payload.onDeck || [], completionRatings: payload.completionRatings || {}, settings: state.settings });
   views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: payload.onDeckMap || {}, backlogMap: buildBacklogMap(payload.backlog || {}), completionRatings: payload.completionRatings || {}, settings: state.settings });
   updateNowPlayingMini(payload.currentContent || null);
-  state.collectionGroups = payload.collectionGroups || [];
-  views.update('collections', { completions: payload.completions || [], collectionGroups: state.collectionGroups, settings: state.settings });
+  views.update('collections', { completions: payload.completions || [], settings: state.settings });
   const defaultView = VALID_VIEWS.has(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog';
   const localView = readLocalView(defaultView);
 
@@ -468,8 +466,7 @@ const socket = new SocketClient({
     }
     if (message.type === 'backlog:update') { views.update('backlog', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(message.payload?.backlog || {}) }); return; }
     if (message.type === 'on-deck:update') { views.update('on-deck', { ...(message.payload || {}), settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
-    if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { completionRatings: Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])) }); return; }
-    if (message.type === 'collection-groups:update') { state.collectionGroups = message.payload || []; views.update('collections', { collectionGroups: state.collectionGroups, settings: state.settings }); return; }
+    if (message.type === 'completions:update') { views.update('collections', { completions: message.payload || [], settings: state.settings }); views.update('current-content', { completionRatings: Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])) }); return; }
     if (message.type === 'custom-css:update') { refreshCustomCss(message.payload?.name); return; }
     if (message.type === 'notifications:open') { openNotificationsOverlay().catch(debugError); return; }
     if (message.type === 'privacy:update') {

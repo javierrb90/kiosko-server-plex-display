@@ -1,7 +1,9 @@
 import express from "express";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import { WebSocketServer } from "ws";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { EventStore } from "./src/event-store.js";
 import { RealtimeHub } from "./src/realtime-hub.js";
@@ -13,7 +15,6 @@ import { SettingsStore } from "./src/settings-store.js";
 import { StateStore } from "./src/state-store.js";
 import { AssetService } from "./src/asset-service.js";
 import { BacklogStore, CompletionStore } from "./src/backlog-store.js";
-import { CollectionGroupStore } from "./src/collection-group-store.js";
 import { OnDeckStore } from "./src/on-deck-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -26,7 +27,101 @@ const PORT = Number(process.env.PORT || settings.server?.port || 3000);
 
 const app = express();
 const maxPayloadMb = Math.max(Number(settings.integrations?.playnite?.maxPayloadMb || 80), 80);
+
+function getLocalAddresses() {
+  const nets = os.networkInterfaces();
+  const addresses = [];
+  for (const [name, entries] of Object.entries(nets)) {
+    for (const entry of entries || []) {
+      if (entry.family === "IPv4" && !entry.internal) {
+        addresses.push({ name, address: entry.address });
+      }
+    }
+  }
+  return addresses;
+}
+
+function isProbablyDocker() {
+  return fsSync.existsSync("/.dockerenv") || String(process.env.DATA_DIR || "").startsWith("/app/");
+}
+
+function printStartupDiagnostics(port, host = "0.0.0.0") {
+  const addresses = getLocalAddresses();
+  const urls = [
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+    ...addresses.map(entry => `http://${entry.address}:${port}`)
+  ];
+
+  console.log("");
+  console.log("────────────────────────────────────────────");
+  console.log("Kiosko Media Center · diagnóstico de arranque");
+  console.log("────────────────────────────────────────────");
+  console.log(`NODE_ENV: ${process.env.NODE_ENV || "no definido"}`);
+  console.log(`Puerto: ${port}`);
+  console.log(`Bind/host: ${host}`);
+  console.log(`DATA_DIR: ${DATA_DIR}`);
+  console.log(`Docker probable: ${isProbablyDocker() ? "sí" : "no"}`);
+  console.log(`PID: ${process.pid}`);
+  console.log(`CWD: ${process.cwd()}`);
+  console.log("Interfaces IPv4 detectadas:");
+  if (addresses.length) {
+    for (const entry of addresses) console.log(`- ${entry.name}: ${entry.address}`);
+  } else {
+    console.log("- ninguna interfaz IPv4 externa detectada");
+  }
+  console.log("URLs locales sugeridas:");
+  for (const url of urls) console.log(`- ${url}`);
+  console.log("Pruebas rápidas:");
+  console.log(`- curl -v http://127.0.0.1:${port}/api/health`);
+  console.log(`- curl -v http://127.0.0.1:${port}/api/diagnostics`);
+  console.log("────────────────────────────────────────────");
+  console.log("");
+}
+
 app.use(express.json({ limit: `${maxPayloadMb}mb` }));
+
+
+app.use((req, res, next) => {
+  const started = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - started;
+    const noisy = req.path.startsWith("/assets/") || req.path === "/favicon.ico";
+    if (!noisy) console.log(`[http] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms from ${req.ip || req.socket?.remoteAddress || "unknown"}`);
+  });
+  next();
+});
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    app: "Kiosko Media Center",
+    pid: process.pid,
+    uptimeSeconds: Math.round(process.uptime()),
+    dataDir: DATA_DIR,
+    port: PORT,
+    time: new Date().toISOString()
+  });
+});
+
+app.get("/api/diagnostics", (_req, res) => {
+  const addresses = getLocalAddresses();
+  res.json({
+    ok: true,
+    pid: process.pid,
+    cwd: process.cwd(),
+    node: process.version,
+    env: process.env.NODE_ENV || null,
+    port: PORT,
+    dataDir: DATA_DIR,
+    dockerLikely: isProbablyDocker(),
+    interfaces: addresses,
+    suggestedUrls: [`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`, ...addresses.map(entry => `http://${entry.address}:${PORT}`)],
+    uptimeSeconds: Math.round(process.uptime()),
+    time: new Date().toISOString()
+  });
+});
+
 app.use(express.urlencoded({ extended: true, limit: `${maxPayloadMb}mb` }));
 app.use("/assets", express.static(path.join(DATA_DIR, "assets"), { maxAge: "7d", immutable: false }));
 app.use(express.static(path.join(__dirname, "public")));
@@ -36,7 +131,6 @@ const stateStore = new StateStore(DATA_DIR);
 const assetService = new AssetService(DATA_DIR);
 const backlogStore = new BacklogStore(DATA_DIR);
 const completionStore = new CompletionStore(DATA_DIR);
-const collectionGroupStore = new CollectionGroupStore(DATA_DIR);
 const onDeckStore = new OnDeckStore(DATA_DIR);
 await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), onDeckStore.init()]);
 
@@ -65,11 +159,12 @@ function configStatus() {
   };
 }
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v5.4.4 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v5.8.3-diagnostics escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
+  printStartupDiagnostics(PORT, "0.0.0.0");
 });
 const wss = new WebSocketServer({ server });
 const hub = new RealtimeHub(wss);
@@ -98,7 +193,6 @@ function snapshot() {
       onDeck: onDeckStore.list(),
       onDeckMap: onDeckStore.map(),
       completions: completionStore.list(),
-    collectionGroups: collectionGroupStore.list(),
       completionRatings: completionStore.ratingsMap(),
       state: stateStore.get()
     }
@@ -120,7 +214,6 @@ async function buildExportPayload() {
     backlog: backlogStore.list(),
     onDeck: onDeckStore.list(),
     completions: completionStore.list(),
-    collectionGroups: collectionGroupStore.list(),
     notifications: store.list({ page: 1, limit: 50 }).items,
     customCss
   };
@@ -503,52 +596,9 @@ function broadcastBacklogAndCompletions() {
   hub.broadcast({ type: "on-deck:update", payload: { onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() } });
   hub.broadcast({ type: "completions:update", payload: completionStore.list() });
 }
-function broadcastCollectionGroups() {
-  hub.broadcast({ type: "collection-groups:update", payload: collectionGroupStore.list() });
-}
 
 app.get("/api/backlog", (_req, res) => res.json({ backlog: backlogStore.list(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() }));
 app.get("/api/on-deck", (_req, res) => res.json({ onDeck: onDeckStore.list(), completionRatings: completionStore.ratingsMap() }));
-
-app.get("/api/collection-groups", (_req, res) => res.json({ groups: collectionGroupStore.list() }));
-app.post("/api/collection-groups", async (req, res) => {
-  try {
-    const group = await collectionGroupStore.create(req.body || {});
-    broadcastCollectionGroups();
-    res.status(201).json({ ok: true, group });
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
-app.patch("/api/collection-groups/:id", async (req, res) => {
-  try {
-    const group = await collectionGroupStore.update(req.params.id, req.body || {});
-    broadcastCollectionGroups();
-    res.json({ ok: true, group });
-  } catch (error) { res.status(404).json({ error: error.message }); }
-});
-app.delete("/api/collection-groups/:id", async (req, res) => {
-  try {
-    const removed = await collectionGroupStore.remove(req.params.id);
-    broadcastCollectionGroups();
-    res.json({ ok: true, removed });
-  } catch (error) { res.status(404).json({ error: error.message }); }
-});
-app.post("/api/collection-groups/:id/items", async (req, res) => {
-  try {
-    const itemId = req.body?.itemId;
-    if (!itemId) return res.status(400).json({ error: "Falta itemId." });
-    const group = await collectionGroupStore.addItem(req.params.id, itemId);
-    broadcastCollectionGroups();
-    res.json({ ok: true, group });
-  } catch (error) { res.status(404).json({ error: error.message }); }
-});
-app.delete("/api/collection-groups/:id/items/:itemId", async (req, res) => {
-  try {
-    const group = await collectionGroupStore.removeItem(req.params.id, req.params.itemId, { exclude: req.query.exclude === "1" });
-    broadcastCollectionGroups();
-    res.json({ ok: true, group });
-  } catch (error) { res.status(404).json({ error: error.message }); }
-});
-
 
 function normalizeCurrentToDeckItem(input = runtime.currentContent) {
   if (!input) throw new Error("No hay contenido actual.");

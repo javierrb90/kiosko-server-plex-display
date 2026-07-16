@@ -62,19 +62,7 @@ function ratingControlMarkup(item = {}, context = '') {
   </div>`;
 }
 
-
-function itemInGroup(item = {}, group = {}) {
-  return Array.isArray(group.manualItemIds) && group.manualItemIds.includes(item.id);
-}
-function groupsMarkup(item = {}, context = '', collectionGroups = []) {
-  if (context !== 'collections' || !collectionGroups.length) return '';
-  return `<div class="item-detail__groups"><span>Grupos</span><div>${collectionGroups.map(group => {
-    const active = itemInGroup(item, group);
-    return `<button type="button" data-item-group="${escapeAttr(group.id)}" class="${active ? 'is-active' : ''}">${escapeHtml(group.name)}</button>`;
-  }).join('')}</div></div>`;
-}
-
-function bodyMarkup(item = {}, context = '', collectionGroups = []) {
+function bodyMarkup(item = {}, context = '') {
   const subtitle = item.subtitle || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item));
   const backdrop = backdropFor(item);
   return `<div class="item-detail ${backdrop ? 'item-detail--has-bg' : ''}">
@@ -89,7 +77,6 @@ function bodyMarkup(item = {}, context = '', collectionGroups = []) {
       <h3>${escapeHtml(item.title || 'Sin título')}</h3>
       ${subtitle ? `<p class="item-detail__subtitle">${escapeHtml(subtitle)}</p>` : ''}
       ${ratingControlMarkup(item, context)}
-      ${groupsMarkup(item, context, collectionGroups)}
       <dl class="item-detail__meta">
         ${metadataRows(item).map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}
       </dl>
@@ -136,7 +123,7 @@ async function applyRating({ api, item, context, rating, toast }) {
   return false;
 }
 
-export async function openItemDetail({ ui, api, item, context, toast = () => {}, labels = {}, collectionGroups = [] }) {
+export async function openItemDetail({ ui, api, item, context, toast = () => {}, labels = {} }) {
   if (!item) return null;
   let currentContext = context;
 
@@ -245,7 +232,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     ui.open({
       title: labels.title || '',
       className: 'ui-modal-root--item-detail',
-      body: bodyMarkup(item, context, collectionGroups),
+      body: bodyMarkup(item, context),
       actions
     }).then(resolve);
 
@@ -259,21 +246,6 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
           if (result) {
             currentContext = result.context || 'collections';
             updateModalState(root, currentContext);
-          }
-        });
-      });
-      root.querySelectorAll('[data-item-group]').forEach(button => {
-        button.addEventListener('click', async () => {
-          const groupId = button.dataset.itemGroup;
-          if (!groupId || !item.id) return;
-          if (button.classList.contains('is-active')) {
-            await api(`/api/collection-groups/${encodeURIComponent(groupId)}/items/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
-            button.classList.remove('is-active');
-            toast('Quitado del grupo');
-          } else {
-            await api(`/api/collection-groups/${encodeURIComponent(groupId)}/items`, { method: 'POST', body: JSON.stringify({ itemId: item.id }) });
-            button.classList.add('is-active');
-            toast('Añadido al grupo');
           }
         });
       });
