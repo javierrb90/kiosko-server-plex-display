@@ -268,8 +268,27 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     const bgItem = visibleItems.find(backdropFor);
     if (bgImage) bgImage.style.backgroundImage = bgItem ? `url('${escapeAttr(backdropFor(bgItem))}')` : '';
   }
+  function itemBelongsToCurrentView(item = {}) {
+    if (view === 'database') return true;
+    if (view === 'backlog') return item.status === 'backlog' || item.states?.inBacklog === true;
+    if (view === 'on-deck') return item.status === 'on-deck' || item.states?.inOnDeck === true;
+    if (view === 'collections') return item.status === 'completed' || item.states?.completed === true || Boolean(item.rating || item.completedAt);
+    return true;
+  }
+  function applyItemUpdate(item = {}) {
+    const key = item.canonicalId || item.id;
+    if (!key) return;
+    const matches = entry => (entry.canonicalId || entry.id) === key;
+    const index = allItems.findIndex(matches);
+    const belongs = itemBelongsToCurrentView(item);
+    if (index >= 0 && belongs) allItems[index] = { ...allItems[index], ...item };
+    else if (index >= 0) allItems.splice(index, 1);
+    else if (belongs) allItems.unshift(item);
+    applyFilters();
+    if (isVisible) render();
+  }
   async function openItem(item) {
-    await openItemDetail({ ui, api, item, context: id, toast: message => ui.toast(message), collectionGroups, settings });
+    await openItemDetail({ ui, api, item, context: id, toast: message => ui.toast(message), collectionGroups, settings, onItemUpdated: applyItemUpdate });
     load();
   }
   function findItemFromEvent(event) {
@@ -297,19 +316,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     update(payload = {}) {
       if (payload.collectionGroups) collectionGroups = payload.collectionGroups;
       if (payload.settings) settings = payload.settings;
-      if (payload.item?.canonicalId) {
-        const item = payload.item;
-        const belongs = id === 'database'
-          || (id === 'backlog' && item.states?.inBacklog === true)
-          || (id === 'on-deck' && item.states?.inOnDeck === true)
-          || (id === 'collections' && item.states?.completed === true);
-        const index = allItems.findIndex(entry => entry.canonicalId === item.canonicalId);
-        if (belongs && index >= 0) allItems[index] = { ...allItems[index], ...item };
-        else if (belongs) allItems.unshift(item);
-        else if (index >= 0) allItems.splice(index, 1);
-        applyFilters();
-        if (isVisible) render();
-      }
+      if (payload.item) applyItemUpdate(payload.item);
       if (payload.refresh && isVisible) load();
       else if (isVisible && !payload.item) render();
     },

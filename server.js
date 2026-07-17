@@ -1147,9 +1147,13 @@ app.post("/api/items/:canonicalId/backlog", async (req, res) => {
   const item = itemFromAnyStore(id);
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   const followedAt = new Date().toISOString();
+  const deckExisting = findOnDeckItemByCanonicalId(id);
+  if (deckExisting) await onDeckStore.remove(deckExisting.id).catch(() => null);
+  const completionExisting = findCompletionByCanonicalId(id);
+  if (completionExisting) await completionStore.remove(completionExisting.id).catch(() => null);
   const backlogSource = item.source === "plex" || item.source === "playnite" || item.source === "kiosko" ? item.source : "manual";
   const backlogItem = await backlogStore.upsert(backlogSource, { ...item, source: backlogSource, lastActivityAt: followedAt, updatedAt: followedAt, meta: { ...(item.meta || {}), followedAt, trackingSource: "manual", originalSource: item.source || null } });
-  await itemRegistryStore.upsert({ ...item, lastActivityAt: followedAt }, { inBacklog: true, lastActivityAt: followedAt, activity: { eventType: "manual_follow", title: item.title, subtitle: item.subtitle, activityAt: followedAt } });
+  await itemRegistryStore.upsert({ ...item, rating: null, completedAt: null, lastActivityAt: followedAt }, { inBacklog: true, inOnDeck: false, completed: false, rating: null, completedAt: null, lastActivityAt: followedAt, activity: { eventType: "manual_follow", title: item.title, subtitle: item.subtitle, activityAt: followedAt } });
   await syncItemRegistryNow("follow-backlog");
   const payload = fullStatePayload({ item: publicItem(backlogItem), backlogItem: publicItem(backlogItem) });
   broadcastDelta("item:backlog-upserted", payload);
@@ -1164,6 +1168,8 @@ app.delete("/api/items/:canonicalId/backlog", async (req, res) => {
     return existing ? backlogStore.remove(existing.source, existing.id) : null;
   });
   if (!removed) return res.status(404).json({ error: "Item no encontrado en Backlog." });
+  const activityAt = new Date().toISOString();
+  await itemRegistryStore.upsert({ ...(item || removed), lastActivityAt: activityAt }, { inBacklog: false, lastActivityAt: activityAt, activity: { eventType: "manual_unfollow", title: removed.title, subtitle: removed.subtitle, activityAt } });
   await syncItemRegistryNow("unfollow-backlog");
   const payload = fullStatePayload({ source: removed.source, id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed) });
   broadcastDelta("item:backlog-removed", payload);
@@ -1173,10 +1179,16 @@ app.post("/api/items/:canonicalId/deck", async (req, res) => {
   const id = decodeURIComponent(req.params.canonicalId);
   const item = itemFromAnyStore(id);
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
-  const deckItem = normalizeDeckItem(item);
+  const activityAt = new Date().toISOString();
+  const backlogExisting = findBacklogItemByCanonicalId(id);
+  if (backlogExisting) await backlogStore.remove(backlogExisting.source, backlogExisting.id).catch(() => null);
+  const completionExisting = findCompletionByCanonicalId(id);
+  if (completionExisting) await completionStore.remove(completionExisting.id).catch(() => null);
+  const deckItem = normalizeDeckItem({ ...item, rating: null, completedAt: null, lastActivityAt: activityAt, updatedAt: activityAt });
   const check = await enforceDeckLimitOrReplace(deckItem, req.body?.replaceId || "");
   if (!check.ok) return res.status(409).json({ error: "Límite de On Deck alcanzado.", ...check.payload });
   const saved = await onDeckStore.upsert(deckItem);
+  await itemRegistryStore.upsert({ ...item, rating: null, completedAt: null, lastActivityAt: activityAt }, { inOnDeck: true, inBacklog: false, completed: false, rating: null, completedAt: null, lastActivityAt: activityAt, activity: { eventType: "manual_deck", title: item.title, subtitle: item.subtitle, activityAt } });
   await syncItemRegistryNow("add-deck");
   const payload = fullStatePayload({ from: "database", replaced: check.replaced ? publicItem(check.replaced) : null, deckItem: publicItem(saved) });
   broadcastDelta("item:moved-to-deck", payload);
@@ -1187,6 +1199,8 @@ app.delete("/api/items/:canonicalId/deck", async (req, res) => {
   const existing = findOnDeckItemByCanonicalId(id);
   if (!existing) return res.status(404).json({ error: "Item no encontrado en On Deck." });
   const removed = await onDeckStore.remove(existing.id);
+  const activityAt = new Date().toISOString();
+  await itemRegistryStore.upsert({ ...removed, lastActivityAt: activityAt }, { inOnDeck: false, lastActivityAt: activityAt, activity: { eventType: "manual_deck_remove", title: removed.title, subtitle: removed.subtitle, activityAt } });
   await syncItemRegistryNow("remove-deck");
   const payload = fullStatePayload({ id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed) });
   broadcastDelta("item:deck-removed", payload);
@@ -1198,8 +1212,11 @@ app.post("/api/items/:canonicalId/complete", async (req, res) => {
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   const rating = req.body?.rating ?? item.rating ?? 0;
   const completed = await completeItem(item, rating);
-  if (req.body?.removeFromDeck === true) await onDeckStore.remove(completed.canonicalId).catch(() => null);
-  await itemRegistryStore.upsert({ ...item, ...completed, rating, completedAt: completed.completedAt }, { completed: true, rating, completedAt: completed.completedAt });
+  const backlogExisting = findBacklogItemByCanonicalId(id);
+  if (backlogExisting) await backlogStore.remove(backlogExisting.source, backlogExisting.id).catch(() => null);
+  const deckExisting = findOnDeckItemByCanonicalId(id);
+  if (deckExisting) await onDeckStore.remove(deckExisting.id).catch(() => null);
+  await itemRegistryStore.upsert({ ...item, ...completed, rating, completedAt: completed.completedAt, lastActivityAt: completed.completedAt }, { completed: true, inBacklog: false, inOnDeck: false, rating, completedAt: completed.completedAt, lastActivityAt: completed.completedAt });
   await syncItemRegistryNow("complete-item");
   const payload = fullStatePayload({ from: req.body?.from || "database", completed: publicItem(completed), item: publicItem(completed) });
   broadcastDelta("item:completed", payload);
@@ -1214,9 +1231,11 @@ app.delete("/api/items/:canonicalId/collection", async (req, res) => {
   if (reg) {
     reg.rating = null;
     reg.completedAt = null;
-    reg.states = { ...(reg.states || {}), completed: false };
-    reg.status = reg.states.inOnDeck ? "on-deck" : reg.states.inBacklog ? "backlog" : "known";
-    reg.updatedAt = new Date().toISOString();
+    const activityAt = new Date().toISOString();
+    reg.states = { ...(reg.states || {}), completed: false, inOnDeck: false, inBacklog: false };
+    reg.status = "known";
+    reg.lastActivityAt = activityAt;
+    reg.updatedAt = activityAt;
     await itemRegistryStore.persist();
   }
   await syncItemRegistryNow("remove-collection");
