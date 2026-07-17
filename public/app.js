@@ -93,7 +93,7 @@ function writeLocalView(id) {
 
 
 function buildBacklogMap(backlog = {}) {
-  const rows = [...(backlog.plex || []), ...(backlog.playnite || [])];
+  const rows = Object.values(backlog || {}).flat().filter(Boolean);
   return Object.fromEntries(rows.filter(item => item?.canonicalId).map(item => [item.canonicalId, { id: item.id, source: item.source }]));
 }
 
@@ -543,22 +543,26 @@ function applyState(payload = {}) {
 
 
 function normalizeBacklogData(backlog = {}) {
-  return { plex: Array.isArray(backlog.plex) ? backlog.plex : [], playnite: Array.isArray(backlog.playnite) ? backlog.playnite : [] };
+  return {
+    plex: Array.isArray(backlog.plex) ? backlog.plex : [],
+    playnite: Array.isArray(backlog.playnite) ? backlog.playnite : [],
+    kiosko: Array.isArray(backlog.kiosko) ? backlog.kiosko : [],
+    manual: Array.isArray(backlog.manual) ? backlog.manual : []
+  };
 }
 function removeFromBacklogState(item = {}) {
   state.backlog = normalizeBacklogData(state.backlog);
-  const source = item.source === 'plex' || item.source === 'playnite' ? item.source : null;
+  const source = ['plex', 'playnite', 'kiosko', 'manual'].includes(item.source) ? item.source : null;
   const matches = entry => entry?.id === item.id || entry?.canonicalId === item.canonicalId;
   if (source && Array.isArray(state.backlog[source])) state.backlog[source] = state.backlog[source].filter(entry => !matches(entry));
   else {
-    state.backlog.plex = state.backlog.plex.filter(entry => !matches(entry));
-    state.backlog.playnite = state.backlog.playnite.filter(entry => !matches(entry));
+    for (const key of Object.keys(state.backlog)) state.backlog[key] = (state.backlog[key] || []).filter(entry => !matches(entry));
   }
 }
 function upsertBacklogState(item = {}) {
   if (!item?.source) return;
   state.backlog = normalizeBacklogData(state.backlog);
-  const source = item.source === 'plex' || item.source === 'playnite' ? item.source : 'playnite';
+  const source = ['plex', 'playnite', 'kiosko', 'manual'].includes(item.source) ? item.source : 'manual';
   state.backlog[source] = [item, ...(state.backlog[source] || []).filter(entry => entry.id !== item.id && entry.canonicalId !== item.canonicalId)];
 }
 function removeFromDeckState(item = {}) {
@@ -851,6 +855,30 @@ function collectionGroupsSettingsMarkup(groups = []) {
   </div>`;
 }
 
+function typeSlug(value = '') {
+  return String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
+function itemTypesSettingsMarkup(types = []) {
+  const rows = Array.isArray(types) ? types : [];
+  return `<div class="settings-fieldset"><h4>Tipos personalizados</h4>
+    <p class="settings-help">Crea tipos propios para items manuales. Aparecerán en filtros y formularios. Ejemplo: Libros.</p>
+    <div class="custom-types-list" data-custom-types-list>
+      ${rows.length ? rows.map(type => `<div class="custom-type-row" data-custom-type-row><label class="ui-field"><span>ID</span><input data-custom-type-id value="${escapeAttr(type.id || '')}" placeholder="libros"></label><label class="ui-field"><span>Singular</span><input data-custom-type-singular value="${escapeAttr(type.singular || type.label || '')}" placeholder="Libro"></label><label class="ui-field"><span>Plural</span><input data-custom-type-plural value="${escapeAttr(type.plural || type.label || '')}" placeholder="Libros"></label><button type="button" class="ui-action-button" data-remove-custom-type>Quitar</button></div>`).join('') : '<p class="settings-help" data-empty-custom-types>No hay tipos personalizados.</p>'}
+    </div>
+    <div class="custom-type-row custom-type-row--new"><label class="ui-field"><span>Nuevo tipo</span><input data-new-custom-type-name placeholder="Libros"></label><button type="button" class="ui-action-button" data-add-custom-type>Añadir tipo</button></div>
+  </div>`;
+}
+function readCustomTypesFromSettings(root) {
+  const seen = new Set(['games', 'movies', 'series']);
+  return [...root.querySelectorAll('[data-custom-type-row]')].map(row => {
+    const name = row.querySelector('[data-custom-type-singular]')?.value?.trim() || row.querySelector('[data-custom-type-plural]')?.value?.trim() || row.querySelector('[data-custom-type-id]')?.value?.trim() || '';
+    const id = typeSlug(row.querySelector('[data-custom-type-id]')?.value || name);
+    const singular = row.querySelector('[data-custom-type-singular]')?.value?.trim() || name || id;
+    const plural = row.querySelector('[data-custom-type-plural]')?.value?.trim() || singular;
+    return { id, singular, plural };
+  }).filter(type => type.id && !seen.has(type.id) && !seen.has(type.id) && seen.add(type.id));
+}
+
 async function openSettingsModal() {
   const s = state.settings || await api('/api/settings');
   const customCss = await loadCustomCssText('global').catch(() => '');
@@ -863,7 +891,7 @@ async function openSettingsModal() {
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
-        ['general','General'], ['design','Visual'], ['item-detail','Ficha'], ['notifications','Avisos'], ['plex','Plex'], ['collections','Colecciones'], ['data','Datos'], ['debug','Debug'], ['css','CSS']
+        ['general','General'], ['design','Visual'], ['item-detail','Ficha'], ['types','Tipos'], ['notifications','Avisos'], ['plex','Plex'], ['collections','Colecciones'], ['data','Datos'], ['debug','Debug'], ['css','CSS']
       ].map(([id,label], index) => `<button type="button" data-settings-tab="${id}" class="${index === 0 ? 'is-active' : ''}">${label}</button>`).join('')}
     </nav>
     <div class="settings-tabs__panels">
@@ -916,6 +944,9 @@ async function openSettingsModal() {
           <button type="button" class="ui-action-button" data-load-metadata-keys>Ver claves detectadas</button>
           <pre class="metadata-keys-cheatsheet" data-metadata-keys hidden></pre>
         </div>
+      </section>
+      <section data-settings-panel="types" class="settings-tab-panel"><h3>Tipos</h3>
+        ${itemTypesSettingsMarkup(s.itemTypes || [])}
       </section>
       <section data-settings-panel="notifications" class="settings-tab-panel"><h3>Notificaciones</h3>
         <label class="ui-check"><input type="checkbox" data-setting="toastEnabled" ${checked(s.notifications?.toastEnabled !== false)}> Mostrar toast</label>
@@ -987,7 +1018,9 @@ async function openSettingsModal() {
               opacity: Number(get('bgOpacity')?.value ?? 0.28),
               blur: Number(get('bgBlur')?.value || 18),
               overlayColor: get('bgOverlayColor')?.value || '#05070c',
-              fadeSeconds: Number(get('bgFadeSeconds')?.value ?? 0.75)
+              overlayOpacity: Number(get('bgOverlayOpacity')?.value ?? 0.76),
+              grayscale: Number(get('bgGrayscale')?.value ?? 0),
+              fadeSeconds: Number(get('bgFadeSeconds')?.value ?? 1.2)
             }
           },
           views: {
@@ -997,6 +1030,7 @@ async function openSettingsModal() {
             database: { cardSize: s.views?.database?.cardSize || 'medium', itemsPerPage: Number(s.views?.database?.itemsPerPage || 60) }
           },
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
+          itemTypes: readCustomTypesFromSettings(root),
           notifications: { toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
           plex: { url: get('plexUrl')?.value || '', token: get('plexToken')?.value || '' },
           customCssText: get('customCss')?.value || ''
@@ -1052,6 +1086,25 @@ async function openSettingsModal() {
       state.collectionGroups = (state.collectionGroups || []).filter(group => group.id !== id);
       button.closest('[data-group-id]')?.remove();
       ui.toast('Grupo eliminado');
+    });
+
+    modalRoot.addEventListener('click', event => {
+      const add = event.target.closest('[data-add-custom-type]');
+      if (add) {
+        const input = modalRoot.querySelector('[data-new-custom-type-name]');
+        const name = input?.value?.trim() || '';
+        if (!name) return;
+        const list = modalRoot.querySelector('[data-custom-types-list]');
+        list?.querySelector('[data-empty-custom-types]')?.remove();
+        const id = typeSlug(name);
+        list?.insertAdjacentHTML('beforeend', `<div class="custom-type-row" data-custom-type-row><label class="ui-field"><span>ID</span><input data-custom-type-id value="${escapeAttr(id)}" placeholder="libros"></label><label class="ui-field"><span>Singular</span><input data-custom-type-singular value="${escapeAttr(name.replace(/s$/i, ''))}" placeholder="Libro"></label><label class="ui-field"><span>Plural</span><input data-custom-type-plural value="${escapeAttr(name)}" placeholder="Libros"></label><button type="button" class="ui-action-button" data-remove-custom-type>Quitar</button></div>`);
+        input.value = '';
+        return;
+      }
+      const remove = event.target.closest('[data-remove-custom-type]');
+      if (remove) {
+        remove.closest('[data-custom-type-row]')?.remove();
+      }
     });
 
     bindColorFieldPreviews(modalRoot);

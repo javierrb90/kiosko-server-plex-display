@@ -12,10 +12,16 @@ function normalizeSource(value) {
   if (["plex", "playnite", "sonarr", "radarr", "arr"].includes(source)) return source;
   return source || "manual";
 }
+function normalizeTypeSlug(value = "") {
+  return clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
 function normalizeCollectionType(item = {}) {
-  if (["games", "movies", "series"].includes(item.collectionType)) return item.collectionType;
   const plexType = item.meta?.plexType || item.type;
   if (item.source === "playnite" || item.kind === "game") return "games";
+  if (item.source === "plex" && (plexType === "movie" || item.type === "movie")) return "movies";
+  if (item.source === "plex") return "series";
+  const custom = normalizeTypeSlug(item.collectionType);
+  if (custom) return custom;
   if (plexType === "movie" || item.type === "movie") return "movies";
   return "series";
 }
@@ -97,6 +103,10 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
   const lastActivityAt = patch.lastActivityAt || input.lastActivityAt || input.lastSeenAt || existing.lastActivityAt || existing.lastSeenAt || input.updatedAt || date;
   const completedAt = patch.completedAt ?? input.completedAt ?? existing.completedAt ?? null;
   const rating = patch.rating ?? input.rating ?? existing.rating ?? null;
+  const preserveManualDetail = Boolean(patch.preserveManualDetail && (existing.meta?.manualDetail || existing.metadata?.manualDetail) && !patch.forceSubtitle);
+  const effectiveDetail = preserveManualDetail
+    ? clean(existing.detail || existing.subtitle || "")
+    : clean(input.detail ?? input.subtitle ?? existing.detail ?? existing.subtitle ?? "");
   const states = {
     inBacklog: Boolean(existing.states?.inBacklog),
     inOnDeck: Boolean(existing.states?.inOnDeck),
@@ -117,7 +127,8 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
     type: collectionType === "series" ? "series" : (input.type || existing.type || "item"),
     collectionType,
     title: clean(input.meta?.grandparentTitle || input.showTitle || input.title || existing.title || "Sin título") || "Sin título",
-    subtitle: clean(input.subtitle || existing.subtitle || ""),
+    detail: effectiveDetail,
+    subtitle: effectiveDetail,
     poster: input.poster ?? input.posterUrl ?? input.cover ?? existing.poster ?? null,
     backdrop: input.backdrop ?? input.backdropUrl ?? input.background ?? existing.backdrop ?? null,
     year: input.year ?? input.releaseYear ?? existing.year ?? "",
@@ -256,12 +267,13 @@ export class ItemRegistryStore {
   async updateDates(id, patch = {}) {
     const item = this.get(id);
     if (!item) return null;
-    const beforeSubtitle = item.subtitle || "";
+    const beforeSubtitle = item.detail || item.subtitle || "";
     for (const key of ["firstSeenAt", "lastActivityAt", "completedAt"]) {
       if (patch[key] !== undefined) item[key] = patch[key] || null;
     }
     if (patch.subtitle !== undefined) {
-      item.subtitle = clean(patch.subtitle);
+      item.detail = clean(patch.subtitle);
+      item.subtitle = item.detail;
       item.meta = { ...(item.meta || {}), manualDetail: true };
       item.metadata = { ...(item.metadata || {}), manualDetail: true };
       if (item.subtitle !== beforeSubtitle) item.lastActivityAt = now();
@@ -306,10 +318,14 @@ export class ItemRegistryStore {
       const saved = await this.upsert(item, patch);
       if (patch.inBacklog) await this.addBacklogEntry(saved, null, item.meta?.backlogSource || "recent");
     };
-    for (const item of backlog.plex || []) await apply(item, { inBacklog: true, activity: { eventType: item.meta?.tautulliEvent || item.meta?.backlogSource || "backlog_recent", title: item.meta?.createdEpisodeTitle || item.title, subtitle: item.subtitle } });
-    for (const item of backlog.playnite || []) await apply(item, { inBacklog: true, activity: { eventType: "playnite_recent", title: item.title, subtitle: item.subtitle } });
-    for (const item of onDeck || []) await apply(item, { inOnDeck: true });
-    for (const item of completions || []) await apply(item, { completed: true, rating: item.rating ?? null, completedAt: item.completedAt ?? null });
+    for (const [source, rows] of Object.entries(backlog || {})) {
+      for (const item of Array.isArray(rows) ? rows : []) {
+        const eventType = source === "playnite" ? "playnite_recent" : source === "plex" ? (item.meta?.tautulliEvent || item.meta?.backlogSource || "backlog_recent") : "manual_follow";
+        await apply(item, { inBacklog: true, preserveManualDetail: true, activity: { eventType, title: item.meta?.createdEpisodeTitle || item.title, subtitle: item.subtitle } });
+      }
+    }
+    for (const item of onDeck || []) await apply(item, { inOnDeck: true, preserveManualDetail: true });
+    for (const item of completions || []) await apply(item, { completed: true, preserveManualDetail: true, rating: item.rating ?? null, completedAt: item.completedAt ?? null });
     for (const item of this.items) {
       if (item.deletedAt) continue;
       item.states = { ...(item.states || {}), inBacklog: activeBacklog.has(item.canonicalId), inOnDeck: activeDeck.has(item.canonicalId), completed: activeCompleted.has(item.canonicalId) || Boolean(item.completedAt) };

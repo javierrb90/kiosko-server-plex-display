@@ -65,6 +65,7 @@ export const DEFAULT_SETTINGS = {
     arr: { enabled: true, storeTestNotifications: true, enabledEvents: ["grab", "movie_add", "series_add"] },
     playnite: { enabled: true, maxPayloadMb: 80 }
   },
+  itemTypes: [],
   notifications: {
     maxStored: 50,
     toastEnabled: true,
@@ -115,6 +116,21 @@ function density(value) {
   return ["compact", "comfortable", "large"].includes(value) ? value : "comfortable";
 }
 
+function typeSlug(value = "") {
+  return String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+function normalizeItemTypes(value) {
+  const reserved = new Set(["games", "movies", "series"]);
+  const rows = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  return rows.map(row => {
+    const slug = typeSlug(row?.id || row?.slug || row?.value || row?.name);
+    const singular = String(row?.singular || row?.label || row?.name || slug || "").trim();
+    const plural = String(row?.plural || row?.labelPlural || row?.label || row?.name || singular || "").trim();
+    return { id: slug, singular: singular || slug, plural: plural || singular || slug };
+  }).filter(row => row.id && !reserved.has(row.id) && !seen.has(row.id) && seen.add(row.id)).slice(0, 24);
+}
+
 function color(value, fallback = "#8fafef") {
   const text = String(value || "").trim();
   return /^#[0-9a-f]{6}$/i.test(text) ? text : fallback;
@@ -127,6 +143,8 @@ function sanitize(settings) {
   if (s.display?.defaultView === "dashboard") s.display.defaultView = "backlog";
   if (!["database", "backlog", "on-deck", "current-content", "collections"].includes(s.display.defaultView)) s.display.defaultView = "backlog";
   s.display.dockPosition = "top";
+
+  s.itemTypes = normalizeItemTypes(s.itemTypes || s.customItemTypes || []);
 
   delete s.display.dimEnabled;
   delete s.display.dimTimeoutSeconds;

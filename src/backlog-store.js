@@ -8,7 +8,8 @@ function slug(value) { return clean(value).toLowerCase().normalize("NFD").replac
 
 function normalizeSource(value) {
   const source = clean(value).toLowerCase();
-  return source === "plex" || source === "playnite" ? source : "manual";
+  if (source === "plex" || source === "playnite" || source === "kiosko" || source === "manual") return source;
+  return "manual";
 }
 function normalizeRating(value) {
   const rating = Number(value);
@@ -44,8 +45,22 @@ function queueWrite(instance, filePath, data) {
 }
 
 export class BacklogStore {
-  constructor(dataDir) { this.filePath = path.join(dataDir, "backlog.json"); this.data = { plex: [], playnite: [] }; this.writeQueue = Promise.resolve(); }
-  async init() { await fs.mkdir(path.dirname(this.filePath), { recursive: true }); try { const parsed = JSON.parse(await fs.readFile(this.filePath, "utf8")); this.data = { plex: Array.isArray(parsed?.plex) ? parsed.plex : [], playnite: Array.isArray(parsed?.playnite) ? parsed.playnite : [] }; } catch (error) { if (error.code !== "ENOENT") console.error("No se pudo cargar backlog:", error); } await this.persist(); }
+  constructor(dataDir) { this.filePath = path.join(dataDir, "backlog.json"); this.data = { plex: [], playnite: [], kiosko: [], manual: [] }; this.writeQueue = Promise.resolve(); }
+  async init() {
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.filePath, "utf8"));
+      this.data = {
+        plex: Array.isArray(parsed?.plex) ? parsed.plex : [],
+        playnite: Array.isArray(parsed?.playnite) ? parsed.playnite : [],
+        kiosko: Array.isArray(parsed?.kiosko) ? parsed.kiosko : [],
+        manual: Array.isArray(parsed?.manual) ? parsed.manual : []
+      };
+    } catch (error) {
+      if (error.code !== "ENOENT") console.error("No se pudo cargar backlog:", error);
+    }
+    await this.persist();
+  }
   list() { return this.data; }
   source(source) { return this.data[normalizeSource(source)] || []; }
   async upsert(source, input = {}, _options = {}) {
@@ -53,7 +68,7 @@ export class BacklogStore {
     const date = now(); const canonicalId = canonicalKeyForItem({ ...input, source: safeSource });
     const existingIndex = this.data[safeSource].findIndex(item => canonicalKeyForItem(item) === canonicalId);
     const previous = existingIndex >= 0 ? this.data[safeSource].splice(existingIndex, 1)[0] : null;
-    const item = { ...(previous || {}), id: previous?.id || crypto.randomUUID(), source: safeSource, type: input.type || previous?.type || "item", collectionType: input.collectionType || previous?.collectionType || (safeSource === "playnite" ? "games" : "plex"), canonicalId, title: clean(input.title || previous?.title || "Sin título") || "Sin título", subtitle: clean(input.subtitle || previous?.subtitle || ""), poster: input.poster ?? input.posterUrl ?? input.cover ?? previous?.poster ?? null, backdrop: input.backdrop ?? input.backdropUrl ?? input.background ?? previous?.backdrop ?? null, year: input.year ?? previous?.year ?? "", ratingKey: input.ratingKey ?? previous?.ratingKey ?? null, gameId: input.gameId ?? previous?.gameId ?? null, meta: { ...(previous?.meta || {}), ...(input.meta || {}) }, createdAt: previous?.createdAt || date, updatedAt: date, lastActivityAt: input.lastActivityAt || date };
+    const item = { ...(previous || {}), id: previous?.id || crypto.randomUUID(), source: safeSource, type: input.type || previous?.type || "item", collectionType: input.collectionType || previous?.collectionType || (safeSource === "playnite" ? "games" : "movies"), canonicalId, title: clean(input.title || previous?.title || "Sin título") || "Sin título", subtitle: clean(input.subtitle || previous?.subtitle || ""), poster: input.poster ?? input.posterUrl ?? input.cover ?? previous?.poster ?? null, backdrop: input.backdrop ?? input.backdropUrl ?? input.background ?? previous?.backdrop ?? null, year: input.year ?? previous?.year ?? "", ratingKey: input.ratingKey ?? previous?.ratingKey ?? null, gameId: input.gameId ?? previous?.gameId ?? null, meta: { ...(previous?.meta || {}), ...(input.meta || {}) }, createdAt: previous?.createdAt || date, updatedAt: date, lastActivityAt: input.lastActivityAt || date };
     this.data[safeSource].unshift(item); await this.persist(); return item;
   }
   async remove(source, id) { const safeSource = normalizeSource(source); const list = this.data[safeSource]; if (!list) throw new Error("Fuente de backlog no soportada."); const index = list.findIndex(item => item.id === id || canonicalKeyForItem(item) === id); if (index < 0) throw new Error("Item de backlog no encontrado."); const [removed] = list.splice(index, 1); await this.persist(); return removed; }

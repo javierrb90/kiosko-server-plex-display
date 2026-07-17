@@ -4,6 +4,7 @@ import fsSync from "node:fs";
 import { WebSocketServer } from "ws";
 import path from "node:path";
 import os from "node:os";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { EventStore } from "./src/event-store.js";
 import { RealtimeHub } from "./src/realtime-hub.js";
@@ -50,7 +51,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`Kiosko Media Center v6.8 escuchando en ${host}:${port}`);
+  console.log(`Kiosko Media Center v6.10 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -104,7 +105,9 @@ function dataCounts() {
     backlog: {
       plex: Array.isArray(backlog.plex) ? backlog.plex.length : 0,
       playnite: Array.isArray(backlog.playnite) ? backlog.playnite.length : 0,
-      total: (Array.isArray(backlog.plex) ? backlog.plex.length : 0) + (Array.isArray(backlog.playnite) ? backlog.playnite.length : 0)
+      kiosko: Array.isArray(backlog.kiosko) ? backlog.kiosko.length : 0,
+      manual: Array.isArray(backlog.manual) ? backlog.manual.length : 0,
+      total: Object.values(backlog || {}).reduce((sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0), 0)
     },
     onDeck: onDeckStore.list().length,
     completions: completionStore.list().length,
@@ -165,7 +168,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "Kiosko Media Center",
-    version: "v6.8",
+    version: "v6.10",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -239,7 +242,7 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v6.8 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v6.10 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
@@ -283,7 +286,12 @@ function publicItem(item = {}) {
 
 function publicBacklog() {
   const data = backlogStore.list();
-  return { plex: (data.plex || []).map(publicItem), playnite: (data.playnite || []).map(publicItem) };
+  return {
+    plex: (data.plex || []).map(publicItem),
+    playnite: (data.playnite || []).map(publicItem),
+    kiosko: (data.kiosko || []).map(publicItem),
+    manual: (data.manual || []).map(publicItem)
+  };
 }
 
 function publicOnDeck() {
@@ -315,7 +323,7 @@ async function syncItemRegistryNow(reason = "action") {
 
 function findBacklogItemByCanonicalId(canonicalId = "") {
   const data = backlogStore.list();
-  return [...(data.plex || []), ...(data.playnite || [])].find(item => item.canonicalId === canonicalId || item.id === canonicalId);
+  return Object.values(data || {}).flat().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
 }
 function findOnDeckItemByCanonicalId(canonicalId = "") {
   return onDeckStore.list().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
@@ -714,6 +722,23 @@ function normalizePlexCreatedBacklogItem(metadata = {}, event = {}) {
   };
 }
 
+
+function plexActivityDetail(metadata = {}, event = {}) {
+  const plexType = metadata.type || metadata.meta?.plexType || "unknown";
+  const episodeTitle = metadata.raw?.title || metadata.meta?.originalTitle || metadata.title || "";
+  const episodeCode = String(metadata.subtitle || metadata.meta?.createdEpisodeCode || "").split("·").pop()?.trim() || "";
+  if (["episode", "season"].includes(plexType)) {
+    const parts = [];
+    if (episodeTitle) parts.push(episodeTitle);
+    if (episodeCode && !parts.some(part => String(part).includes(episodeCode))) parts.push(episodeCode);
+    const suffix = event.isWatched ? "terminado" : event.isLibraryAdded ? "añadido" : event.startsPlayback ? "reproducido" : "";
+    return [parts.join(" · ") || metadata.subtitle || "Episodio", suffix].filter(Boolean).join(" · ");
+  }
+  if (event.isWatched) return metadata.subtitle ? `${metadata.subtitle} · terminado` : "Terminado";
+  if (event.isLibraryAdded) return metadata.subtitle ? `${metadata.subtitle} · añadido` : "Añadido";
+  return metadata.subtitle || metadata.summary || metadata.year || "";
+}
+
 function normalizePlexBacklogItem(metadata = {}) {
   return {
     source: "plex",
@@ -967,6 +992,78 @@ app.get("/api/items/export.csv", async (req, res) => {
   res.setHeader("Content-Disposition", `attachment; filename="kiosko-items-${new Date().toISOString().slice(0,10)}.csv"`);
   res.send(itemsToCsv(result.items));
 });
+
+function slugType(value = "") {
+  return String(value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+}
+function normalizeManualCollectionType(value = "") {
+  const text = slugType(value);
+  if (["game", "games", "juego", "juegos"].includes(text)) return "games";
+  if (["movie", "movies", "pelicula", "peliculas"].includes(text)) return "movies";
+  if (["show", "series", "serie"].includes(text)) return "series";
+  return text || "movies";
+}
+function manualTypeForCollection(collectionType = "") {
+  if (collectionType === "games") return "game";
+  if (collectionType === "movies") return "movie";
+  if (collectionType === "series") return "show";
+  return "item";
+}
+async function updateManualItemInLegacyStores(item = {}) {
+  const id = item.canonicalId || item.id;
+  if (!id) return;
+  const backlogItem = findBacklogItemByCanonicalId(id);
+  if (backlogItem) {
+    const source = backlogItem.source === "plex" || backlogItem.source === "playnite" || backlogItem.source === "kiosko" || backlogItem.source === "manual" ? backlogItem.source : "manual";
+    await backlogStore.upsert(source, { ...backlogItem, ...item, id: backlogItem.id, source, lastActivityAt: item.lastActivityAt || backlogItem.lastActivityAt });
+  }
+  const deckItem = findOnDeckItemByCanonicalId(id);
+  if (deckItem) await onDeckStore.upsert({ ...deckItem, ...item, id: deckItem.id, addedToDeckAt: deckItem.addedToDeckAt, lastActivityAt: item.lastActivityAt || deckItem.lastActivityAt });
+  const completedItem = findCompletionByCanonicalId(id);
+  if (completedItem) await completionStore.complete({ ...completedItem, ...item, id: completedItem.id, rating: completedItem.rating, completedAt: completedItem.completedAt });
+}
+async function prepareManualItemPayload(input = {}, existing = null) {
+  const title = String(input.title || existing?.title || "").trim();
+  if (!title) throw new Error("El título es obligatorio.");
+  const collectionType = normalizeManualCollectionType(input.collectionType || input.type || existing?.collectionType || "movies");
+  const id = existing?.canonicalId || input.canonicalId || `kiosko:${crypto.randomUUID()}`;
+  const assetTitle = title || "manual-item";
+  let poster = input.poster ?? input.posterUrl ?? input.cover ?? existing?.poster ?? null;
+  let backdrop = input.backdrop ?? input.backdropUrl ?? input.background ?? existing?.backdrop ?? null;
+  if (input.posterAsset) poster = (await assetService.saveImage(input.posterAsset, { bucket: "manual", title: `${assetTitle}-poster` })).path;
+  else if (input.poster && !String(input.poster).startsWith("/assets/") && /^(data:image\/|https?:\/\/)/i.test(String(input.poster))) poster = (await assetService.saveImage(input.poster, { bucket: "manual", title: `${assetTitle}-poster` })).path;
+  if (input.backdropAsset) backdrop = (await assetService.saveImage(input.backdropAsset, { bucket: "manual", title: `${assetTitle}-backdrop` })).path;
+  else if (input.backdrop && !String(input.backdrop).startsWith("/assets/") && /^(data:image\/|https?:\/\/)/i.test(String(input.backdrop))) backdrop = (await assetService.saveImage(input.backdrop, { bucket: "manual", title: `${assetTitle}-backdrop` })).path;
+  const nowIso = new Date().toISOString();
+  const detail = String(input.detail ?? input.subtitle ?? existing?.detail ?? existing?.subtitle ?? "").trim();
+  return {
+    ...(existing || {}),
+    id: existing?.id || id,
+    canonicalId: id,
+    entityId: id,
+    source: "kiosko",
+    kind: "manual",
+    type: manualTypeForCollection(collectionType),
+    collectionType,
+    title,
+    detail,
+    subtitle: detail,
+    poster,
+    backdrop,
+    year: input.year ?? existing?.year ?? "",
+    firstSeenAt: existing?.firstSeenAt || nowIso,
+    lastActivityAt: input.bumpActivity === false ? (existing?.lastActivityAt || nowIso) : nowIso,
+    meta: {
+      ...(existing?.meta || existing?.metadata || {}),
+      createdByKiosko: true,
+      manualItem: true
+    }
+  };
+}
+function isManualEditableItem(item = {}) {
+  return item.source === "kiosko" || item.source === "manual" || item.meta?.createdByKiosko || item.metadata?.createdByKiosko;
+}
+
 app.get("/api/items/metadata-keys", async (_req, res) => {
   await syncItemRegistryNow("metadata-keys");
   const buckets = { games: {}, movies: {}, series: {}, all: {} };
@@ -987,6 +1084,38 @@ app.get("/api/items/metadata-keys", async (_req, res) => {
   }
   res.json({ keys: buckets });
 });
+
+app.post("/api/items", async (req, res) => {
+  try {
+    const payload = await prepareManualItemPayload(req.body || {});
+    const item = await itemRegistryStore.upsert(payload, { activity: { eventType: "manual_created", title: payload.title, subtitle: payload.subtitle, activityAt: payload.lastActivityAt } });
+    await syncItemRegistryNow("manual-create");
+    const responsePayload = fullStatePayload({ item: publicItem(itemRegistryStore.get(item.canonicalId) || item) });
+    broadcastDelta("item:database-updated", responsePayload);
+    res.status(201).json({ ok: true, item: itemRegistryStore.get(item.canonicalId) || item });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+app.patch("/api/items/:canonicalId", async (req, res) => {
+  try {
+    const id = decodeURIComponent(req.params.canonicalId);
+    const existing = itemRegistryStore.get(id);
+    if (!existing) return res.status(404).json({ error: "Item no encontrado." });
+    if (!isManualEditableItem(existing)) return res.status(403).json({ error: "Sólo se pueden editar datos principales de items creados en Kiosko." });
+    const payload = await prepareManualItemPayload({ ...(req.body || {}), canonicalId: existing.canonicalId }, existing);
+    let item = await itemRegistryStore.upsert(payload, { forceSubtitle: true, activity: { eventType: "manual_item_edit", title: payload.title, subtitle: payload.subtitle, activityAt: payload.lastActivityAt } });
+    await updateManualItemInLegacyStores(item);
+    await syncItemRegistryNow("manual-edit");
+    item = itemRegistryStore.get(item.canonicalId) || item;
+    const responsePayload = fullStatePayload({ item: publicItem(itemRegistryStore.get(item.canonicalId) || item) });
+    broadcastDelta("item:database-updated", responsePayload);
+    res.json({ ok: true, item: itemRegistryStore.get(item.canonicalId) || item });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.get("/api/items/:canonicalId", async (req, res) => {
   await syncItemRegistryNow("item-get");
   const item = itemRegistryStore.get(decodeURIComponent(req.params.canonicalId));
@@ -1018,7 +1147,8 @@ app.post("/api/items/:canonicalId/backlog", async (req, res) => {
   const item = itemFromAnyStore(id);
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   const followedAt = new Date().toISOString();
-  const backlogItem = await backlogStore.upsert(item.source || "manual", { ...item, lastActivityAt: followedAt, updatedAt: followedAt, meta: { ...(item.meta || {}), followedAt, trackingSource: "manual" } });
+  const backlogSource = item.source === "plex" || item.source === "playnite" || item.source === "kiosko" ? item.source : "manual";
+  const backlogItem = await backlogStore.upsert(backlogSource, { ...item, source: backlogSource, lastActivityAt: followedAt, updatedAt: followedAt, meta: { ...(item.meta || {}), followedAt, trackingSource: "manual", originalSource: item.source || null } });
   await itemRegistryStore.upsert({ ...item, lastActivityAt: followedAt }, { inBacklog: true, lastActivityAt: followedAt, activity: { eventType: "manual_follow", title: item.title, subtitle: item.subtitle, activityAt: followedAt } });
   await syncItemRegistryNow("follow-backlog");
   const payload = fullStatePayload({ item: publicItem(backlogItem), backlogItem: publicItem(backlogItem) });
@@ -1376,7 +1506,10 @@ async function handleTautulliWebhook(req, res) {
             }
           });
       trackedItem.lastActivityAt = new Date().toISOString();
-      await itemRegistryStore.upsert(trackedItem, { activity: { eventType: trackedItem.meta?.backlogSource || event.rawEvent || "plex_activity", title: trackedItem.title, subtitle: trackedItem.subtitle, activityAt: trackedItem.lastActivityAt } });
+      trackedItem.subtitle = plexActivityDetail(metadata, event) || trackedItem.subtitle;
+      trackedItem.detail = trackedItem.subtitle;
+      trackedItem.meta = { ...(trackedItem.meta || {}), activityKind: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : event.startsPlayback ? "played" : "activity" };
+      await itemRegistryStore.upsert(trackedItem, { forceSubtitle: true, activity: { eventType: trackedItem.meta?.backlogSource || event.rawEvent || "plex_activity", title: trackedItem.title, subtitle: trackedItem.subtitle, activityAt: trackedItem.lastActivityAt } });
 
       const followed = findBacklogItemByCanonicalId(trackedItem.canonicalId);
       if (followed) {

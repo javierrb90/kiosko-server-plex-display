@@ -11,6 +11,7 @@ function typeLabel(item = {}) { return typeFor(item) === 'games' ? 'Juego' : typ
 function sourceLabel(item = {}) {
   if (item.source === 'playnite' || item.kind === 'game') return 'Playnite';
   if (item.source === 'plex' || item.kind === 'plex') return 'Plex';
+  if (item.source === 'kiosko' || item.meta?.createdByKiosko || item.metadata?.createdByKiosko) return 'Kiosko';
   return item.source ? String(item.source) : 'Fuente';
 }
 function formatDate(value) {
@@ -113,14 +114,43 @@ function ratingControlMarkup(item = {}, context = '') {
 function isInBacklog(item = {}, context = '') { return context === 'backlog' || item.states?.inBacklog === true; }
 function isInDeck(item = {}, context = '') { return context === 'on-deck' || item.states?.inOnDeck === true; }
 function isInCollection(item = {}, context = '') { return context === 'collections' || item.states?.completed === true || Boolean(item.rating || item.completedAt); }
+function isManualEditableItem(item = {}) {
+  return item.source === 'kiosko' || item.source === 'manual' || item.meta?.createdByKiosko || item.metadata?.createdByKiosko;
+}
+function collectionTypeFor(item = {}) {
+  if (item.collectionType) return String(item.collectionType);
+  if (item.source === 'playnite') return 'games';
+  if (item.type === 'movie') return 'movies';
+  return 'series';
+}
+const BASE_ITEM_TYPES = [
+  { id: 'games', singular: 'Juego', plural: 'Juegos' },
+  { id: 'movies', singular: 'Película', plural: 'Películas' },
+  { id: 'series', singular: 'Serie', plural: 'Series' }
+];
+function customTypesFromSettings(settings = {}) {
+  const seen = new Set(BASE_ITEM_TYPES.map(type => type.id));
+  return [...BASE_ITEM_TYPES, ...(Array.isArray(settings.itemTypes) ? settings.itemTypes : []).filter(type => type?.id && !seen.has(type.id) && seen.add(type.id)).map(type => ({ id: type.id, singular: type.singular || type.label || type.id, plural: type.plural || type.label || type.singular || type.id }))];
+}
+function manualTypeOptions(settings = {}, current = 'movies') {
+  const types = customTypesFromSettings(settings);
+  if (current && !types.some(type => type.id === current)) types.push({ id: current, singular: current, plural: current });
+  return types.map(type => `<option value="${escapeAttr(type.id)}" ${type.id === current ? 'selected' : ''}>${escapeHtml(type.singular || type.plural || type.id)}</option>`).join('');
+}
+async function fileToDataUri(file) {
+  if (!file) return '';
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 function statePillsMarkup(item = {}, context = '') {
-  const pills = [];
-  pills.push(typeLabel(item));
-  pills.push(sourceLabel(item));
-  if (isInBacklog(item, context)) pills.push('Backlog');
-  if (isInDeck(item, context)) pills.push('On Deck');
-  if (isInCollection(item, context)) pills.push(item.rating ? `Calificado · ${Number(item.rating)}/5` : 'Calificado');
+  const pills = [typeLabel(item)];
+  if (isInBacklog(item, context) && context !== 'backlog') pills.push('Backlog');
+  if (isInDeck(item, context) && context !== 'on-deck') pills.push('On Deck');
   return `<div class="item-detail__state-pills">${pills.map(label => `<span class="deck-pill item-detail__status">${escapeHtml(label)}</span>`).join('')}</div>`;
 }
 
@@ -169,13 +199,14 @@ function primaryActionsMarkup(item = {}, context = '') {
 function detailActionsMarkup(item = {}, context = '') {
   if (context === 'removed') return `<div class="item-detail__actions item-detail__actions--clean" data-detail-actions><span class="settings-help">Este elemento se ha eliminado del contexto actual.</span></div>`;
   const collectionAction = isInCollection(item, context) ? `<button type="button" data-detail-action="remove-collection">Quitar de Colecciones</button>` : '';
+  const manualAction = isManualEditableItem(item) ? `<button type="button" data-detail-action="edit-manual-data">Editar datos principales</button>` : '';
   return `<div class="item-detail__actions item-detail__actions--clean" data-detail-actions>
     <div class="item-detail__quick-group">${primaryActionsMarkup(item, context)}</div>
-    <div class="item-detail__more"><button type="button" class="item-detail__quick" data-detail-action="menu" title="Editar y más opciones">✎</button><div class="item-detail__more-menu" data-detail-more-menu hidden><button type="button" data-detail-action="edit">✎ Editar item</button>${collectionAction}<button type="button" class="danger" data-detail-action="delete-permanent">Eliminar definitivamente</button></div></div>
+    <div class="item-detail__more"><button type="button" class="item-detail__quick" data-detail-action="menu" title="Editar y más opciones">✎</button><div class="item-detail__more-menu" data-detail-more-menu hidden><button type="button" data-detail-action="edit">✎ Editar estado</button>${manualAction}${collectionAction}<button type="button" class="danger" data-detail-action="delete-permanent">Eliminar definitivamente</button></div></div>
   </div>`;
 }
 function bodyMarkup(item = {}, context = '', collectionGroups = [], settings = {}) {
-  const subtitle = item.subtitle || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item));
+  const subtitle = item.detail || item.subtitle || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item));
   const backdrop = effectiveBackdrop(item, settings);
   return `<div class="item-detail ${detailDesignClass(settings)} ${backdrop ? 'item-detail--has-bg' : ''}">
     ${backdrop ? `<div class="item-detail__backdrop" style="background-image:url('${escapeAttr(backdrop)}')"></div>` : ''}
@@ -223,7 +254,53 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   async function saveInlineGroups(root) { if (busy) return; const keys = groupItemKeys(item); const primaryKey = keys[0]; if (!primaryKey) { toast('No hay una clave estable para este item'); return; } busy = true; const selected = new Set([...root.querySelectorAll('[data-group-pick]:checked')].map(input => input.dataset.groupPick)); for (const group of collectionGroups) { const active = itemInGroup(item, group); if (selected.has(group.id) && !active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items`, { method: 'POST', body: JSON.stringify({ itemId: primaryKey, itemKeys: keys }) }); if (!selected.has(group.id) && active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items/${encodeURIComponent(primaryKey)}`, { method: 'DELETE', body: JSON.stringify({ itemKeys: keys }) }); } await refreshGroups(); busy = false; toast('Grupos actualizados'); window.dispatchEvent(new CustomEvent('kiosko:collection-groups-changed')); renderBody(root); }
   async function chooseDeckReplacement(limitPayload = {}) { const categoryLabel = { games: 'juegos', movies: 'películas', series: 'series' }[limitPayload.category] || 'items'; const cards = (limitPayload.currentItems || []).map(entry => { const img = entry.poster || entry.posterUrl || entry.cover || ''; const initial = escapeHtml((entry.title || '?').slice(0, 1)); return `<label class="deck-replace-card"><input type="radio" name="deck-replace" value="${escapeAttr(entry.id)}"><span class="deck-replace-card__poster">${img ? `<img src="${escapeAttr(img)}" alt="">` : `<span>${initial}</span>`}</span><strong>${escapeHtml(entry.title || 'Sin título')}</strong><small>${escapeHtml(entry.subtitle || '')}</small></label>`; }).join(''); const result = await ui.open({ title: 'Límite de On Deck', className: 'ui-modal-root--wide', body: `<div class="deck-limit-modal"><p>Ya tienes ${limitPayload.limit || 3} ${categoryLabel} en On Deck. Para añadir <strong>${escapeHtml(limitPayload.newItem?.title || item.title || 'este item')}</strong>, elige cuál quieres reemplazar.</p><div class="deck-replace-grid">${cards}</div></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Reemplazar seleccionado', variant: 'primary', onClick: root => root.querySelector('input[name="deck-replace"]:checked')?.value || false }] }); return result || null; }
   async function postDeckWithReplacement(path) { try { return await api(path, { method: 'POST' }); } catch (error) { if (error.status !== 409 || error.data?.reason !== 'deck_limit_reached') throw error; const replaceId = await chooseDeckReplacement(error.data); if (!replaceId) return null; return api(path, { method: 'POST', body: JSON.stringify({ replaceId }) }); } }
-  async function editItem(root) { const result = await ui.open({ title: 'Editar item', body: `<div class="controls-modal"><section class="controls-modal__section"><h3>Estado / detalle</h3><label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.subtitle || '')}" placeholder="Última actividad, plataforma, episodio..."></label><p class="settings-help">El detalle resume el estado orgánico del item. Si lo cambias manualmente, también se actualiza la última actividad a hoy.</p></section><section class="controls-modal__section"><h3>Fechas</h3><label class="ui-field"><span>Entrada en base de datos</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label><label class="ui-field"><span>Última actividad</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label><label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label></section></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Guardar', variant: 'primary', onClick: modal => ({ subtitle: modal.querySelector('[data-detail-subtitle]')?.value || '', firstSeenAt: modal.querySelector('[data-date-first]')?.value || null, lastActivityAt: modal.querySelector('[data-date-activity]')?.value || null, completedAt: modal.querySelector('[data-date-completed]')?.value || null }) }] }); if (!result) return; const payload = Object.fromEntries(Object.entries(result).map(([key, value]) => [key, key === 'subtitle' ? value : (value ? `${value}T12:00:00.000Z` : null)])); const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/dates`, { method: 'PATCH', body: JSON.stringify(payload) }); mergeReturnedItem(response); toast('Item actualizado'); renderBody(root); }
+  async function editItem(root) { const result = await ui.open({ title: 'Editar item', body: `<div class="controls-modal"><section class="controls-modal__section"><h3>Estado / detalle</h3><label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Última actividad, plataforma, episodio..."></label><p class="settings-help">El detalle resume el estado orgánico del item. Si lo cambias manualmente, también se actualiza la última actividad a hoy.</p></section><section class="controls-modal__section"><h3>Fechas</h3><label class="ui-field"><span>Entrada en base de datos</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label><label class="ui-field"><span>Última actividad</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label><label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label></section></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Guardar', variant: 'primary', onClick: modal => ({ subtitle: modal.querySelector('[data-detail-subtitle]')?.value || '', firstSeenAt: modal.querySelector('[data-date-first]')?.value || null, lastActivityAt: modal.querySelector('[data-date-activity]')?.value || null, completedAt: modal.querySelector('[data-date-completed]')?.value || null }) }] }); if (!result) return; const payload = Object.fromEntries(Object.entries(result).map(([key, value]) => [key, key === 'subtitle' ? value : (value ? `${value}T12:00:00.000Z` : null)])); const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/dates`, { method: 'PATCH', body: JSON.stringify(payload) }); mergeReturnedItem(response); toast('Item actualizado'); renderBody(root); }
+  async function editManualData(root) {
+    if (!isManualEditableItem(item)) return;
+    const currentType = collectionTypeFor(item);
+    const result = await ui.open({
+      title: 'Editar datos principales',
+      className: 'ui-modal-root--wide',
+      body: `<div class="manual-item-form manual-item-form--detail">
+        <div class="manual-item-preview">
+          <div class="manual-item-preview__backdrop" style="${(item.backdrop || item.backdropUrl || item.background) ? `background-image:url('${escapeAttr(item.backdrop || item.backdropUrl || item.background)}')` : ''}"></div>
+          <div class="manual-item-preview__poster">${(item.poster || item.posterUrl || item.cover) ? `<img src="${escapeAttr(item.poster || item.posterUrl || item.cover)}" alt="">` : `<span>${escapeHtml((item.title || '?').slice(0,1))}</span>`}</div>
+          <div><strong>${escapeHtml(item.title || 'Nuevo item')}</strong><small>${escapeHtml(item.detail || item.subtitle || '')}</small></div>
+        </div>
+        <label class="ui-field"><span>Título</span><input data-manual-title value="${escapeAttr(item.title || '')}" required></label>
+        <label class="ui-field"><span>Detalle / estado</span><input data-manual-detail value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Estado visible del item"></label>
+        <label class="ui-field"><span>Tipo</span><select data-manual-type>${manualTypeOptions(settings, currentType)}</select></label>
+        <label class="ui-field"><span>Carátula URL / asset</span><input data-manual-poster value="${escapeAttr(item.poster || '')}" placeholder="https://... o /assets/..."></label>
+        <label class="ui-field"><span>Subir carátula</span><input type="file" accept="image/*" data-manual-poster-file></label>
+        <label class="ui-field"><span>Backdrop URL / asset</span><input data-manual-backdrop value="${escapeAttr(item.backdrop || '')}" placeholder="https://... o /assets/..."></label>
+        <label class="ui-field"><span>Subir backdrop</span><input type="file" accept="image/*" data-manual-backdrop-file></label>
+      </div>`,
+      actions: [
+        { label: 'Cancelar', value: null },
+        { label: 'Guardar', variant: 'primary', onClick: async modal => {
+          const title = modal.querySelector('[data-manual-title]')?.value?.trim();
+          if (!title) return false;
+          const posterFile = modal.querySelector('[data-manual-poster-file]')?.files?.[0];
+          const backdropFile = modal.querySelector('[data-manual-backdrop-file]')?.files?.[0];
+          return {
+            title,
+            detail: modal.querySelector('[data-manual-detail]')?.value || '',
+            collectionType: modal.querySelector('[data-manual-type]')?.value || 'movies',
+            poster: modal.querySelector('[data-manual-poster]')?.value || '',
+            backdrop: modal.querySelector('[data-manual-backdrop]')?.value || '',
+            posterAsset: await fileToDataUri(posterFile),
+            backdropAsset: await fileToDataUri(backdropFile)
+          };
+        }}
+      ]
+    });
+    if (!result) return;
+    const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}`, { method: 'PATCH', body: JSON.stringify(result) });
+    mergeReturnedItem(response);
+    toast('Datos principales actualizados');
+    renderBody(root);
+  }
+
   async function runAction(root, action) {
     if (!action || busy) return;
     if (action === 'groups') { await refreshGroups(); renderInlineGroupPicker(root); return; }
@@ -231,6 +308,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     if (action === 'groups-save') { await saveInlineGroups(root); return; }
     if (action === 'menu') { const menu = root.querySelector('[data-detail-more-menu]'); if (menu) menu.hidden = !menu.hidden; return; }
     if (action === 'edit') { await editItem(root); return; }
+    if (action === 'edit-manual-data') { await editManualData(root); return; }
     busy = true;
     try {
       const canonical = encodeURIComponent(item.canonicalId || item.id);

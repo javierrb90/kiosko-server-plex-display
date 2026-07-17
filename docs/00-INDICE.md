@@ -48,3 +48,11 @@
 
 - [Release notes v6.7.1 Detail State Cleanup](RELEASE-NOTES-V6-7-1-DETAIL-STATE-CLEANUP.md)
 - [Release notes v6.8 Unified Views](RELEASE-NOTES-V6-8-UNIFIED-VIEWS.md)
+
+- [Release notes v6.8.2 Item Card Polish](RELEASE-NOTES-V6-8-2-ITEM-CARD-POLISH.md)
+
+- [Release notes v6.9 Manual Items + Plex Watched](RELEASE-NOTES-V6-9-MANUAL-ITEMS-PLEX-WATCHED.md)
+
+- [Release notes v6.9.1 Manual Source Hotfix](RELEASE-NOTES-V6-9-1-MANUAL-SOURCE-HOTFIX.md)
+
+- [Release notes v6.10 Custom Types + Manual Edit](RELEASE-NOTES-V6-10-CUSTOM-TYPES-MANUAL-EDIT.md)
