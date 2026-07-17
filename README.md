@@ -1,112 +1,103 @@
-# Kiosko Media Center v5.4
+# Kiosko Media Center v6.1
 
-Aplicación web local para gestionar actividad multimedia de Plex/Tautulli y Playnite desde una interfaz visual, pensada primero para móvil/portrait y también usable en pantallas táctiles.
+Kiosko Media Center es una aplicación web local para centralizar novedades, seguimiento y cierre de contenido multimedia y juegos.
 
-## Vistas principales
-
-- **Backlog**: actividad reciente pendiente de clasificar. Agrupa Plex y Playnite en un grid único con filtros, búsqueda, tamaños de carátula y paginación por flechas.
-- **Actual**: muestra lo que se está reproduciendo en Plex o el juego activo de Playnite. Ya no fuerza navegación automática.
-- **Colecciones**: archivo de contenido visto/terminado con valoración, fecha y paginación.
-- **Notificaciones**: centro auxiliar de actividad/log, mantenido como overlay.
-
-## Cambios clave v5.4
-
-- Dashboard eliminado como vista.
-- Backlog como vista inicial por defecto.
-- Configuración integrada en modal dentro de la app.
-- Eliminada la página `/admin.html`.
-- Eliminadas colecciones manuales antiguas y wallpapers del dashboard.
-- Eliminado oscurecimiento automático de pantalla.
-- Dock compacto fijo en la esquina superior izquierda, junto a notificaciones.
-- Controles de cada vista en la esquina superior derecha.
-- Grids reales alineados arriba/izquierda, sin centrar tarjetas sueltas.
-- Paginación visible en Backlog y Colecciones.
-- Fondos dinámicos por Backlog/Colecciones usando backdrops de los items filtrados.
-
-## Fuentes de Backlog
-
-Configurables desde Opciones:
-
-- Plex · nuevo contenido añadido desde Tautulli.
-- Plex · contenido reproducido.
-- Playnite · juegos lanzados.
-
-Los items que entran por reproducción de Plex se muestran igual que el contenido añadido; la diferencia queda sólo a nivel interno.
-
-## Docker / Portainer
-
-```yaml
-services:
-  kiosko-media-center:
-    container_name: kiosko-media-center
-    build:
-      context: .
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      PORT: 3000
-      DATA_DIR: /app/data
-    volumes:
-      - kiosko_volume:/app/data
-
-volumes:
-  kiosko_volume:
-    external: true
-```
-
-## Endpoints principales
+Su objetivo no es sustituir a Plex, Playnite, Sonarr, Radarr o Tautulli, sino actuar como una **bandeja operativa** entre esas herramientas:
 
 ```text
-GET  /api/health
-GET  /api/settings
-PUT  /api/settings
-POST /webhook/tautulli
-POST /webhook/playnite
-POST /webhook/arr/:source
-GET  /api/notifications
-DELETE /api/notifications
-GET  /api/backlog
-DELETE /api/backlog/:source/:id
-POST /api/backlog/:source/:id/complete
-GET  /api/completions
-PATCH /api/completions/:id
-DELETE /api/completions/:id
-POST /api/current/clear
+Novedades / actividad entrante
+→ Backlog
+→ On Deck
+→ Colecciones
 ```
 
-## Datos persistentes
+La versión **v6.1** marca la primera base estable del proyecto después de la fase de iteración v5.x.
+
+## Qué resuelve
+
+Kiosko Media Center permite ver en una única interfaz:
+
+- películas o episodios nuevos añadidos a Plex;
+- actividad de reproducción de Plex/Tautulli;
+- juegos iniciados desde Playnite;
+- contenido que quieres seguir, jugar o ver pronto;
+- historial de contenido completado, visto o puntuado;
+- notificaciones externas;
+- grupos manuales y dinámicos para organizar colecciones.
+
+## Modelo mental
+
+La aplicación se organiza alrededor de cuatro conceptos:
+
+| Concepto | Propósito |
+|---|---|
+| **Backlog** | Bandeja de novedades o candidatos pendientes. |
+| **On Deck** | Contenido activo o en seguimiento. |
+| **Actual** | Lo que está sonando/jugándose/reproduciéndose ahora. |
+| **Colecciones** | Historial de elementos completados, vistos o puntuados. |
+
+Además existe una capa auxiliar:
+
+| Concepto | Propósito |
+|---|---|
+| **Notificaciones** | Registro de avisos externos o eventos relevantes. |
+| **Opciones** | Configuración visual, integraciones, grupos y comportamiento. |
+
+## Documentación incluida
+
+La documentación completa está en `docs/`:
+
+- [`docs/00-INDICE.md`](docs/00-INDICE.md)
+- [`docs/01-VISION-GENERAL.md`](docs/01-VISION-GENERAL.md)
+- [`docs/02-TERMINOLOGIA.md`](docs/02-TERMINOLOGIA.md)
+- [`docs/03-VISTAS-E-INTERFAZ.md`](docs/03-VISTAS-E-INTERFAZ.md)
+- [`docs/04-FLUJOS-DE-USO.md`](docs/04-FLUJOS-DE-USO.md)
+- [`docs/05-INTEGRACIONES.md`](docs/05-INTEGRACIONES.md)
+- [`docs/06-GRUPOS-Y-FILTROS.md`](docs/06-GRUPOS-Y-FILTROS.md)
+- [`docs/07-DATOS-PERSISTENCIA.md`](docs/07-DATOS-PERSISTENCIA.md)
+- [`docs/08-API-Y-WEBHOOKS.md`](docs/08-API-Y-WEBHOOKS.md)
+- [`docs/09-ARQUITECTURA-TECNICA.md`](docs/09-ARQUITECTURA-TECNICA.md)
+- [`docs/10-DESPLIEGUE-PRODUCCION.md`](docs/10-DESPLIEGUE-PRODUCCION.md)
+- [`docs/11-DIAGNOSTICO-Y-LOGS.md`](docs/11-DIAGNOSTICO-Y-LOGS.md)
+- [`docs/12-GUIA-PARA-AGENTES-IA.md`](docs/12-GUIA-PARA-AGENTES-IA.md)
+- [`docs/13-ROADMAP-SIN-BACKUPS.md`](docs/13-ROADMAP-SIN-BACKUPS.md)
+- [`docs/RELEASE-NOTES-V6-0.md`](docs/RELEASE-NOTES-V6-0.md)
+
+## Producción
+
+Archivo recomendado:
 
 ```text
-data/
-├── settings.json
-├── state.json
-├── notifications.json
-├── notification-idempotency.json
-├── backlog.json
-├── completed-items.json
-└── assets/
-    ├── plex/
-    ├── playnite/
-    └── uploads/
+.env.production.example
 ```
 
+Configuración base:
 
-## Novedades v5.4
+```env
+NODE_ENV=production
+PORT=3000
+HOST=0.0.0.0
+DATA_DIR=/app/data
+MAX_PAYLOAD_MB=25
+DEBUG_HTTP=0
+SLOW_API_LOG_MS=750
+PERSIST_DEBOUNCE_MS=350
+TRACE_ITEMS=0
+TRACE_WS=0
+TRACE_PAYLOAD_BYTES=250000
+```
 
-- Paginación estable por número de items, independiente del tamaño de carátula.
-- Filtros multiselección por tipo: películas, juegos y series.
-- Estado de vista guardado en sesión.
-- PWA básica para instalación en Android cuando el navegador lo permita.
-- Opciones ampliadas con Diseño, Debug y CSS personalizado.
+## Nota importante
 
-## v5.4.1 · Caché local de assets Plex
+La v6.0 **no incluye backups automáticos** ni sistema de restauración. Tampoco incluye vista “Continuar” ni modo salón/sincronización entre dispositivos. Esas líneas quedan explícitamente fuera de esta base estable.
 
-Las imágenes de Plex se descargan al volumen persistente y se sirven desde `/assets/plex/...`, evitando cargar siempre desde `http://PLEX:32400/...X-Plex-Token=...` en el navegador.
 
-## Despliegue con Cloudflare Tunnel
+## v6.1 · Item Registry
 
-Desde la v5.4.3 el cliente WebSocket usa automáticamente `wss://` cuando la app se abre por HTTPS, así que funciona detrás de Cloudflare Tunnel sin bloqueo por mixed content.
+v6.1 añade la base de datos permanente interna de items:
 
-El `docker-compose.yml` incluido usa la red externa `arrnet` y hostname `kiosko`, pensado para apuntar el túnel a `http://kiosko:3000` dentro de esa red.
+```text
+data/items.json
+```
+
+Las vistas existentes siguen funcionando igual, pero ahora todo item que pasa por Backlog, On Deck o Colecciones queda registrado en una capa común para futuras vistas y exportaciones.

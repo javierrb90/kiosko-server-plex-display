@@ -17,6 +17,7 @@ import { AssetService } from "./src/asset-service.js";
 import { BacklogStore, CompletionStore } from "./src/backlog-store.js";
 import { CollectionGroupStore } from "./src/collection-group-store.js";
 import { OnDeckStore } from "./src/on-deck-store.js";
+import { ItemRegistryStore } from "./src/item-registry-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -49,7 +50,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`Kiosko Media Center v5.9.21 escuchando en ${host}:${port}`);
+  console.log(`Kiosko Media Center v6.1 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -87,6 +88,7 @@ async function dataFileDiagnostics() {
     "on-deck.json",
     "completed-items.json",
     "collection-groups.json",
+    "items.json",
     "notifications.json",
     "notification-idempotency.json"
   ];
@@ -105,6 +107,7 @@ function dataCounts() {
     onDeck: onDeckStore.list().length,
     completions: completionStore.list().length,
     collectionGroups: collectionGroupStore.list().length,
+    itemRegistry: itemRegistryStore.diagnostics().counts,
     notifications: store.list({ page: 1, limit: 1 }).total
   };
 }
@@ -160,7 +163,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "Kiosko Media Center",
-    version: "v5.9.21",
+    version: "v6.1",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -181,6 +184,7 @@ app.get("/api/diagnostics", async (_req, res) => {
       maxPayloadMb
     },
     counts: dataCounts(),
+    itemRegistry: itemRegistryStore.diagnostics(),
     files,
     payloads: {
       snapshotBytes,
@@ -202,7 +206,9 @@ const backlogStore = new BacklogStore(DATA_DIR);
 const completionStore = new CompletionStore(DATA_DIR);
 const collectionGroupStore = new CollectionGroupStore(DATA_DIR);
 const onDeckStore = new OnDeckStore(DATA_DIR);
-await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), collectionGroupStore.init(), onDeckStore.init()]);
+const itemRegistryStore = new ItemRegistryStore(DATA_DIR);
+await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), collectionGroupStore.init(), onDeckStore.init(), itemRegistryStore.init()]);
+await itemRegistryStore.syncFromViews({ backlog: backlogStore.list(), onDeck: onDeckStore.list(), completions: completionStore.list() }, "startup");
 
 const plex = new PlexService(settingsStore.get().plex || {});
 
@@ -231,7 +237,7 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v5.9.21 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v6.1 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
@@ -305,6 +311,7 @@ function broadcastDelta(type, payload = {}) {
   tracePayload(type, payload);
   const result = hub.broadcast({ type, payload }, { trace: TRACE_ITEMS || process.env.TRACE_WS === "1" });
   pushMetric("broadcasts", { type, clients: result.clients, bytes: result.bytes, ms: result.ms });
+  if (String(type || "").startsWith("item:")) scheduleItemRegistrySync(type);
   if (TRACE_ITEMS) console.log(`[delta] ${type} clients=${result.clients} bytes=${result.bytes} ms=${result.ms}`);
 }
 function traceActionStart(name, req) {
@@ -355,6 +362,7 @@ async function buildExportPayload() {
     backlog: backlogStore.list(),
     onDeck: onDeckStore.list(),
     completions: completionStore.list(),
+    itemRegistry: itemRegistryStore.list(),
     collectionGroups: collectionGroupStore.list(),
     notifications: store.list({ page: 1, limit: 50 }).items,
     customCss
@@ -790,7 +798,24 @@ function normalizePlayniteBacklogItem(game = {}) {
   };
 }
 
+
+let registrySyncTimer = null;
+function scheduleItemRegistrySync(reason = "scheduled") {
+  if (registrySyncTimer) return;
+  registrySyncTimer = setTimeout(() => {
+    registrySyncTimer = null;
+    itemRegistryStore.syncFromViews({
+      backlog: backlogStore.list(),
+      onDeck: onDeckStore.list(),
+      completions: completionStore.list()
+    }, reason).then(result => {
+      if (TRACE_ITEMS) console.log(`[item-registry] sync reason=${result.reason} total=${result.total} ms=${result.ms}`);
+    }).catch(error => console.error("[item-registry] sync error:", error));
+  }, Number(process.env.ITEM_REGISTRY_SYNC_DEBOUNCE_MS || 250));
+}
+
 function broadcastBacklogAndCompletions() {
+  scheduleItemRegistrySync("broadcastBacklogAndCompletions");
   const completionRatings = completionStore.ratingsMap();
   const collectionGroups = collectionGroupStore.list();
   hub.broadcast({ type: "backlog:update", payload: { backlog: publicBacklog(), completionRatings, onDeckMap: onDeckStore.map(), collectionGroups } });
@@ -803,6 +828,19 @@ function broadcastCollectionGroups() {
 
 app.get("/api/backlog", (_req, res) => res.json({ backlog: publicBacklog(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() }));
 app.get("/api/on-deck", (_req, res) => res.json({ onDeck: publicOnDeck(), completionRatings: completionStore.ratingsMap() }));
+
+app.get("/api/items", (req, res) => {
+  res.json(itemRegistryStore.query(req.query || {}));
+});
+app.get("/api/items/:canonicalId", (req, res) => {
+  const item = itemRegistryStore.get(req.params.canonicalId);
+  if (!item) return res.status(404).json({ error: "Item no encontrado." });
+  res.json(item);
+});
+app.post("/api/items/sync", async (_req, res) => {
+  const result = await itemRegistryStore.syncFromViews({ backlog: backlogStore.list(), onDeck: onDeckStore.list(), completions: completionStore.list() }, "manual-api");
+  res.json({ ok: true, ...result, diagnostics: itemRegistryStore.diagnostics() });
+});
 
 app.get("/api/collection-groups", (_req, res) => res.json({ groups: collectionGroupStore.list() }));
 app.post("/api/collection-groups", async (req, res) => {
