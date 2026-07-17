@@ -593,11 +593,11 @@ function applyFullStatePayload(payload = {}) {
   applyOnDeckMap(payload.onDeckMap);
 }
 
-function refreshDataViews() {
-  views.update('database', { refresh: true, collectionGroups: state.collectionGroups || [], settings: state.settings });
-  views.update('backlog', { refresh: true, backlog: state.backlog || {}, completionRatings: state.completionRatings || {}, onDeckMap: state.onDeckMap || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
-  views.update('on-deck', { refresh: true, onDeck: state.onDeck || [], completionRatings: state.completionRatings || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
-  views.update('collections', { refresh: true, completions: state.completions || [], collectionGroups: state.collectionGroups || [], settings: state.settings });
+function refreshDataViews(item = null) {
+  views.update('database', { refresh: true, item, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('backlog', { refresh: true, item, backlog: state.backlog || {}, completionRatings: state.completionRatings || {}, onDeckMap: state.onDeckMap || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('on-deck', { refresh: true, item, onDeck: state.onDeck || [], completionRatings: state.completionRatings || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('collections', { refresh: true, item, completions: state.completions || [], collectionGroups: state.collectionGroups || [], settings: state.settings });
   views.update('current-content', { onDeckMap: state.onDeckMap || {}, backlogMap: buildBacklogMap(state.backlog || {}), completionRatings: state.completionRatings || {} });
 }
 function applyItemDelta(message = {}) {
@@ -674,7 +674,7 @@ function applyItemDelta(message = {}) {
     default:
       return false;
   }
-  refreshDataViews();
+  refreshDataViews(payload.item || payload.backlogItem || payload.deckItem || payload.completed || null);
   return true;
 }
 
