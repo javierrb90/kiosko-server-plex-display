@@ -96,17 +96,25 @@ function normalizeActivity(input = {}, item = {}, patch = {}) {
 function normalizeItem(input = {}, existing = {}, patch = {}) {
   const date = now();
   const source = normalizeSource(input.source || existing.source);
-  const canonicalId = canonicalKeyForRegistryItem({ ...input, source });
+  const canonicalId = patch.canonicalIdOverride || canonicalKeyForRegistryItem({ ...input, source });
   const collectionType = normalizeCollectionType({ ...existing, ...input, source });
   const meta = publicMeta({ ...(existing.metadata || existing.meta || {}), ...(input.metadata || input.meta || {}) });
   const firstSeenAt = patch.firstSeenAt || input.firstSeenAt || existing.firstSeenAt || input.createdAt || date;
   const lastActivityAt = patch.lastActivityAt || input.lastActivityAt || input.lastSeenAt || existing.lastActivityAt || existing.lastSeenAt || input.updatedAt || date;
   const completedAt = patch.completedAt ?? input.completedAt ?? existing.completedAt ?? null;
   const rating = patch.rating ?? input.rating ?? existing.rating ?? null;
-  const preserveManualDetail = Boolean(patch.preserveManualDetail && (existing.meta?.manualDetail || existing.metadata?.manualDetail) && !patch.forceSubtitle);
-  const effectiveDetail = preserveManualDetail
-    ? clean(existing.detail || existing.subtitle || "")
-    : clean(input.detail ?? input.subtitle ?? existing.detail ?? existing.subtitle ?? "");
+  const preserveManualDetail = Boolean(patch.preserveManualDetail && source === "kiosko" && (existing.meta?.manualDetail || existing.metadata?.manualDetail) && !patch.forceSubtitle);
+  const incomingDetail = clean(input.detail ?? input.subtitle ?? "");
+  const existingDetail = clean(existing.detail ?? existing.subtitle ?? "");
+  const incomingActivityTime = Date.parse(input.lastActivityAt || input.lastSeenAt || input.updatedAt || input.createdAt || 0) || 0;
+  const existingActivityTime = Date.parse(existing.lastActivityAt || existing.lastSeenAt || existing.updatedAt || existing.createdAt || 0) || 0;
+  const effectiveDetail = patch.forceSubtitle
+    ? (incomingDetail || existingDetail)
+    : preserveManualDetail
+      ? existingDetail
+      : incomingDetail && incomingActivityTime >= existingActivityTime
+        ? incomingDetail
+        : (existingDetail || incomingDetail);
   const states = {
     inBacklog: Boolean(existing.states?.inBacklog),
     inOnDeck: Boolean(existing.states?.inOnDeck),
@@ -250,9 +258,22 @@ export class ItemRegistryStore {
 
   async upsert(input = {}, patch = {}) {
     const canonicalId = canonicalKeyForRegistryItem(input);
-    const index = this.items.findIndex(item => item.canonicalId === canonicalId);
+    let index = this.items.findIndex(item => item.canonicalId === canonicalId);
+    if (index < 0 && normalizeSource(input.source) === "plex" && normalizeCollectionType(input) === "series") {
+      const identityKeys = value => new Set([
+        value.canonicalRatingKey, value.ratingKey, value.grandparentRatingKey, value.parentRatingKey,
+        value.meta?.canonicalRatingKey, value.meta?.ratingKey, value.meta?.grandparentRatingKey, value.meta?.parentRatingKey,
+        value.meta?.originalRatingKey, value.meta?.createdEpisodeRatingKey
+      ].filter(Boolean).map(String));
+      const incomingKeys = identityKeys(input);
+      index = this.items.findIndex(candidate => {
+        if (candidate.deletedAt || candidate.source !== "plex" || candidate.collectionType !== "series") return false;
+        const candidateKeys = identityKeys(candidate);
+        return [...incomingKeys].some(key => candidateKeys.has(key));
+      });
+    }
     const existing = index >= 0 ? this.items[index] : {};
-    const item = normalizeItem(input, existing, patch);
+    const item = normalizeItem(input, existing, index >= 0 && existing.canonicalId !== canonicalId ? { ...patch, canonicalIdOverride: existing.canonicalId } : patch);
     if (index >= 0) this.items[index] = item;
     else this.items.unshift(item);
     if (patch.activity || input.meta?.createdFromTautulli || input.meta?.tautulliEvent || input.lastActivityAt) {
@@ -321,11 +342,11 @@ export class ItemRegistryStore {
     for (const [source, rows] of Object.entries(backlog || {})) {
       for (const item of Array.isArray(rows) ? rows : []) {
         const eventType = source === "playnite" ? "playnite_recent" : source === "plex" ? (item.meta?.tautulliEvent || item.meta?.backlogSource || "backlog_recent") : "manual_follow";
-        await apply(item, { inBacklog: true, preserveManualDetail: true, activity: { eventType, title: item.meta?.createdEpisodeTitle || item.title, subtitle: item.subtitle } });
+        await apply(item, { inBacklog: true, preserveManualDetail: item.source === 'kiosko', activity: { eventType, title: item.meta?.createdEpisodeTitle || item.title, subtitle: item.subtitle } });
       }
     }
-    for (const item of onDeck || []) await apply(item, { inOnDeck: true, preserveManualDetail: true });
-    for (const item of completions || []) await apply(item, { completed: true, preserveManualDetail: true, rating: item.rating ?? null, completedAt: item.completedAt ?? null });
+    for (const item of onDeck || []) await apply(item, { inOnDeck: true, preserveManualDetail: item.source === 'kiosko' });
+    for (const item of completions || []) await apply(item, { completed: true, preserveManualDetail: item.source === 'kiosko', rating: item.rating ?? null, completedAt: item.completedAt ?? null });
     for (const item of this.items) {
       if (item.deletedAt) continue;
       item.states = { ...(item.states || {}), inBacklog: activeBacklog.has(item.canonicalId), inOnDeck: activeDeck.has(item.canonicalId), completed: activeCompleted.has(item.canonicalId) || Boolean(item.completedAt) };

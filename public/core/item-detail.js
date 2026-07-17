@@ -7,7 +7,12 @@ function typeFor(item = {}) {
   if (item.collectionType === 'movies') return 'movies';
   return 'series';
 }
-function typeLabel(item = {}) { return typeFor(item) === 'games' ? 'Juego' : typeFor(item) === 'movies' ? 'Película' : 'Serie'; }
+function typeLabel(item = {}, settings = {}) {
+  const type = collectionTypeFor(item);
+  const configured = customTypesFromSettings(settings).find(entry => entry.id === type);
+  if (configured) return configured.singular || configured.plural || type;
+  return type === 'games' ? 'Juego' : type === 'movies' ? 'Película' : type === 'series' ? 'Serie' : String(type || 'Item').replace(/[-_]+/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+}
 function sourceLabel(item = {}) {
   if (item.source === 'playnite' || item.kind === 'game') return 'Playnite';
   if (item.source === 'plex' || item.kind === 'plex') return 'Plex';
@@ -23,10 +28,11 @@ function inputDate(value) {
   return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '';
 }
 function itemDateLine(item = {}) {
-  if (item.completedAt) return `<div class="item-detail__date-line" title="Fecha de finalización"><span>✓</span>${escapeHtml(formatDate(item.completedAt))}</div>`;
-  if (item.lastActivityAt || item.lastSeenAt) return `<div class="item-detail__date-line" title="Última actividad"><span>↻</span>${escapeHtml(formatDate(item.lastActivityAt || item.lastSeenAt))}</div>`;
-  if (item.firstSeenAt) return `<div class="item-detail__date-line" title="Entrada en base de datos"><span>＋</span>${escapeHtml(formatDate(item.firstSeenAt))}</div>`;
-  return '';
+  const date = item.completedAt || item.lastActivityAt || item.lastSeenAt || item.firstSeenAt;
+  if (!date) return '';
+  const label = item.completedAt ? 'Fecha de finalización' : (item.lastActivityAt || item.lastSeenAt) ? 'Última actividad' : 'Entrada en base de datos';
+  const icon = item.completedAt ? '✓' : (item.lastActivityAt || item.lastSeenAt) ? '↻' : '＋';
+  return `<button type="button" class="item-detail__date-line item-detail__date-action" data-detail-action="activity" title="Actualizar actividad" aria-label="Actualizar actividad. ${escapeAttr(label)}: ${escapeAttr(formatDate(date))}"><span>${icon}</span>${escapeHtml(formatDate(date))}</button>`;
 }
 function defaultDetailDesign() { return { background: 'backdrop', shade: 'medium', blur: 'soft' }; }
 function readDetailDesign(settings = {}) {
@@ -147,8 +153,8 @@ async function fileToDataUri(file) {
   });
 }
 
-function statePillsMarkup(item = {}, context = '') {
-  const pills = [typeLabel(item)];
+function statePillsMarkup(item = {}, context = '', settings = {}) {
+  const pills = [typeLabel(item, settings)];
   return `<div class="item-detail__identity"><div class="item-detail__state-pills">${pills.map(label => `<span class="deck-pill item-detail__status">${escapeHtml(label)}</span>`).join('')}</div><span class="item-detail__source-label">${escapeHtml(sourceLabel(item))}</span></div>`;
 }
 
@@ -183,15 +189,15 @@ function itemInGroup(item = {}, group = {}) {
 function groupsMarkup(item = {}, context = '', collectionGroups = []) {
   if (!['backlog', 'on-deck', 'collections', 'current', 'database'].includes(context)) return '';
   const activeGroups = collectionGroups.filter(group => itemInGroup(item, group));
-  return `<div class="item-detail__groups item-detail__groups--compact" data-detail-groups><div class="item-detail__groups-head"><span>Grupos</span><button type="button" class="item-detail__group-add" data-detail-action="groups" aria-label="Añadir a grupos">+</button></div>${activeGroups.length ? `<div class="item-detail__group-list">${activeGroups.map(group => `<span class="item-detail__group-chip">${escapeHtml(group.name)}</span>`).join('')}</div>` : ''}<div class="item-detail__group-picker" data-detail-group-picker hidden></div></div>`;
+  return `<div class="item-detail__groups item-detail__groups--compact" data-detail-groups><div class="item-detail__groups-head"><span>Grupos</span><button type="button" class="item-detail__group-add" data-detail-action="groups" aria-label="Gestionar grupos" title="Gestionar grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>${activeGroups.length ? `<div class="item-detail__group-list">${activeGroups.map(group => `<span class="item-detail__group-chip">${escapeHtml(group.name)}</span>`).join('')}</div>` : ''}<div class="item-detail__group-picker" data-detail-group-picker hidden></div></div>`;
 }
 function primaryActionsMarkup(item = {}, context = '') {
   const backlog = isInBacklog(item, context);
   const deck = isInDeck(item, context);
-  if (backlog) return `<button type="button" class="item-detail__quick" data-detail-action="toggle-backlog"><span>Quitar de Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--primary" data-detail-action="toggle-deck"><span>Mover a Deck</span></button>`;
-  if (deck) return `<button type="button" class="item-detail__quick item-detail__quick--primary" data-detail-action="toggle-backlog"><span>Mover a Backlog</span></button><button type="button" class="item-detail__quick" data-detail-action="toggle-deck"><span>Quitar de Deck</span></button>`;
+  if (backlog) return `<button type="button" class="item-detail__quick item-detail__quick--remove" data-detail-action="toggle-backlog"><span aria-hidden="true">−</span><span>Quitar de Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--move" data-detail-action="toggle-deck"><span aria-hidden="true">→</span><span>Mover a Deck</span></button>`;
+  if (deck) return `<button type="button" class="item-detail__quick item-detail__quick--move" data-detail-action="toggle-backlog"><span aria-hidden="true">←</span><span>Mover a Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--remove" data-detail-action="toggle-deck"><span aria-hidden="true">−</span><span>Quitar de Deck</span></button>`;
   if (isInCollection(item, context)) return '';
-  return `<button type="button" class="item-detail__quick" data-detail-action="toggle-backlog"><span>Añadir a Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--primary" data-detail-action="toggle-deck"><span>Añadir a Deck</span></button>`;
+  return `<button type="button" class="item-detail__quick item-detail__quick--add" data-detail-action="toggle-backlog"><span aria-hidden="true">＋</span><span>Añadir a Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--add" data-detail-action="toggle-deck"><span aria-hidden="true">＋</span><span>Añadir a Deck</span></button>`;
 }
 function detailActionsMarkup(item = {}, context = '') {
   if (context === 'removed') return `<div class="item-detail__actions item-detail__actions--clean" data-detail-actions><span class="settings-help">Este elemento se ha eliminado del contexto actual.</span></div>`;
@@ -201,17 +207,55 @@ function detailActionsMarkup(item = {}, context = '') {
     <button type="button" class="item-detail__edit-trigger" data-detail-action="edit" title="Editar item" aria-label="Editar item">✎</button>
   </div>`;
 }
+
+function journalPreviewMarkup(item = {}) {
+  const review = item.review;
+  const latest = item.latestJournalEntry;
+  if (!review && !latest) return '';
+  const card = (entry, kind) => `<article class="item-detail__note item-detail__note--${kind}"><div class="item-detail__note-head"><strong>${kind === 'review' ? 'Review' : 'Última entrada'}</strong><time>${escapeHtml(formatDate(entry.updatedAt || entry.activityAt || entry.createdAt))}</time></div>${entry.comment ? `<p>${escapeHtml(entry.comment)}</p>` : ''}${entry.image ? `<button type="button" class="item-detail__note-image" data-journal-image="${escapeAttr(entry.image)}"><img src="${escapeAttr(entry.image)}" alt=""></button>` : ''}</article>`;
+  return `<section class="item-detail__notes">${review ? card(review, 'review') : ''}${latest ? card(latest, 'journal') : ''}</section>`;
+}
+function journalButtonMarkup(item = {}) {
+  const count = Number(item.journalCount || 0);
+  if (!count) return '';
+  return `<button type="button" class="item-detail__journal-link" data-detail-action="journal">Ver diario · ${count}</button>`;
+}
+function journalComposerMarkup({ comment = '', image = '', detail = '', includeDetail = false } = {}) {
+  return `<div class="journal-composer">${includeDetail ? `<label class="ui-field"><span>Detalle / estado</span><input data-journal-detail value="${escapeAttr(detail)}" placeholder="Qué ha ocurrido"></label>` : ''}<label class="ui-field"><span>Comentario <small data-journal-count>${String(comment).length}/140</small></span><textarea maxlength="140" data-journal-comment placeholder="Escribe una nota breve…">${escapeHtml(comment)}</textarea></label><div class="journal-dropzone" data-journal-dropzone tabindex="0"><strong>Pega, arrastra o selecciona una imagen</strong><small>JPEG, PNG o WebP · máximo 5 MB</small><input type="file" accept="image/jpeg,image/png,image/webp" data-journal-file></div><div class="journal-image-preview" data-journal-preview ${image ? '' : 'hidden'}>${image ? `<img src="${escapeAttr(image)}" alt=""><button type="button" data-journal-remove-image>Quitar imagen</button>` : ''}</div></div>`;
+}
+async function setupJournalComposer(root) {
+  const textarea = root.querySelector('[data-journal-comment]');
+  const counter = root.querySelector('[data-journal-count]');
+  const fileInput = root.querySelector('[data-journal-file]');
+  const dropzone = root.querySelector('[data-journal-dropzone]');
+  const preview = root.querySelector('[data-journal-preview]');
+  let imageData = '';
+  let removeImage = false;
+  const updateCount = () => { if (counter && textarea) counter.textContent = `${textarea.value.length}/140`; };
+  const showFile = async file => { if (!file) return; if (file.size > 5*1024*1024) throw new Error('La imagen supera 5 MB.'); imageData = await fileToDataUri(file); removeImage = false; if (preview) { preview.hidden = false; preview.innerHTML = `<img src="${escapeAttr(imageData)}" alt=""><button type="button" data-journal-remove-image>Quitar imagen</button>`; } };
+  textarea?.addEventListener('input', updateCount); updateCount();
+  fileInput?.addEventListener('change', () => showFile(fileInput.files?.[0]).catch(error => alert(error.message)));
+  dropzone?.addEventListener('dragover', event => { event.preventDefault(); dropzone.classList.add('is-dragging'); });
+  dropzone?.addEventListener('dragleave', () => dropzone.classList.remove('is-dragging'));
+  dropzone?.addEventListener('drop', event => { event.preventDefault(); dropzone.classList.remove('is-dragging'); showFile(event.dataTransfer?.files?.[0]).catch(error => alert(error.message)); });
+  root.addEventListener('paste', event => { const file = [...(event.clipboardData?.files || [])].find(f => f.type.startsWith('image/')); if (file) { event.preventDefault(); showFile(file).catch(error => alert(error.message)); } });
+  root.addEventListener('click', event => { if (event.target.closest('[data-journal-remove-image]')) { imageData = ''; removeImage = true; if (preview) { preview.hidden = true; preview.innerHTML = ''; } } });
+  return () => ({ comment: textarea?.value.trim() || '', detail: root.querySelector('[data-journal-detail]')?.value || '', imageData, removeImage });
+}
+
 function bodyMarkup(item = {}, context = '', collectionGroups = [], settings = {}) {
-  const subtitle = item.detail || item.subtitle || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item));
+  const subtitle = item.detail || item.subtitle || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item, settings));
   const backdrop = effectiveBackdrop(item, settings);
   return `<div class="item-detail ${detailDesignClass(settings)} ${backdrop ? 'item-detail--has-bg' : ''}">
     ${backdrop ? `<div class="item-detail__backdrop" style="background-image:url('${escapeAttr(backdrop)}')"></div>` : ''}
     <div class="item-detail__poster">${posterMarkup(item)}</div>
     <div class="item-detail__info">
-      <div class="item-detail__status-row">${statePillsMarkup(item, context)}</div>
+      <div class="item-detail__status-row">${statePillsMarkup(item, context, settings)}</div>
       <h3>${escapeHtml(item.title || 'Sin título')}</h3>
       <div class="item-detail__activity">${subtitle ? `<p class="item-detail__subtitle">${escapeHtml(subtitle)}</p>` : ''}${itemDateLine(item)}</div>
-      <div class="item-detail__rating-block"><span>Valoración</span>${ratingControlMarkup(item, context)}</div>
+      <div class="item-detail__rating-block"><div class="item-detail__rating-label"><span>Valoración</span><button type="button" class="item-detail__review-link" data-detail-action="review-edit">${item.review ? 'Editar review' : 'Escribir review'}</button></div>${ratingControlMarkup(item, context)}</div>
+      ${journalButtonMarkup(item)}
+      ${journalPreviewMarkup(item)}
       ${groupsMarkup(item, context, collectionGroups)}
       <dl class="item-detail__meta">${metadataRows(item, settings).map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>
       ${detailActionsMarkup(item, context)}
@@ -244,6 +288,12 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   try { if (item.canonicalId) window.history.replaceState(null, '', `#/item/${encodeURIComponent(item.canonicalId)}?from=${encodeURIComponent(context || 'database')}`); } catch {}
   const mergeReturnedItem = payload => { const next = payload?.completed || payload?.deckItem || payload?.backlogItem || payload?.item || payload; if (next && typeof next === 'object') { Object.assign(item, next); onItemUpdated({ ...item }); } };
   const renderBody = root => { const body = root.querySelector('.ui-modal__body'); if (body) body.innerHTML = bodyMarkup(item, currentContext, collectionGroups, settings); };
+  try {
+    const journal = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/journal?page=1&limit=1`);
+    item.review = journal.review || null;
+    item.journalCount = Number(journal.total || 0);
+    item.latestJournalEntry = journal.items?.[0] || null;
+  } catch {}
   const refreshGroups = async () => { const response = await api('/api/collection-groups').catch(() => null); if (response?.groups) collectionGroups = response.groups; return collectionGroups; };
   function renderInlineGroupPicker(root) { const picker = root.querySelector('[data-detail-group-picker]'); if (!picker) return; const keys = groupItemKeys(item); if (!keys.length) { picker.hidden = false; picker.innerHTML = `<p class="settings-help">No hay una clave estable para este item.</p>`; return; } if (!collectionGroups.length) { picker.hidden = false; picker.innerHTML = `<p class="settings-help">No hay grupos creados.</p>`; return; } picker.hidden = false; picker.innerHTML = `<div class="groups-picker groups-picker--inline">${collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-group-pick="${escapeAttr(group.id)}" ${itemInGroup(item, group) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('')}</div><div class="item-detail__group-picker-actions"><button type="button" class="ui-modal__button" data-detail-action="groups-cancel">Cancelar</button><button type="button" class="ui-modal__button ui-modal__button--primary" data-detail-action="groups-save">Guardar grupos</button></div>`; }
   async function saveInlineGroups(root) { if (busy) return; const keys = groupItemKeys(item); const primaryKey = keys[0]; if (!primaryKey) { toast('No hay una clave estable para este item'); return; } busy = true; const selected = new Set([...root.querySelectorAll('[data-group-pick]:checked')].map(input => input.dataset.groupPick)); for (const group of collectionGroups) { const active = itemInGroup(item, group); if (selected.has(group.id) && !active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items`, { method: 'POST', body: JSON.stringify({ itemId: primaryKey, itemKeys: keys }) }); if (!selected.has(group.id) && active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items/${encodeURIComponent(primaryKey)}`, { method: 'DELETE', body: JSON.stringify({ itemKeys: keys }) }); } await refreshGroups(); busy = false; toast('Grupos actualizados'); window.dispatchEvent(new CustomEvent('kiosko:collection-groups-changed')); renderBody(root); }
@@ -350,7 +400,59 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     renderBody(root);
   }
 
-  async function runAction(root, action) {
+
+  async function openImagePopup(src) { await ui.open({ title: '', className: 'ui-modal-root--image-viewer', body: `<div class="journal-image-viewer"><img src="${escapeAttr(src)}" alt="Imagen del diario"></div>`, actions: [{ label: 'Cerrar', value: null }] }); }
+  async function composeActivity(root) {
+    let getter = null;
+    const result = await ui.open({ title: 'Actualizar actividad', className: 'ui-modal-root--wide', body: journalComposerMarkup({ detail: item.detail || item.subtitle || '', includeDetail: true }), actions: [{ label: 'Cancelar', value: null }, { label: 'Guardar actividad', variant: 'primary', onClick: modal => getter?.() || false }], onMount: modal => {} });
+    return result;
+  }
+  function subviewMarkup(title, content, { backAction = 'subview-back', eyebrow = '' } = {}) {
+    return `<section class="item-detail-subview"><header class="item-detail-subview__header"><div>${eyebrow ? `<span>${escapeHtml(eyebrow)}</span>` : ''}<h3>${escapeHtml(title)}</h3></div><button type="button" class="item-detail-subview__back" data-detail-action="${escapeAttr(backAction)}">← Resumen</button></header>${content}</section>`;
+  }
+  function renderInfoSubview(root, markup) { const info = root.querySelector('.item-detail__info'); if (info) info.innerHTML = markup; }
+  async function showActivityForm(root, { journalOnly = false } = {}) {
+    const checked = journalOnly ? 'checked' : '';
+    const body = `<form class="item-detail-form" data-activity-form>
+      <label class="ui-field"><span>Detalle / estado</span><input data-journal-detail value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Qué ha ocurrido"></label>
+      <label class="item-detail-form__toggle"><input type="checkbox" data-activity-note-toggle ${checked}><span><strong>Añadir una anotación</strong><small>Comentario e imagen opcionales para el diario.</small></span></label>
+      <div class="item-detail-form__optional" data-activity-note-fields ${checked ? '' : 'hidden'}>${journalComposerMarkup({})}</div>
+      <footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button><button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="activity-save">Guardar actividad</button></footer>
+    </form>`;
+    renderInfoSubview(root, subviewMarkup(journalOnly ? 'Nueva entrada' : 'Actualizar actividad', body, { eyebrow: journalOnly ? 'Diario' : item.title || '' }));
+    root.__composerGetter = await setupJournalComposer(root.querySelector('[data-activity-form]'));
+  }
+  async function showReviewForm(root) {
+    const body = `<form class="item-detail-form" data-review-form>${journalComposerMarkup({ comment: item.review?.comment || '', image: item.review?.image || '' })}<footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button>${item.review ? '<button type="button" class="item-detail-control item-detail-control--danger-quiet" data-detail-action="review-delete">Eliminar review</button>' : ''}<button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="review-save">Guardar review</button></footer></form>`;
+    renderInfoSubview(root, subviewMarkup(item.review ? 'Editar review' : 'Escribir review', body, { eyebrow: 'Valoración' }));
+    root.__composerGetter = await setupJournalComposer(root.querySelector('[data-review-form]'));
+  }
+  async function saveActivity(root) {
+    const value = root.__composerGetter?.() || {};
+    const wantsNote = Boolean(root.querySelector('[data-activity-note-toggle]')?.checked);
+    const payload = { detail: root.querySelector('[data-journal-detail]')?.value || item.detail || item.subtitle || '', comment: wantsNote ? value.comment : '', imageData: wantsNote ? value.imageData : '', removeImage: false };
+    const response = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/activity`, { method: 'POST', body: JSON.stringify(payload) });
+    mergeReturnedItem(response); Object.assign(item, { journalCount: response.journalCount, latestJournalEntry: response.latestJournalEntry, review: response.review });
+    toast(wantsNote && (payload.comment || payload.imageData) ? 'Actividad y diario actualizados' : 'Actividad actualizada'); onItemUpdated({ ...item }); renderBody(root);
+  }
+  async function saveReview(root) {
+    const value = root.__composerGetter?.() || {};
+    const response = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/review`, { method: 'PUT', body: JSON.stringify(value) });
+    Object.assign(item, { review: response.review, journalCount: response.journalCount, latestJournalEntry: response.latestJournalEntry });
+    onItemUpdated({ ...item }); renderBody(root); toast('Review guardada');
+  }
+  async function showJournal(root, page = 1) {
+    const response = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/journal?page=${page}&limit=8`);
+    item.review = response.review || null; item.journalCount = response.total || 0; item.latestJournalEntry = response.items?.[0] || null;
+    root.__journalPage = response.page; root.__journalEntries = response.items || [];
+    const entries = response.items || [];
+    const timeline = entries.length ? entries.map(entry => { const d = new Date(entry.activityAt || entry.createdAt); return `<article class="journal-entry" data-entry-id="${escapeAttr(entry.id)}"><div class="journal-entry__date"><strong>${String(d.getDate()).padStart(2,'0')}</strong><span>${d.toLocaleDateString('es-ES',{month:'short'})}</span><small>${d.getFullYear()}</small></div><div class="journal-entry__body">${entry.comment ? `<p>${escapeHtml(entry.comment)}</p>` : ''}${entry.image ? `<button class="journal-entry__image" data-journal-image="${escapeAttr(entry.image)}"><img src="${escapeAttr(entry.image)}" alt=""></button>` : ''}<div class="journal-entry__actions"><button data-detail-action="journal-edit" data-entry-id="${escapeAttr(entry.id)}">Editar</button><button class="is-danger" data-detail-action="journal-delete" data-entry-id="${escapeAttr(entry.id)}">Eliminar</button></div></div></article>`; }).join('') : `<div class="journal-empty"><span aria-hidden="true">✎</span><strong>Tu diario está vacío</strong><p>Actualiza la actividad del item y añade una anotación cuando quieras recordar algo.</p><button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="journal-new">Crear primera entrada</button></div>`;
+    const pagination = response.pages > 1 ? `<nav class="journal-pagination" aria-label="Paginación del diario"><button data-detail-action="journal-page" data-page="${response.page-1}" ${response.page<=1?'disabled':''} aria-label="Página anterior">‹</button><strong>${response.page} / ${response.pages}</strong><button data-detail-action="journal-page" data-page="${response.page+1}" ${response.page>=response.pages?'disabled':''} aria-label="Página siguiente">›</button></nav>` : '';
+    const content = `<div class="journal-view__toolbar"><div><span>${response.total} ${response.total === 1 ? 'entrada' : 'entradas'}</span></div><button type="button" class="item-detail-control item-detail-control--primary item-detail-control--compact" data-detail-action="journal-new">＋ Nueva entrada</button></div><div class="journal-timeline">${timeline}</div>${pagination}`;
+    renderInfoSubview(root, subviewMarkup('Diario', content));
+  }
+
+  async function runAction(root, action, trigger = null) {
     if (!action || busy) return;
     if (action === 'groups') { await refreshGroups(); renderInlineGroupPicker(root); return; }
     if (action === 'groups-cancel') { const picker = root.querySelector('[data-detail-group-picker]'); if (picker) { picker.hidden = true; picker.innerHTML = ''; } return; }
@@ -358,6 +460,19 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     if (action === 'menu') { const menu = root.querySelector('[data-detail-more-menu]'); if (menu) menu.hidden = !menu.hidden; return; }
     if (action === 'edit') { await editItem(root); return; }
     if (action === 'edit-manual-data') { await editManualData(root); return; }
+    if (action === 'activity') { await showActivityForm(root); return; }
+    if (action === 'activity-save') { await saveActivity(root); return; }
+    if (action === 'subview-back') { renderBody(root); return; }
+    if (action === 'journal') { await showJournal(root, 1); return; }
+    if (action === 'journal-back') { renderBody(root); return; }
+    if (action === 'journal-page') { const page = Number(trigger?.dataset.page || root.__journalPage || 1); await showJournal(root, page); return; }
+    if (action === 'journal-new') { await showActivityForm(root, { journalOnly: true }); return; }
+    if (action === 'review-edit') { await showReviewForm(root); return; }
+    if (action === 'review-save') { await saveReview(root); return; }
+    if (action === 'review-delete') { if (await ui.confirm({ title:'Eliminar review', message:'La calificación no cambiará.', confirmText:'Eliminar', danger:true })) { const response = await api(`/api/items/${encodeURIComponent(item.canonicalId||item.id)}/review`, { method:'DELETE' }); item.review=null; item.journalCount=response.journalCount ?? item.journalCount; item.latestJournalEntry=response.latestJournalEntry ?? item.latestJournalEntry; onItemUpdated({...item}); renderBody(root); toast('Review eliminada'); } return; }
+    if (action === 'journal-edit') { const entry = (root.__journalEntries||[]).find(e => e.id === trigger?.dataset.entryId); if (!entry) return; const body = `<form class="item-detail-form" data-entry-edit-form>${journalComposerMarkup({ comment: entry.comment || '', image: entry.image || '' })}<footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="journal">Cancelar</button><button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="journal-edit-save" data-entry-id="${escapeAttr(entry.id)}">Guardar cambios</button></footer></form>`; renderInfoSubview(root, subviewMarkup('Editar entrada', body, { eyebrow:'Diario' })); root.__composerGetter = await setupJournalComposer(root.querySelector('[data-entry-edit-form]')); return; }
+    if (action === 'journal-edit-save') { const value=root.__composerGetter?.()||{}; await api(`/api/items/${encodeURIComponent(item.canonicalId||item.id)}/journal/${encodeURIComponent(trigger?.dataset.entryId)}`,{method:'PATCH',body:JSON.stringify(value)}); await showJournal(root,root.__journalPage||1); onItemUpdated({...item}); toast('Entrada actualizada'); return; }
+    if (action === 'journal-delete') { const button = trigger; const id=button?.dataset.entryId; if(id && await ui.confirm({title:'Eliminar entrada',message:'Esta acción no cambiará la fecha de actividad.',confirmText:'Eliminar',danger:true})){await api(`/api/items/${encodeURIComponent(item.canonicalId||item.id)}/journal/${encodeURIComponent(id)}`,{method:'DELETE'});await showJournal(root,root.__journalPage||1);onItemUpdated({...item});} return; }
     busy = true;
     try {
       const canonical = encodeURIComponent(item.canonicalId || item.id);
@@ -376,6 +491,6 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   }
   return new Promise(resolve => {
     ui.open({ title: labels.title || '', className: 'ui-modal-root--item-detail', body: bodyMarkup(item, currentContext, collectionGroups, settings), actions: [] }).then(value => { try { if (window.location.hash.startsWith('#/item/')) window.history.replaceState(null, '', previousHash || '#/database'); } catch {} resolve(value); });
-    requestAnimationFrame(() => { const root = document.querySelector('.ui-modal-root--item-detail'); if (!root) return; if (root.__itemDetailAbort) root.__itemDetailAbort.abort(); root.__itemDetailAbort = new AbortController(); root.addEventListener('click', async event => { const rateButton = event.target.closest('[data-item-rate]'); if (rateButton) { if (busy) return; busy = true; try { const rating = Number(rateButton.dataset.itemRate || 0); const result = await applyRating({ ui, api, item, context: currentContext, rating, toast }); if (result) { onItemUpdated({ ...item }); renderBody(root); } } finally { busy = false; } return; } const actionButton = event.target.closest('[data-detail-action]'); if (actionButton) await runAction(root, actionButton.dataset.detailAction); }, { signal: root.__itemDetailAbort.signal }); });
+    requestAnimationFrame(() => { const root = document.querySelector('.ui-modal-root--item-detail'); if (!root) return; if (root.__itemDetailAbort) root.__itemDetailAbort.abort(); root.__itemDetailAbort = new AbortController(); root.addEventListener('click', async event => { const journalImage = event.target.closest('[data-journal-image]'); if (journalImage) { await openImagePopup(journalImage.dataset.journalImage); return; } const rateButton = event.target.closest('[data-item-rate]'); if (rateButton) { if (busy) return; busy = true; try { const rating = Number(rateButton.dataset.itemRate || 0); const result = await applyRating({ ui, api, item, context: currentContext, rating, toast }); if (result) { onItemUpdated({ ...item }); renderBody(root); await showReviewForm(root); } } finally { busy = false; } return; } const noteToggle = event.target.closest('[data-activity-note-toggle]'); if (noteToggle) { const fields=root.querySelector('[data-activity-note-fields]'); if(fields) fields.hidden=!noteToggle.checked; return; } const actionButton = event.target.closest('[data-detail-action]'); if (actionButton) await runAction(root, actionButton.dataset.detailAction, actionButton); }, { signal: root.__itemDetailAbort.signal }); });
   });
 }

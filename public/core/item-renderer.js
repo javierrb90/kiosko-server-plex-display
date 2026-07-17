@@ -26,7 +26,7 @@ export function itemCardMarkup(item = {}, { context = 'database', groups = [] } 
   return `<article class="media-card media-card--rich item-card source-${escapeAttr(item.source || 'other')}" data-id="${escapeAttr(key)}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}">
     ${bg ? `<div class="media-card__bg" style="background-image:url('${escapeAttr(bg)}')"></div>` : ''}
     <div class="media-card__surface">
-      <div class="media-card__poster">${img ? `<img src="${escapeAttr(img)}" loading="lazy" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
+      <div class="media-card__poster">${Number(item.journalCount || 0) ? `<span class="media-card__journal-count" title="${Number(item.journalCount)} entradas en el diario">✎ ${Number(item.journalCount)}</span>` : ''}${img ? `<img src="${escapeAttr(img)}" loading="lazy" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
       <div class="media-card__meta">
         <strong>${escapeHtml(item.title || 'Sin título')}</strong>
         ${detailFor(item) ? `<span class="media-card__detail">${escapeHtml(detailFor(item))}</span>` : ''}

@@ -19,6 +19,7 @@ import { BacklogStore, CompletionStore } from "./src/backlog-store.js";
 import { CollectionGroupStore } from "./src/collection-group-store.js";
 import { OnDeckStore } from "./src/on-deck-store.js";
 import { ItemRegistryStore } from "./src/item-registry-store.js";
+import { JournalStore } from "./src/journal-store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -51,7 +52,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`Kiosko Media Center v6.10 escuchando en ${host}:${port}`);
+  console.log(`Kiosko Media Center v6.11 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -91,6 +92,7 @@ async function dataFileDiagnostics() {
     "collection-groups.json",
     "items.json",
     "item-activity.json",
+    "item-journals.json",
     "backlog-entries.json",
     "notifications.json",
     "notification-idempotency.json"
@@ -168,7 +170,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "Kiosko Media Center",
-    version: "v6.10",
+    version: "v6.11",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -212,7 +214,8 @@ const completionStore = new CompletionStore(DATA_DIR);
 const collectionGroupStore = new CollectionGroupStore(DATA_DIR);
 const onDeckStore = new OnDeckStore(DATA_DIR);
 const itemRegistryStore = new ItemRegistryStore(DATA_DIR);
-await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), collectionGroupStore.init(), onDeckStore.init(), itemRegistryStore.init()]);
+const journalStore = new JournalStore(DATA_DIR);
+await Promise.all([store.init(), stateStore.init(), assetService.init(), backlogStore.init(), completionStore.init(), collectionGroupStore.init(), onDeckStore.init(), itemRegistryStore.init(), journalStore.init()]);
 await itemRegistryStore.syncFromViews({ backlog: backlogStore.list(), onDeck: onDeckStore.list(), completions: completionStore.list() }, "startup");
 
 const plex = new PlexService(settingsStore.get().plex || {});
@@ -242,7 +245,7 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v6.10 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v6.11 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
@@ -281,7 +284,8 @@ function publicItem(item = {}) {
   if (!item || typeof item !== "object") return item;
   const meta = cleanPublicValue(item.meta || {}) || {};
   delete meta.raw;
-  return { ...item, meta };
+  const canonicalId = item.canonicalId || item.id;
+  return { ...item, meta, ...(canonicalId ? journalStore.summary(String(canonicalId)) : {}) };
 }
 
 function publicBacklog() {
@@ -1034,6 +1038,8 @@ async function prepareManualItemPayload(input = {}, existing = null) {
   else if (input.poster && !String(input.poster).startsWith("/assets/") && /^(data:image\/|https?:\/\/)/i.test(String(input.poster))) poster = (await assetService.saveImage(input.poster, { bucket: "manual", title: `${assetTitle}-poster` })).path;
   if (input.backdropAsset) backdrop = (await assetService.saveImage(input.backdropAsset, { bucket: "manual", title: `${assetTitle}-backdrop` })).path;
   else if (input.backdrop && !String(input.backdrop).startsWith("/assets/") && /^(data:image\/|https?:\/\/)/i.test(String(input.backdrop))) backdrop = (await assetService.saveImage(input.backdrop, { bucket: "manual", title: `${assetTitle}-backdrop` })).path;
+  if (!poster) throw new Error("La carátula es obligatoria.");
+  if (!backdrop) backdrop = poster;
   const nowIso = new Date().toISOString();
   const detail = String(input.detail ?? input.subtitle ?? existing?.detail ?? existing?.subtitle ?? "").trim();
   return {
@@ -1134,6 +1140,7 @@ async function handlePermanentItemDelete(req, res) {
   const item = itemFromAnyStore(id);
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   const result = await deletePermanentEverywhere(item);
+  await journalStore.removeItem(String(item.canonicalId || item.id));
   await syncItemRegistryNow("permanent-delete");
   const payload = fullStatePayload({ item: publicItem(item), canonicalId: item.canonicalId, keys: result.keys });
   broadcastDelta("item:permanently-deleted", payload);
@@ -1247,6 +1254,47 @@ app.post("/api/items/sync", async (_req, res) => {
   const result = await syncItemRegistryNow("manual-api");
   res.json({ ok: true, ...result, diagnostics: itemRegistryStore.diagnostics() });
 });
+
+
+async function saveJournalImage(dataUri, item, label = "diario") {
+  if (!dataUri) return null;
+  const approxBytes = Math.ceil(String(dataUri).length * 0.75);
+  if (approxBytes > 5 * 1024 * 1024) throw new Error("La imagen supera el límite de 5 MB.");
+  const asset = await assetService.saveDataUri(dataUri, { bucket: "journals", title: `${item.title || "item"}-${label}` });
+  return asset.path;
+}
+function journalPayload(item) { return { item: publicItem(item), ...journalStore.summary(String(item.canonicalId || item.id)) }; }
+app.get("/api/items/:canonicalId/journal", (req, res) => {
+  const id = decodeURIComponent(req.params.canonicalId);
+  res.json({ ...journalStore.list(id, { page: req.query.page, limit: req.query.limit }), review: journalStore.getReview(id) });
+});
+app.post("/api/items/:canonicalId/activity", async (req, res) => {
+  try {
+    const id = decodeURIComponent(req.params.canonicalId); const item = itemFromAnyStore(id);
+    if (!item) return res.status(404).json({ error: "Item no encontrado." });
+    const activityAt = new Date().toISOString();
+    const image = await saveJournalImage(req.body?.imageData, item, "entrada");
+    const entry = await journalStore.add(id, { comment: req.body?.comment, image, activityAt });
+    const detail = String(req.body?.detail ?? item.detail ?? item.subtitle ?? '');
+    const updated = await itemRegistryStore.upsert({ ...item, detail, subtitle: detail, lastActivityAt: activityAt }, { forceSubtitle: true, lastActivityAt: activityAt, activity: { eventType: "manual_journal", title: item.title, subtitle: detail, activityAt } });
+    await updateManualItemInLegacyStores(updated); await syncItemRegistryNow("journal-activity");
+    const payload = fullStatePayload(journalPayload(itemRegistryStore.get(id) || updated)); broadcastDelta("item:journal-updated", payload);
+    res.json({ ok: true, entry, ...journalPayload(itemRegistryStore.get(id) || updated) });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.patch("/api/items/:canonicalId/journal/:entryId", async (req, res) => {
+  try { const id = decodeURIComponent(req.params.canonicalId); const item = itemFromAnyStore(id); if (!item) return res.status(404).json({ error: "Item no encontrado." });
+    const image = req.body?.removeImage ? null : (req.body?.imageData ? await saveJournalImage(req.body.imageData, item, "entrada") : undefined);
+    const patch = { comment: req.body?.comment }; if (image !== undefined) patch.image = image;
+    const entry = await journalStore.update(id, req.params.entryId, patch); if (!entry) return res.status(404).json({ error: "Entrada no encontrada." });
+    const payload = fullStatePayload(journalPayload(item)); broadcastDelta("item:journal-updated", payload); res.json({ ok: true, entry, ...journalPayload(item) });
+  } catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.delete("/api/items/:canonicalId/journal/:entryId", async (req, res) => { const id=decodeURIComponent(req.params.canonicalId); const item=itemFromAnyStore(id); const removed=await journalStore.remove(id, req.params.entryId); if(!removed) return res.status(404).json({error:"Entrada no encontrada."}); const payload=fullStatePayload(journalPayload(item||{canonicalId:id})); broadcastDelta("item:journal-updated",payload); res.json({ok:true,removed,...journalPayload(item||{canonicalId:id})}); });
+app.put("/api/items/:canonicalId/review", async (req, res) => {
+  try { const id=decodeURIComponent(req.params.canonicalId); const item=itemFromAnyStore(id); if(!item) return res.status(404).json({error:"Item no encontrado."}); const current=journalStore.getReview(id); let image=current?.image||null; if(req.body?.removeImage) image=null; else if(req.body?.imageData) image=await saveJournalImage(req.body.imageData,item,"review"); const review=await journalStore.setReview(id,{comment:req.body?.comment,image}); const payload=fullStatePayload(journalPayload(item)); broadcastDelta("item:journal-updated",payload); res.json({ok:true,review,...journalPayload(item)}); } catch(error){res.status(400).json({error:error.message});}
+});
+app.delete("/api/items/:canonicalId/review", async (req,res)=>{ const id=decodeURIComponent(req.params.canonicalId); const item=itemFromAnyStore(id); const removed=await journalStore.removeReview(id); const payload=fullStatePayload(journalPayload(item||{canonicalId:id})); broadcastDelta("item:journal-updated",payload); res.json({ok:true,removed,...journalPayload(item||{canonicalId:id})}); });
 
 app.get("/api/collection-groups", (_req, res) => res.json({ groups: collectionGroupStore.list() }));
 app.post("/api/collection-groups", async (req, res) => {

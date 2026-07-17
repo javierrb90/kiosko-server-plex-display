@@ -657,6 +657,14 @@ function applyItemDelta(message = {}) {
       applyCompletionRatings(payload.completionRatings);
       views.update('database', { refresh: true });
       break;
+    case 'item:journal-updated':
+      if (payload.item) {
+        views.update('database', { item: payload.item });
+        views.update('backlog', { item: payload.item });
+        views.update('on-deck', { item: payload.item });
+        views.update('collections', { item: payload.item });
+      }
+      break;
     case 'item:database-updated':
       if (payload.item) {
         views.update('database', { item: payload.item });
