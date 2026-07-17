@@ -47,3 +47,4 @@
 - [Release notes v6.7 Item Detail & Tracking](RELEASE-NOTES-V6-7-ITEM-DETAIL-TRACKING.md)
 
 - [Release notes v6.7.1 Detail State Cleanup](RELEASE-NOTES-V6-7-1-DETAIL-STATE-CLEANUP.md)
+- [Release notes v6.8 Unified Views](RELEASE-NOTES-V6-8-UNIFIED-VIEWS.md)

@@ -185,12 +185,15 @@ export class ItemRegistryStore {
   count() { return this.list().length; }
   get(id) { return this.items.find(item => (item.canonicalId === id || item.id === id) && !item.deletedAt); }
 
-  query({ page = 1, limit = 60, search = "", type = "", source = "", status = "", sort = "lastActivityAt", direction = "desc" } = {}) {
+  query({ page = 1, limit = 60, search = "", type = "", source = "", status = "", sort = "lastActivityAt", direction = "desc", view = "" } = {}) {
     const safePage = Math.max(1, Number(page) || 1);
-    const safeLimit = Math.max(1, Math.min(250, Number(limit) || 60));
+    const safeLimit = Math.max(1, Math.min(5000, Number(limit) || 60));
     const q = clean(search).toLowerCase();
     const typeSet = new Set(String(type || "").split(",").map(clean).filter(Boolean));
     let rows = this.list();
+    if (view === "backlog") rows = rows.filter(item => item.states?.inBacklog === true);
+    else if (view === "on-deck") rows = rows.filter(item => item.states?.inOnDeck === true);
+    else if (view === "collections") rows = rows.filter(item => item.states?.completed === true || item.rating || item.completedAt);
     if (type === "__none__") rows = [];
     else if (typeSet.size) rows = rows.filter(item => typeSet.has(item.collectionType));
     if (source) rows = rows.filter(item => item.source === source);
@@ -253,13 +256,21 @@ export class ItemRegistryStore {
   async updateDates(id, patch = {}) {
     const item = this.get(id);
     if (!item) return null;
+    const beforeSubtitle = item.subtitle || "";
     for (const key of ["firstSeenAt", "lastActivityAt", "completedAt"]) {
       if (patch[key] !== undefined) item[key] = patch[key] || null;
     }
+    if (patch.subtitle !== undefined) {
+      item.subtitle = clean(patch.subtitle);
+      item.meta = { ...(item.meta || {}), manualDetail: true };
+      item.metadata = { ...(item.metadata || {}), manualDetail: true };
+      if (item.subtitle !== beforeSubtitle) item.lastActivityAt = now();
+    }
     if (item.completedAt) item.states = { ...(item.states || {}), completed: true };
+    else if (patch.completedAt !== undefined) item.states = { ...(item.states || {}), completed: false };
     item.status = item.states?.completed ? "completed" : item.states?.inOnDeck ? "on-deck" : item.states?.inBacklog ? "backlog" : "known";
     item.updatedAt = now();
-    await this.addActivity({ ...item, eventType: "manual_dates_edit" }, item, { eventType: "manual_dates_edit", title: "Fechas editadas", activityAt: now() });
+    await this.addActivity({ ...item, eventType: patch.subtitle !== undefined ? "manual_detail_edit" : "manual_dates_edit" }, item, { eventType: patch.subtitle !== undefined ? "manual_detail_edit" : "manual_dates_edit", title: patch.subtitle !== undefined ? "Detalle editado" : "Fechas editadas", subtitle: item.subtitle, activityAt: item.lastActivityAt || now() });
     await this.persist();
     return item;
   }

@@ -34,7 +34,7 @@ const ui = createUi({ modalRoot, toastRoot: uiToastRoot });
 const state = {
   settings: null,
   runtime: {},
-  activeView: 'backlog',
+  activeView: 'database',
   privacyLocked: false,
   unreadCount: 0,
   toastTimer: null,
@@ -54,6 +54,26 @@ const state = {
 
 const LOCAL_VIEW_KEY = 'kiosko:active-view';
 const VALID_VIEWS = new Set(['database', 'backlog', 'on-deck', 'current-content', 'collections']);
+
+function routeNameForView(id = 'database') {
+  if (id === 'on-deck') return 'deck';
+  if (id === 'current-content') return 'current';
+  return id;
+}
+function viewIdForRoute(name = '') {
+  if (name === 'deck') return 'on-deck';
+  if (name === 'current') return 'current-content';
+  return VALID_VIEWS.has(name) ? name : 'database';
+}
+function parseHashRoute(hash = window.location.hash) {
+  const raw = String(hash || '').replace(/^#\/?/, '');
+  const [pathPart, queryPart = ''] = raw.split('?');
+  const parts = pathPart.split('/').filter(Boolean);
+  const params = new URLSearchParams(queryPart);
+  if (parts[0] === 'item' && parts[1]) return { type: 'item', canonicalId: decodeURIComponent(parts[1]), from: viewIdForRoute(params.get('from') || 'database') };
+  return { type: 'view', view: viewIdForRoute(parts[0] || 'database') };
+}
+function hashForView(id = 'database') { return `#/${routeNameForView(id)}`; }
 
 function readLocalView(fallback = 'backlog') {
   try {
@@ -486,10 +506,9 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
   document.body.dataset.activeView = id;
   if (persist) {
     state.localNavigationAt = Date.now();
-    writeLocalView(id);
   }
   views.show(id, { reason });
-  try { if (persist) window.history.replaceState(null, '', `#/${id}`); } catch {}
+  try { if (persist) window.history.replaceState(null, '', hashForView(id)); } catch {}
   dock.querySelectorAll('button').forEach(btn => btn.classList.toggle('dock__item--active', btn.dataset.nav === id));
   if (persist) api('/api/state', { method: 'PUT', body: JSON.stringify({ activeView: id }) }).catch(debugError);
 }
@@ -513,14 +532,10 @@ function applyState(payload = {}) {
   views.update('on-deck', { onDeck: state.onDeck, completionRatings: state.completionRatings, collectionGroups: state.collectionGroups, settings: state.settings });
   views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: state.onDeckMap, backlogMap: buildBacklogMap(state.backlog), completionRatings: state.completionRatings, settings: state.settings });
   updateNowPlayingMini(payload.currentContent || null);
-  views.update('collections', { completions: state.completions, collectionGroups: state.collectionGroups, settings: state.settings });
-  const defaultView = VALID_VIEWS.has(state.settings?.display?.defaultView) ? state.settings.display.defaultView : 'backlog';
-  const localView = readLocalView(defaultView);
-
-  // Snapshots are data sync only. View is local per browser/device.
+  views.update('collections', { completions: state.completions, collectionGroups: state.collectionGroups, settings: state.settings, refresh: true });
   if (!state.initialViewResolved) {
     state.initialViewResolved = true;
-    navigate(localView, { persist: false, reason: 'vista local inicial', force: true });
+    applyRouteFromHash({ initial: true }).catch(debugError);
   }
 
   if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy snapshot', force: true });
@@ -575,10 +590,10 @@ function applyFullStatePayload(payload = {}) {
 }
 
 function refreshDataViews() {
-  views.update('database', { collectionGroups: state.collectionGroups || [], settings: state.settings });
-  views.update('backlog', { backlog: state.backlog || {}, completionRatings: state.completionRatings || {}, onDeckMap: state.onDeckMap || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
-  views.update('on-deck', { onDeck: state.onDeck || [], completionRatings: state.completionRatings || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
-  views.update('collections', { completions: state.completions || [], collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('database', { refresh: true, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('backlog', { refresh: true, backlog: state.backlog || {}, completionRatings: state.completionRatings || {}, onDeckMap: state.onDeckMap || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('on-deck', { refresh: true, onDeck: state.onDeck || [], completionRatings: state.completionRatings || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
+  views.update('collections', { refresh: true, completions: state.completions || [], collectionGroups: state.collectionGroups || [], settings: state.settings });
   views.update('current-content', { onDeckMap: state.onDeckMap || {}, backlogMap: buildBacklogMap(state.backlog || {}), completionRatings: state.completionRatings || {} });
 }
 function applyItemDelta(message = {}) {
@@ -659,6 +674,24 @@ function applyItemDelta(message = {}) {
   return true;
 }
 
+
+async function openItemFromRoute(canonicalId, from = 'database') {
+  if (!canonicalId) return;
+  navigate(from, { persist: false, reason: 'url item', force: true });
+  try { window.history.replaceState(null, '', hashForView(from)); } catch {}
+  const item = await api(`/api/items/${encodeURIComponent(canonicalId)}`);
+  await openItemDetail({ ui, api, item, context: from, toast: message => ui.toast(message), labels: { title: '' }, collectionGroups: state.collectionGroups, settings: state.settings });
+}
+async function applyRouteFromHash({ initial = false } = {}) {
+  const route = parseHashRoute();
+  if (route.type === 'item') {
+    await openItemFromRoute(route.canonicalId, route.from);
+    return;
+  }
+  navigate(route.view || 'database', { persist: false, reason: initial ? 'url inicial' : 'url', force: true });
+}
+window.addEventListener('hashchange', () => applyRouteFromHash().catch(debugError));
+
 const socket = new SocketClient({
   onMessage(message) {
     debug('Mensaje WebSocket recibido', message?.type, message?.payload);
@@ -674,10 +707,10 @@ const socket = new SocketClient({
       views.update('collections', { settings: state.settings });
       return;
     }
-    if (message.type === 'backlog:update') { state.backlog = message.payload?.backlog || state.backlog || {}; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; if (message.payload?.onDeckMap) state.onDeckMap = message.payload.onDeckMap; views.update('backlog', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(state.backlog || {}) }); return; }
-    if (message.type === 'on-deck:update') { state.onDeck = message.payload?.onDeck || state.onDeck || []; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; views.update('on-deck', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
-    if (message.type === 'completions:update') { state.completions = message.payload || []; state.completionRatings = Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])); views.update('collections', { completions: state.completions, collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { completionRatings: state.completionRatings }); return; }
-    if (message.type === 'collection-groups:update') { state.collectionGroups = message.payload || []; views.update('database', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('backlog', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('on-deck', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('collections', { collectionGroups: state.collectionGroups, settings: state.settings }); return; }
+    if (message.type === 'backlog:update') { state.backlog = message.payload?.backlog || state.backlog || {}; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; if (message.payload?.onDeckMap) state.onDeckMap = message.payload.onDeckMap; views.update('backlog', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings, refresh: true }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(state.backlog || {}) }); return; }
+    if (message.type === 'on-deck:update') { state.onDeck = message.payload?.onDeck || state.onDeck || []; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; views.update('on-deck', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings, refresh: true }); views.update('current-content', { ...(message.payload || {}) }); return; }
+    if (message.type === 'completions:update') { state.completions = message.payload || []; state.completionRatings = Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])); views.update('collections', { completions: state.completions, collectionGroups: state.collectionGroups, settings: state.settings, refresh: true }); views.update('current-content', { completionRatings: state.completionRatings }); return; }
+    if (message.type === 'collection-groups:update') { state.collectionGroups = message.payload || []; views.update('database', { collectionGroups: state.collectionGroups, settings: state.settings, refresh: true }); views.update('backlog', { collectionGroups: state.collectionGroups, settings: state.settings, refresh: true }); views.update('on-deck', { collectionGroups: state.collectionGroups, settings: state.settings, refresh: true }); views.update('collections', { collectionGroups: state.collectionGroups, settings: state.settings, refresh: true }); return; }
     if (message.type === 'custom-css:update') { refreshCustomCss(message.payload?.name); return; }
     if (message.type === 'notifications:open') { openNotificationsOverlay().catch(debugError); return; }
     if (message.type === 'privacy:update') {

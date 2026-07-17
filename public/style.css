@@ -4163,3 +4163,34 @@ button.kiosko-list__row:hover {
 .item-detail__more-menu button:first-child {
   font-weight: 800;
 }
+
+/* v6.8 · Unified views and item renderer */
+.unified-view { min-height: calc(100vh - 112px); display: flex; flex-direction: column; }
+.unified-view__content { flex: 1 1 auto; min-height: 0; }
+.unified-view__footer { position: sticky; bottom: 18px; z-index: 30; display: flex; justify-content: center; pointer-events: none; padding: 18px 0 10px; }
+.unified-view__footer .pagination-bar { pointer-events: auto; }
+.unified-pagination { display: inline-flex; align-items: center; justify-content: center; gap: 16px; padding: 10px 16px; border-radius: 999px; background: rgba(5,7,14,.72); border: 1px solid rgba(255,255,255,.08); box-shadow: 0 14px 40px rgba(0,0,0,.35); backdrop-filter: blur(18px); }
+.unified-pagination button { width: 44px; height: 44px; border-radius: 999px; border: 0; background: rgba(255,255,255,.08); color: rgba(255,255,255,.9); font-size: 1.55rem; font-weight: 800; }
+.unified-pagination button:disabled { opacity: .35; }
+.unified-pagination strong { min-width: 52px; text-align: center; font-weight: 900; }
+.item-state-pills, .item-group-pills, .active-filter-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.item-state-pills span, .item-group-pills span, .active-filter-chips span { display: inline-flex; align-items: center; min-height: 22px; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.07); color: rgba(255,255,255,.74); font-size: .68rem; font-weight: 800; letter-spacing: .02em; }
+.item-group-pills span { background: rgba(143,175,239,.1); border-color: rgba(143,175,239,.2); color: rgba(218,228,255,.82); }
+.active-filter-chips { margin-top: 8px; }
+.media-card.item-card[data-source="plex"], .item-card.source-plex { border-color: color-mix(in srgb, var(--source-plex, #8fafef) 46%, rgba(255,255,255,.08)); }
+.media-card.item-card[data-source="playnite"], .item-card.source-playnite { border-color: color-mix(in srgb, var(--source-playnite, #8fe1b5) 46%, rgba(255,255,255,.08)); }
+.media-card.item-card .media-card__meta { gap: 6px; }
+.media-card.item-card .media-card__date { margin-top: 0; }
+.media-date-heading { grid-column: 1 / -1; margin: 16px 0 2px; color: rgba(255,255,255,.62); font-size: .74rem; font-weight: 900; letter-spacing: .12em; }
+.kiosko-list__row .item-group-pills { margin-top: 6px; }
+.kiosko-list__row .item-group-pills span { font-size: .62rem; min-height: 18px; padding: 2px 6px; }
+.item-detail__quick-group { display: flex; flex-wrap: wrap; gap: 10px; }
+.item-detail__quick { min-width: 104px; min-height: 44px; border-radius: 999px; }
+.item-detail__quick.is-active { background: rgba(143,225,181,.16); border-color: rgba(143,225,181,.35); }
+.item-detail__state-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.item-detail__state-pills .deck-pill { margin: 0; }
+.item-detail__more-menu { position: absolute; right: 0; bottom: calc(100% + 8px); display: grid; gap: 6px; min-width: 210px; padding: 8px; border-radius: 16px; border: 1px solid rgba(255,255,255,.1); background: rgba(8,10,18,.92); box-shadow: 0 20px 50px rgba(0,0,0,.38); backdrop-filter: blur(18px); }
+.item-detail__more { position: relative; }
+.item-detail__more-menu button { text-align: left; border: 0; border-radius: 12px; padding: 10px 12px; color: rgba(255,255,255,.9); background: rgba(255,255,255,.06); font-weight: 800; }
+.item-detail__more-menu button.danger { color: #ff9fb4; background: rgba(255,79,120,.12); }
+@media (max-width: 760px) { .unified-view { min-height: calc(100vh - 86px); } .unified-view__footer { bottom: 72px; } }

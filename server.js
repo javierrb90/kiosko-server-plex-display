@@ -50,7 +50,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`Kiosko Media Center v6.7.1 escuchando en ${host}:${port}`);
+  console.log(`Kiosko Media Center v6.8 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -165,7 +165,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "Kiosko Media Center",
-    version: "v6.7.1",
+    version: "v6.8",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -239,7 +239,7 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v6.7.1 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v6.8 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
@@ -777,7 +777,7 @@ function canonicalizePlexSeriesItem(item = {}) {
     canonicalId,
     ratingKey: canonicalRatingKey || item.ratingKey,
     title: showTitle,
-    subtitle: "Serie",
+    subtitle: item.subtitle || item.meta?.originalSubtitle || item.meta?.createdEpisodeCode || "Serie",
     poster: item.meta?.showPoster || item.poster,
     backdrop: item.meta?.showBackdrop || item.backdrop,
     meta: {
@@ -987,7 +987,8 @@ app.get("/api/items/metadata-keys", async (_req, res) => {
   }
   res.json({ keys: buckets });
 });
-app.get("/api/items/:canonicalId", (req, res) => {
+app.get("/api/items/:canonicalId", async (req, res) => {
+  await syncItemRegistryNow("item-get");
   const item = itemRegistryStore.get(decodeURIComponent(req.params.canonicalId));
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   res.json(item);
