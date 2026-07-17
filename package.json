@@ -1,6 +1,6 @@
 {
   "name": "kiosko-media-notification-center",
-  "version": "6.1.0",
+  "version": "6.7.1",
   "type": "module",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js"

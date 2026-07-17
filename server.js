@@ -50,7 +50,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`Kiosko Media Center v6.1 escuchando en ${host}:${port}`);
+  console.log(`Kiosko Media Center v6.7.1 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -89,6 +89,8 @@ async function dataFileDiagnostics() {
     "completed-items.json",
     "collection-groups.json",
     "items.json",
+    "item-activity.json",
+    "backlog-entries.json",
     "notifications.json",
     "notification-idempotency.json"
   ];
@@ -163,7 +165,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "Kiosko Media Center",
-    version: "v6.1",
+    version: "v6.7.1",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -212,7 +214,7 @@ await itemRegistryStore.syncFromViews({ backlog: backlogStore.list(), onDeck: on
 
 const plex = new PlexService(settingsStore.get().plex || {});
 
-const validViews = new Set(["backlog", "on-deck", "current-content", "collections"]);
+const validViews = new Set(["database", "backlog", "on-deck", "current-content", "collections"]);
 const initialActiveView = validViews.has(stateStore.get().activeView)
   ? stateStore.get().activeView
   : (validViews.has(settingsStore.get().display?.defaultView) ? settingsStore.get().display.defaultView : "backlog");
@@ -237,7 +239,7 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v6.1 escuchando en puerto ${PORT}`);
+  console.log(`Kiosko Media Center v6.7.1 escuchando en puerto ${PORT}`);
   console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
   console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
@@ -292,6 +294,38 @@ function publicCompletions() {
   return completionStore.list().map(publicItem);
 }
 
+function fullStatePayload(extra = {}) {
+  return {
+    ...extra,
+    backlog: publicBacklog(),
+    onDeck: publicOnDeck(),
+    completions: publicCompletions(),
+    completionRatings: completionStore.ratingsMap(),
+    onDeckMap: onDeckStore.map()
+  };
+}
+
+async function syncItemRegistryNow(reason = "action") {
+  return itemRegistryStore.syncFromViews({
+    backlog: backlogStore.list(),
+    onDeck: onDeckStore.list(),
+    completions: completionStore.list()
+  }, reason);
+}
+
+function findBacklogItemByCanonicalId(canonicalId = "") {
+  const data = backlogStore.list();
+  return [...(data.plex || []), ...(data.playnite || [])].find(item => item.canonicalId === canonicalId || item.id === canonicalId);
+}
+function findOnDeckItemByCanonicalId(canonicalId = "") {
+  return onDeckStore.list().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
+}
+function findCompletionByCanonicalId(canonicalId = "") {
+  return completionStore.list().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
+}
+function itemFromAnyStore(canonicalId = "") {
+  return itemRegistryStore.get(canonicalId) || findBacklogItemByCanonicalId(canonicalId) || findOnDeckItemByCanonicalId(canonicalId) || findCompletionByCanonicalId(canonicalId);
+}
 
 const TRACE_ITEMS = process.env.TRACE_ITEMS === "1" || process.env.TRACE_DELTA === "1";
 function approxBytes(value) {
@@ -555,11 +589,11 @@ app.post("/api/simulate/:kind", async (req, res) => {
       };
       runtime.currentContent = { ...runtime.plex, source: "plex", kind: "plex" };
       await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
-      if (backlogSources().plexPlayback) {
-        await backlogStore.upsert("plex", normalizePlexBacklogItem(runtime.plex));
-        broadcastBacklogAndCompletions();
-      }
+      const plexItem = normalizePlexBacklogItem(runtime.plex);
+      await itemRegistryStore.upsert(plexItem, { activity: { eventType: "plex_simulated", title: plexItem.title, subtitle: plexItem.subtitle, activityAt: new Date().toISOString() } });
+      await syncItemRegistryNow("simulate-plex");
       hub.broadcast({ type: "current:update", payload: runtime.currentContent });
+      broadcastDelta("item:database-updated", fullStatePayload({ item: publicItem(itemRegistryStore.get(plexItem.canonicalId) || plexItem) }));
       return res.json({ ok: true, kind, view: runtime.activeView });
     }
     if (kind === "game") {
@@ -577,12 +611,11 @@ app.post("/api/simulate/:kind", async (req, res) => {
       runtime.currentContent = { ...runtime.game, source: "playnite", kind: "game" };
       await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
       const playniteItem = normalizePlayniteBacklogItem(runtime.game);
-      const deckUpdated = await updateOnDeckActivityFromItem({ ...runtime.game, source: "playnite" });
-      if (!deckUpdated && !isGameInDeckOrCompleted(playniteItem) && backlogSources().playniteStarted) {
-        await backlogStore.upsert("playnite", playniteItem);
-        broadcastBacklogAndCompletions();
-      }
+      await itemRegistryStore.upsert(playniteItem, { activity: { eventType: "playnite_simulated", title: playniteItem.title, subtitle: playniteItem.subtitle, activityAt: new Date().toISOString() } });
+      await updateOnDeckActivityFromItem({ ...runtime.game, source: "playnite" });
+      await syncItemRegistryNow("simulate-playnite");
       hub.broadcast({ type: "current:update", payload: runtime.currentContent });
+      broadcastDelta("item:database-updated", fullStatePayload({ item: publicItem(itemRegistryStore.get(playniteItem.canonicalId) || playniteItem) }));
       return res.json({ ok: true, kind, view: runtime.activeView });
     }
 
@@ -648,8 +681,8 @@ function normalizePlexCreatedBacklogItem(metadata = {}, event = {}) {
   const plexType = metadata.type || metadata.meta?.plexType || "unknown";
   if (plexType !== "episode") return base;
 
-  const episodeCanonicalId = metadata.ratingKey ? `plex:episode:${metadata.ratingKey}` : base.canonicalId;
   const seriesCanonicalId = plexSeriesCanonicalIdForMetadata(metadata);
+  const episodeCanonicalId = seriesCanonicalId || base.canonicalId;
   const episodeTitle = metadata.raw?.title || metadata.meta?.originalTitle || "";
   const episodeCode = String(metadata.subtitle || "").split("·").pop()?.trim() || "";
   const subtitleParts = ["Nuevo episodio"];
@@ -765,6 +798,97 @@ function normalizeDeckItem(input = {}) {
   return input;
 }
 
+function deckCategoryFor(item = {}) {
+  if (item.collectionType === "games" || item.source === "playnite") return "games";
+  if (item.collectionType === "movies") return "movies";
+  return "series";
+}
+const deckLimitByCategory = { games: 3, movies: 3, series: 3 };
+function deckItemsForCategory(category) {
+  return onDeckStore.list().filter(item => deckCategoryFor(item) === category);
+}
+function deckLimitPayload(category, newItem = {}) {
+  return {
+    reason: "deck_limit_reached",
+    category,
+    limit: deckLimitByCategory[category] || 3,
+    newItem: publicItem(newItem),
+    currentItems: deckItemsForCategory(category).map(publicItem)
+  };
+}
+async function enforceDeckLimitOrReplace(deckItem = {}, replaceId = "") {
+  const category = deckCategoryFor(deckItem);
+  const limit = deckLimitByCategory[category] || 3;
+  const current = deckItemsForCategory(category);
+  const already = current.find(item => item.canonicalId === deckItem.canonicalId || item.id === deckItem.id);
+  if (already) return { ok: true, replaced: null, category };
+  if (current.length < limit) return { ok: true, replaced: null, category };
+  if (!replaceId) return { ok: false, payload: deckLimitPayload(category, deckItem), category };
+  const replaced = await onDeckStore.remove(replaceId);
+  return { ok: true, replaced, category };
+}
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[",\n\r;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+function itemsToCsv(rows = []) {
+  const headers = ["title", "subtitle", "source", "type", "collectionType", "status", "rating", "completedAt", "firstSeenAt", "lastActivityAt", "canonicalId"];
+  const lines = [headers.join(",")];
+  for (const item of rows) {
+    lines.push(headers.map(key => csvEscape(item[key])).join(","));
+  }
+  return lines.join("\n");
+}
+
+function keysForPermanentDelete(item = {}) {
+  const meta = item.meta || item.metadata || {};
+  return [...new Set([
+    item.id,
+    item.canonicalId,
+    item.entityId,
+    item.gameId,
+    meta.gameId,
+    item.ratingKey,
+    meta.ratingKey,
+    meta.canonicalRatingKey,
+    meta.relatedSeriesCanonicalId,
+    meta.relatedOnDeckCanonicalId
+  ].filter(Boolean).map(String))];
+}
+function localAssetPathFor(url = "") {
+  const value = String(url || "");
+  if (!value.startsWith("/assets/")) return null;
+  const cleanRelative = value.replace(/^\/assets\//, "").split("?")[0];
+  if (!cleanRelative || cleanRelative.includes("..")) return null;
+  return path.join(DATA_DIR, "assets", cleanRelative);
+}
+async function deleteOwnedAssetsForItem(item = {}) {
+  const candidates = [item.poster, item.posterUrl, item.cover, item.backdrop, item.backdropUrl, item.background].map(localAssetPathFor).filter(Boolean);
+  const deleted = [];
+  for (const filePath of [...new Set(candidates)]) {
+    try { await fs.unlink(filePath); deleted.push(filePath); } catch {}
+  }
+  return deleted;
+}
+async function removeFromBacklogEverywhere(item = {}) {
+  const keys = keysForPermanentDelete(item);
+  for (const source of ["plex", "playnite", item.source].filter(Boolean)) {
+    for (const key of keys) await backlogStore.remove(source, key).catch(() => null);
+  }
+}
+async function deletePermanentEverywhere(item = {}) {
+  const keys = keysForPermanentDelete(item);
+  await removeFromBacklogEverywhere(item);
+  for (const key of keys) await onDeckStore.remove(key).catch(() => null);
+  for (const key of keys) { await completionStore.removeByCanonicalId(key).catch(() => null); await completionStore.remove(key).catch(() => null); }
+  await collectionGroupStore.removeItemEverywhere(keys).catch(() => null);
+  const deletedAssets = await deleteOwnedAssetsForItem(item);
+  const removed = await itemRegistryStore.deletePermanent(item.canonicalId || item.id);
+  return { removed, deletedAssets, keys };
+}
+
+
+
 
 function normalizePlayniteBacklogItem(game = {}) {
   return {
@@ -829,16 +953,148 @@ function broadcastCollectionGroups() {
 app.get("/api/backlog", (_req, res) => res.json({ backlog: publicBacklog(), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() }));
 app.get("/api/on-deck", (_req, res) => res.json({ onDeck: publicOnDeck(), completionRatings: completionStore.ratingsMap() }));
 
-app.get("/api/items", (req, res) => {
+app.get("/api/items", async (req, res) => {
+  if (process.env.ITEM_REGISTRY_SYNC_ON_QUERY !== "0" || itemRegistryStore.count() === 0 || req.query?.sync === "1") {
+    await syncItemRegistryNow("items-api");
+  }
   res.json(itemRegistryStore.query(req.query || {}));
 });
+app.get("/api/items/export.csv", async (req, res) => {
+  if (itemRegistryStore.count() === 0 || req.query?.sync === "1") await syncItemRegistryNow("items-export");
+  const query = { ...(req.query || {}), page: 1, limit: 10000 };
+  const result = itemRegistryStore.query(query);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="kiosko-items-${new Date().toISOString().slice(0,10)}.csv"`);
+  res.send(itemsToCsv(result.items));
+});
+app.get("/api/items/metadata-keys", async (_req, res) => {
+  await syncItemRegistryNow("metadata-keys");
+  const buckets = { games: {}, movies: {}, series: {}, all: {} };
+  const add = (bucket, key, value) => {
+    if (!key || value === undefined || value === null || value === "") return;
+    const target = buckets[bucket] || buckets.all;
+    target[key] = (target[key] || 0) + 1;
+    buckets.all[key] = (buckets.all[key] || 0) + 1;
+  };
+  for (const item of itemRegistryStore.list()) {
+    const bucket = item.collectionType === "games" ? "games" : item.collectionType === "movies" ? "movies" : "series";
+    for (const [key, value] of Object.entries(item || {})) {
+      if (["meta", "metadata", "states"].includes(key)) continue;
+      add(bucket, key, value);
+    }
+    const meta = item.meta || item.metadata || {};
+    for (const [key, value] of Object.entries(meta)) add(bucket, `meta.${key}`, value);
+  }
+  res.json({ keys: buckets });
+});
 app.get("/api/items/:canonicalId", (req, res) => {
-  const item = itemRegistryStore.get(req.params.canonicalId);
+  const item = itemRegistryStore.get(decodeURIComponent(req.params.canonicalId));
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   res.json(item);
 });
+app.patch("/api/items/:canonicalId/dates", async (req, res) => {
+  const item = await itemRegistryStore.updateDates(decodeURIComponent(req.params.canonicalId), req.body || {});
+  if (!item) return res.status(404).json({ error: "Item no encontrado." });
+  const payload = fullStatePayload({ item: publicItem(item) });
+  broadcastDelta("item:database-updated", payload);
+  res.json({ ok: true, item });
+});
+async function handlePermanentItemDelete(req, res) {
+  const id = decodeURIComponent(req.params.canonicalId || req.body?.canonicalId || "");
+  const item = itemFromAnyStore(id);
+  if (!item) return res.status(404).json({ error: "Item no encontrado." });
+  const result = await deletePermanentEverywhere(item);
+  await syncItemRegistryNow("permanent-delete");
+  const payload = fullStatePayload({ item: publicItem(item), canonicalId: item.canonicalId, keys: result.keys });
+  broadcastDelta("item:permanently-deleted", payload);
+  broadcastCollectionGroups();
+  res.json({ ok: true, ...result, item });
+}
+app.delete("/api/items/:canonicalId", handlePermanentItemDelete);
+app.post("/api/items/:canonicalId/delete", handlePermanentItemDelete);
+app.post("/api/items/:canonicalId/backlog", async (req, res) => {
+  const id = decodeURIComponent(req.params.canonicalId);
+  const item = itemFromAnyStore(id);
+  if (!item) return res.status(404).json({ error: "Item no encontrado." });
+  const followedAt = new Date().toISOString();
+  const backlogItem = await backlogStore.upsert(item.source || "manual", { ...item, lastActivityAt: followedAt, updatedAt: followedAt, meta: { ...(item.meta || {}), followedAt, trackingSource: "manual" } });
+  await itemRegistryStore.upsert({ ...item, lastActivityAt: followedAt }, { inBacklog: true, lastActivityAt: followedAt, activity: { eventType: "manual_follow", title: item.title, subtitle: item.subtitle, activityAt: followedAt } });
+  await syncItemRegistryNow("follow-backlog");
+  const payload = fullStatePayload({ item: publicItem(backlogItem), backlogItem: publicItem(backlogItem) });
+  broadcastDelta("item:backlog-upserted", payload);
+  res.json({ ok: true, item: backlogItem });
+});
+app.delete("/api/items/:canonicalId/backlog", async (req, res) => {
+  const id = decodeURIComponent(req.params.canonicalId);
+  const item = itemFromAnyStore(id);
+  const source = item?.source || "plex";
+  const removed = await backlogStore.remove(source, id).catch(async () => {
+    const existing = findBacklogItemByCanonicalId(id);
+    return existing ? backlogStore.remove(existing.source, existing.id) : null;
+  });
+  if (!removed) return res.status(404).json({ error: "Item no encontrado en Backlog." });
+  await syncItemRegistryNow("unfollow-backlog");
+  const payload = fullStatePayload({ source: removed.source, id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed) });
+  broadcastDelta("item:backlog-removed", payload);
+  res.json({ ok: true, removed });
+});
+app.post("/api/items/:canonicalId/deck", async (req, res) => {
+  const id = decodeURIComponent(req.params.canonicalId);
+  const item = itemFromAnyStore(id);
+  if (!item) return res.status(404).json({ error: "Item no encontrado." });
+  const deckItem = normalizeDeckItem(item);
+  const check = await enforceDeckLimitOrReplace(deckItem, req.body?.replaceId || "");
+  if (!check.ok) return res.status(409).json({ error: "Límite de On Deck alcanzado.", ...check.payload });
+  const saved = await onDeckStore.upsert(deckItem);
+  await syncItemRegistryNow("add-deck");
+  const payload = fullStatePayload({ from: "database", replaced: check.replaced ? publicItem(check.replaced) : null, deckItem: publicItem(saved) });
+  broadcastDelta("item:moved-to-deck", payload);
+  res.json({ ok: true, deckItem: saved, replaced: check.replaced || null });
+});
+app.delete("/api/items/:canonicalId/deck", async (req, res) => {
+  const id = decodeURIComponent(req.params.canonicalId);
+  const existing = findOnDeckItemByCanonicalId(id);
+  if (!existing) return res.status(404).json({ error: "Item no encontrado en On Deck." });
+  const removed = await onDeckStore.remove(existing.id);
+  await syncItemRegistryNow("remove-deck");
+  const payload = fullStatePayload({ id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed) });
+  broadcastDelta("item:deck-removed", payload);
+  res.json({ ok: true, removed });
+});
+app.post("/api/items/:canonicalId/complete", async (req, res) => {
+  const id = decodeURIComponent(req.params.canonicalId);
+  const item = itemFromAnyStore(id);
+  if (!item) return res.status(404).json({ error: "Item no encontrado." });
+  const rating = req.body?.rating ?? item.rating ?? 0;
+  const completed = await completeItem(item, rating);
+  if (req.body?.removeFromDeck === true) await onDeckStore.remove(completed.canonicalId).catch(() => null);
+  await itemRegistryStore.upsert({ ...item, ...completed, rating, completedAt: completed.completedAt }, { completed: true, rating, completedAt: completed.completedAt });
+  await syncItemRegistryNow("complete-item");
+  const payload = fullStatePayload({ from: req.body?.from || "database", completed: publicItem(completed), item: publicItem(completed) });
+  broadcastDelta("item:completed", payload);
+  res.json({ ok: true, completed });
+});
+app.delete("/api/items/:canonicalId/collection", async (req, res) => {
+  const id = decodeURIComponent(req.params.canonicalId);
+  const existing = findCompletionByCanonicalId(id);
+  if (!existing) return res.status(404).json({ error: "Item no encontrado en Colecciones." });
+  const removed = await completionStore.remove(existing.id);
+  const reg = itemRegistryStore.get(removed.canonicalId);
+  if (reg) {
+    reg.rating = null;
+    reg.completedAt = null;
+    reg.states = { ...(reg.states || {}), completed: false };
+    reg.status = reg.states.inOnDeck ? "on-deck" : reg.states.inBacklog ? "backlog" : "known";
+    reg.updatedAt = new Date().toISOString();
+    await itemRegistryStore.persist();
+  }
+  await syncItemRegistryNow("remove-collection");
+  const payload = fullStatePayload({ id: removed.id, canonicalId: removed.canonicalId, item: publicItem({ ...removed, rating: null, completedAt: null }) });
+  broadcastDelta("item:completion-removed", payload);
+  res.json({ ok: true, removed });
+});
 app.post("/api/items/sync", async (_req, res) => {
-  const result = await itemRegistryStore.syncFromViews({ backlog: backlogStore.list(), onDeck: onDeckStore.list(), completions: completionStore.list() }, "manual-api");
+  const result = await syncItemRegistryNow("manual-api");
   res.json({ ok: true, ...result, diagnostics: itemRegistryStore.diagnostics() });
 });
 
@@ -929,7 +1185,6 @@ async function removeWatchedPlexFromBacklog(metadata = {}) {
 
 async function completeItem(input, rating = 0) {
   const completed = await completionStore.complete({ ...input, rating });
-  await onDeckStore.removeByCanonicalId(completed.canonicalId);
   return completed;
 }
 
@@ -937,7 +1192,8 @@ app.delete("/api/backlog/:source/:id", async (req, res) => {
   const started = traceActionStart("backlog.delete", req);
   try {
     const removed = await backlogStore.remove(req.params.source, req.params.id);
-    const payload = { source: removed.source, id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed) };
+    await syncItemRegistryNow("backlog-delete");
+    const payload = fullStatePayload({ source: removed.source, id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed) });
     broadcastDelta("item:backlog-removed", payload);
     traceActionEnd("backlog.delete", started, { bytes: approxBytes(payload) });
     res.json({ ok: true, removed });
@@ -946,25 +1202,34 @@ app.delete("/api/backlog/:source/:id", async (req, res) => {
 app.post("/api/backlog/:source/:id/deck", async (req, res) => {
   const started = traceActionStart("backlog.to-deck", req);
   try {
-    const removed = await backlogStore.remove(req.params.source, req.params.id);
-    traceStep("backlog.to-deck removed", started);
-    const deckItem = await onDeckStore.upsert(normalizeDeckItem(removed));
+    const sourceItems = backlogStore.source(req.params.source);
+    const pending = sourceItems.find(item => item.id === req.params.id || item.canonicalId === req.params.id);
+    if (!pending) return res.status(404).json({ error: "Item no encontrado en Backlog." });
+    const normalizedDeckItem = normalizeDeckItem(pending);
+    const limitCheck = await enforceDeckLimitOrReplace(normalizedDeckItem, req.body?.replaceId || "");
+    if (!limitCheck.ok) return res.status(409).json({ error: "Límite de On Deck alcanzado.", ...limitCheck.payload });
+
+    const deckItem = await onDeckStore.upsert(normalizedDeckItem);
     traceStep("backlog.to-deck deck upsert", started);
-    const completionRemoved = await completionStore.removeByCanonicalId(deckItem.canonicalId);
-    const payload = { from: "backlog", removed: publicItem(removed), deckItem: publicItem(deckItem), completionRemoved: completionRemoved ? publicItem(completionRemoved) : null, completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() };
+    await syncItemRegistryNow("backlog-to-deck");
+    const payload = fullStatePayload({ from: "backlog", replaced: limitCheck.replaced ? publicItem(limitCheck.replaced) : null, deckItem: publicItem(deckItem) });
     broadcastDelta("item:moved-to-deck", payload);
     traceActionEnd("backlog.to-deck", started, { bytes: approxBytes(payload) });
-    res.json({ ok: true, deckItem });
+    res.json({ ok: true, deckItem, replaced: limitCheck.replaced || null });
   } catch (error) { console.error("[action:error] backlog.to-deck", error); res.status(400).json({ error: error.message }); }
 });
 app.post("/api/backlog/:source/:id/complete", async (req, res) => {
   const started = traceActionStart("backlog.complete", req);
   try {
-    const removed = await backlogStore.remove(req.params.source, req.params.id);
-    traceStep("backlog.complete removed", started);
-    const completed = await completeItem(removed, req.body?.rating ?? 0);
+    const sourceItems = backlogStore.source(req.params.source);
+    const item = sourceItems.find(entry => entry.id === req.params.id || entry.canonicalId === req.params.id);
+    if (!item) return res.status(404).json({ error: "Item no encontrado en Backlog." });
+    const completed = await completeItem(item, req.body?.rating ?? 0);
+    if (req.body?.removeFromBacklog === true) await backlogStore.remove(req.params.source, req.params.id).catch(() => null);
+    if (req.body?.removeFromDeck === true) await onDeckStore.remove(completed.canonicalId).catch(() => null);
+    await syncItemRegistryNow("backlog-complete");
     traceStep("backlog.complete completed", started);
-    const payload = { from: "backlog", removed: publicItem(removed), completed: publicItem(completed), completionRatings: completionStore.ratingsMap() };
+    const payload = fullStatePayload({ from: "backlog", item: publicItem(item), completed: publicItem(completed) });
     broadcastDelta("item:completed", payload);
     traceActionEnd("backlog.complete", started, { bytes: approxBytes(payload) });
     res.json({ ok: true, completed });
@@ -975,7 +1240,8 @@ app.delete("/api/on-deck/:id", async (req, res) => {
   const started = traceActionStart("deck.delete", req);
   try {
     const removed = await onDeckStore.remove(req.params.id);
-    const payload = { id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed), onDeckMap: onDeckStore.map() };
+    await syncItemRegistryNow("deck-delete");
+    const payload = fullStatePayload({ id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed) });
     broadcastDelta("item:deck-removed", payload);
     traceActionEnd("deck.delete", started, { bytes: approxBytes(payload) });
     res.json({ ok: true, removed });
@@ -984,28 +1250,30 @@ app.delete("/api/on-deck/:id", async (req, res) => {
 app.post("/api/on-deck/:id/complete", async (req, res) => {
   const started = traceActionStart("deck.complete", req);
   try {
-    const removed = await onDeckStore.remove(req.params.id);
-    traceStep("deck.complete removed", started);
-    const completed = await completeItem(removed, req.body?.rating ?? 0);
+    const item = onDeckStore.list().find(entry => entry.id === req.params.id || entry.canonicalId === req.params.id);
+    if (!item) return res.status(404).json({ error: "Item no encontrado en On Deck." });
+    const completed = await completeItem(item, req.body?.rating ?? 0);
+    if (req.body?.removeFromDeck === true) await onDeckStore.remove(item.id).catch(() => null);
+    await syncItemRegistryNow("deck-complete");
     traceStep("deck.complete completed", started);
-    const payload = { from: "on-deck", removed: publicItem(removed), completed: publicItem(completed), completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() };
+    const payload = fullStatePayload({ from: "on-deck", item: publicItem(item), completed: publicItem(completed) });
     broadcastDelta("item:completed", payload);
     traceActionEnd("deck.complete", started, { bytes: approxBytes(payload) });
     res.json({ ok: true, completed });
   } catch (error) { console.error("[action:error] deck.complete", error); res.status(400).json({ error: error.message }); }
 });
 app.post("/api/on-deck/:id/backlog", async (req, res) => {
-  const started = traceActionStart("deck.to-backlog", req);
+  const started = traceActionStart("deck.follow-backlog", req);
   try {
-    const removed = await onDeckStore.remove(req.params.id);
-    traceStep("deck.to-backlog removed", started);
-    const item = await backlogStore.upsert(removed.source, removed);
-    traceStep("deck.to-backlog backlog upsert", started);
-    const payload = { from: "on-deck", removed: publicItem(removed), backlogItem: publicItem(item), onDeckMap: onDeckStore.map(), completionRatings: completionStore.ratingsMap() };
+    const item = onDeckStore.list().find(entry => entry.id === req.params.id || entry.canonicalId === req.params.id);
+    if (!item) return res.status(404).json({ error: "Item no encontrado en On Deck." });
+    const backlogItem = await backlogStore.upsert(item.source, item);
+    await syncItemRegistryNow("deck-follow-backlog");
+    const payload = fullStatePayload({ from: "on-deck", backlogItem: publicItem(backlogItem), item: publicItem(backlogItem) });
     broadcastDelta("item:moved-to-backlog", payload);
-    traceActionEnd("deck.to-backlog", started, { bytes: approxBytes(payload) });
-    res.json({ ok: true, item });
-  } catch (error) { console.error("[action:error] deck.to-backlog", error); res.status(400).json({ error: error.message }); }
+    traceActionEnd("deck.follow-backlog", started, { bytes: approxBytes(payload) });
+    res.json({ ok: true, item: backlogItem });
+  } catch (error) { console.error("[action:error] deck.follow-backlog", error); res.status(400).json({ error: error.message }); }
 });
 
 app.get("/api/completions", (_req, res) => res.json(publicCompletions()));
@@ -1013,7 +1281,8 @@ app.patch("/api/completions/:id", async (req, res) => {
   const started = traceActionStart("completion.update", req);
   try {
     const item = await completionStore.update(req.params.id, req.body || {});
-    const payload = { completed: publicItem(item), completionRatings: completionStore.ratingsMap() };
+    await syncItemRegistryNow("completion-update");
+    const payload = fullStatePayload({ completed: publicItem(item), item: publicItem(item) });
     broadcastDelta("item:completion-updated", payload);
     traceActionEnd("completion.update", started, { bytes: approxBytes(payload) });
     res.json(item);
@@ -1023,7 +1292,17 @@ app.delete("/api/completions/:id", async (req, res) => {
   const started = traceActionStart("completion.delete", req);
   try {
     const removed = await completionStore.remove(req.params.id);
-    const payload = { id: removed.id, canonicalId: removed.canonicalId, item: publicItem(removed), completionRatings: completionStore.ratingsMap() };
+    const reg = itemRegistryStore.get(removed.canonicalId);
+    if (reg) {
+      reg.rating = null;
+      reg.completedAt = null;
+      reg.states = { ...(reg.states || {}), completed: false };
+      reg.status = reg.states.inOnDeck ? "on-deck" : reg.states.inBacklog ? "backlog" : "known";
+      reg.updatedAt = new Date().toISOString();
+      await itemRegistryStore.persist();
+    }
+    await syncItemRegistryNow("completion-delete");
+    const payload = fullStatePayload({ id: removed.id, canonicalId: removed.canonicalId, item: publicItem({ ...removed, rating: null, completedAt: null }) });
     broadcastDelta("item:completion-removed", payload);
     traceActionEnd("completion.delete", started, { bytes: approxBytes(payload) });
     res.json({ ok: true, removed });
@@ -1040,10 +1319,11 @@ app.post("/api/current/deck", async (req, res) => {
   const started = traceActionStart("current.to-deck", req);
   try {
     const item = normalizeCurrentToDeckItem();
+    const limitCheck = await enforceDeckLimitOrReplace(item, req.body?.replaceId || "");
+    if (!limitCheck.ok) return res.status(409).json({ error: "Límite de On Deck alcanzado.", ...limitCheck.payload });
     const deckItem = await onDeckStore.upsert(item);
-    const completionRemoved = await completionStore.removeByCanonicalId(deckItem.canonicalId);
-    const backlogRemoved = await backlogStore.remove(deckItem.source, deckItem.canonicalId).catch(() => null);
-    const payload = { from: "current", removed: backlogRemoved ? publicItem(backlogRemoved) : null, deckItem: publicItem(deckItem), completionRemoved: completionRemoved ? publicItem(completionRemoved) : null, completionRatings: completionStore.ratingsMap(), onDeckMap: onDeckStore.map() };
+    await syncItemRegistryNow("current-to-deck");
+    const payload = fullStatePayload({ from: "current", replaced: limitCheck.replaced ? publicItem(limitCheck.replaced) : null, deckItem: publicItem(deckItem) });
     broadcastDelta("item:moved-to-deck", payload);
     traceActionEnd("current.to-deck", started, { bytes: approxBytes(payload) });
     res.json({ ok: true, deckItem });
@@ -1054,8 +1334,9 @@ app.post("/api/current/complete", async (req, res) => {
   try {
     const item = normalizeCurrentToDeckItem();
     const completed = await completeItem(item, req.body?.rating ?? 0);
-    const backlogRemoved = await backlogStore.remove(completed.source, completed.canonicalId).catch(() => null);
-    const payload = { from: "current", removed: backlogRemoved ? publicItem(backlogRemoved) : null, completed: publicItem(completed), completionRatings: completionStore.ratingsMap() };
+    if (req.body?.removeFromDeck === true) await onDeckStore.remove(completed.canonicalId).catch(() => null);
+    await syncItemRegistryNow("current-complete");
+    const payload = fullStatePayload({ from: "current", item: publicItem(item), completed: publicItem(completed) });
     broadcastDelta("item:completed", payload);
     traceActionEnd("current.complete", started, { bytes: approxBytes(payload) });
     res.json({ ok: true, completed });
@@ -1074,59 +1355,38 @@ async function handleTautulliWebhook(req, res) {
     runtime.plex = event.plex;
     runtime.currentContent = { ...event.plex, source: "plex", kind: "plex" };
     await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
-    if (event.isWatched) {
-      const removed = await removeWatchedPlexFromBacklog(metadata);
-      if (removed) broadcastBacklogAndCompletions();
-    }
-
     if (event.startsPlayback) {
       await updateOnDeckActivityFromItem({ ...metadata, source: "plex" });
     }
 
-    const sources = backlogSources();
-    const shouldAddToBacklog = !event.isWatched && ((event.isLibraryAdded && sources.plexRecentlyAdded) || (event.startsPlayback && sources.plexPlayback));
-    if (shouldAddToBacklog) {
+    const isActivity = event.isLibraryAdded || event.startsPlayback || event.isWatched;
+    let trackedItem = null;
+    let savedBacklogItem = null;
+    if (isActivity) {
       const isCreatedEpisode = event.isLibraryAdded && (metadata.type || metadata.meta?.plexType) === "episode";
-      const backlogItem = isCreatedEpisode
+      trackedItem = isCreatedEpisode
         ? normalizePlexCreatedBacklogItem(metadata, event)
         : normalizePlexBacklogItem({
             ...metadata,
             meta: {
               ...(metadata.meta || {}),
-              backlogSource: event.isLibraryAdded ? "plex_recently_added" : "plex_playback",
+              backlogSource: event.isLibraryAdded ? "plex_recently_added" : event.isWatched ? "plex_watched" : "plex_playback",
               tautulliEvent: event.rawEvent
             }
           });
-      const relatedOnDeckCanonicalId = backlogItem.meta?.relatedOnDeckCanonicalId || null;
-      const relatedDeckItem = relatedOnDeckCanonicalId ? onDeckStore.findByCanonicalId(relatedOnDeckCanonicalId) : null;
-      console.log("[tautulli] backlog candidate", {
-        rawEvent: event.rawEvent,
-        event: event.event,
-        ratingKey: metadata.ratingKey,
-        plexType: metadata.type,
-        canonicalId: backlogItem.canonicalId,
-        relatedOnDeckCanonicalId,
-        relatedOnDeck: Boolean(relatedDeckItem)
-      });
-      const savedBacklogItem = await backlogStore.upsert("plex", backlogItem);
-      const payload = { item: publicItem(savedBacklogItem), onDeckMap: onDeckStore.map(), completionRatings: completionStore.ratingsMap() };
-      broadcastDelta("item:backlog-upserted", payload);
-      console.log("[tautulli] backlog upserted", {
-        id: savedBacklogItem.id,
-        title: savedBacklogItem.title,
-        canonicalId: savedBacklogItem.canonicalId,
-        relatedOnDeck: Boolean(relatedDeckItem)
-      });
-    } else {
-      console.log("[tautulli] backlog skipped", {
-        rawEvent: event.rawEvent,
-        event: event.event,
-        isWatched: event.isWatched,
-        isLibraryAdded: event.isLibraryAdded,
-        startsPlayback: event.startsPlayback,
-        plexRecentlyAdded: sources.plexRecentlyAdded,
-        plexPlayback: sources.plexPlayback
-      });
+      trackedItem.lastActivityAt = new Date().toISOString();
+      await itemRegistryStore.upsert(trackedItem, { activity: { eventType: trackedItem.meta?.backlogSource || event.rawEvent || "plex_activity", title: trackedItem.title, subtitle: trackedItem.subtitle, activityAt: trackedItem.lastActivityAt } });
+
+      const followed = findBacklogItemByCanonicalId(trackedItem.canonicalId);
+      if (followed) {
+        savedBacklogItem = await backlogStore.upsert("plex", { ...followed, ...trackedItem, id: followed.id, lastActivityAt: trackedItem.lastActivityAt });
+        console.log("[tautulli] followed backlog updated", { rawEvent: event.rawEvent, canonicalId: trackedItem.canonicalId, title: trackedItem.title });
+      } else {
+        console.log("[tautulli] database updated only", { rawEvent: event.rawEvent, canonicalId: trackedItem.canonicalId, title: trackedItem.title });
+      }
+      await syncItemRegistryNow("tautulli-webhook");
+      const payload = fullStatePayload({ item: publicItem(itemRegistryStore.get(trackedItem.canonicalId) || trackedItem), backlogItem: savedBacklogItem ? publicItem(savedBacklogItem) : null });
+      broadcastDelta(savedBacklogItem ? "item:backlog-upserted" : "item:database-updated", payload);
     }
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
 
@@ -1210,16 +1470,18 @@ async function handlePlayniteWebhook(req, res) {
     runtime.game = game;
     runtime.currentContent = { ...game, source: "playnite", kind: "game" };
     await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
-    const playniteItem = normalizePlayniteBacklogItem(game);
-    const deckUpdated = await updateOnDeckActivityFromItem({ ...game, source: "playnite" });
-    if (!deckUpdated && !isGameInDeckOrCompleted(playniteItem) && backlogSources().playniteStarted) {
-      await backlogStore.upsert("playnite", playniteItem);
-      broadcastBacklogAndCompletions();
-    } else if (deckUpdated || isGameInDeckOrCompleted(playniteItem)) {
-      await backlogStore.remove("playnite", playniteItem.canonicalId).catch(() => null);
-    }
+    const playniteItem = { ...normalizePlayniteBacklogItem(game), lastActivityAt: new Date().toISOString() };
+
+    await itemRegistryStore.upsert(playniteItem, { activity: { eventType: "playnite_played", title: playniteItem.title, subtitle: playniteItem.subtitle, activityAt: playniteItem.lastActivityAt } });
+    const deckUpdated = await updateOnDeckActivityFromItem({ ...game, source: "playnite", lastActivityAt: playniteItem.lastActivityAt });
+    const followed = findBacklogItemByCanonicalId(playniteItem.canonicalId);
+    if (followed) await backlogStore.upsert("playnite", { ...followed, ...playniteItem, id: followed.id, lastActivityAt: playniteItem.lastActivityAt });
+    await syncItemRegistryNow("playnite-webhook");
+
     console.log("Webhook Playnite recibido", { title: game.title, platforms: game.platforms, hasCover: Boolean(game.cover), hasBackground: Boolean(game.background), payloadBytes: Number(req.headers["content-length"] || 0), persistedAssets: true });
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
+    const payload = fullStatePayload({ item: publicItem(itemRegistryStore.get(playniteItem.canonicalId) || playniteItem), backlogItem: followed ? publicItem(findBacklogItemByCanonicalId(playniteItem.canonicalId)) : null, deckUpdated });
+    broadcastDelta(followed ? "item:backlog-upserted" : "item:database-updated", payload);
     return res.status(200).json({ ok: true, event: game.event, title: game.title });
   } catch (error) {
     console.error("Error en webhook Playnite:", error);

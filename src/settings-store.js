@@ -35,6 +35,14 @@ export const DEFAULT_SETTINGS = {
     },
     cards: {
       radius: 18
+    },
+    itemDetail: {
+      background: { background: "backdrop", shade: "medium", blur: "soft" },
+      metadataFields: {
+        games: ["year", "platforms", "developers", "publishers", "genres", "playtime", "firstSeenAt", "lastActivityAt", "completedAt"],
+        movies: ["year", "genres", "duration", "studio", "director", "firstSeenAt", "lastActivityAt", "completedAt"],
+        series: ["year", "genres", "studio", "latestActivity", "firstSeenAt", "lastActivityAt", "completedAt"]
+      }
     }
   },
   views: {
@@ -42,7 +50,8 @@ export const DEFAULT_SETTINGS = {
     backlog: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
     onDeck: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
     current: { enabled: true },
-    collections: { enabled: true, cardSize: "medium", itemsPerPage: 12 }
+    collections: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
+    database: { enabled: true, cardSize: "medium", itemsPerPage: 60 }
   },
   backlog: {
     sources: {
@@ -116,7 +125,7 @@ function sanitize(settings) {
   s.server.port = clampNumber(s.server.port, 1, 65535, 3000);
 
   if (s.display?.defaultView === "dashboard") s.display.defaultView = "backlog";
-  if (!["backlog", "on-deck", "current-content", "collections"].includes(s.display.defaultView)) s.display.defaultView = "backlog";
+  if (!["database", "backlog", "on-deck", "current-content", "collections"].includes(s.display.defaultView)) s.display.defaultView = "backlog";
   s.display.dockPosition = "top";
 
   delete s.display.dimEnabled;
@@ -131,10 +140,11 @@ function sanitize(settings) {
   if (!isObject(s.views)) s.views = DEFAULT_SETTINGS.views;
   if (!isObject(s.views.notifications)) s.views.notifications = { enabled: true, itemsPerPage: 50 };
   s.views.notifications.itemsPerPage = clampNumber(s.views.notifications.itemsPerPage, 1, 50, 50);
-  s.views.backlog = { enabled: true, ...(isObject(s.views.backlog) ? s.views.backlog : {}), cardSize: cardSize(s.views.backlog?.cardSize), itemsPerPage: clampNumber(s.views.backlog?.itemsPerPage, 1, 60, 12) };
-  s.views.onDeck = { enabled: true, ...(isObject(s.views.onDeck) ? s.views.onDeck : {}), cardSize: cardSize(s.views.onDeck?.cardSize), itemsPerPage: clampNumber(s.views.onDeck?.itemsPerPage, 1, 120, 12) };
+  s.views.backlog = { enabled: true, ...(isObject(s.views.backlog) ? s.views.backlog : {}), cardSize: cardSize(s.views.backlog?.cardSize), itemsPerPage: clampNumber(s.views.backlog?.itemsPerPage, 1, 250, 12) };
+  s.views.onDeck = { enabled: true, ...(isObject(s.views.onDeck) ? s.views.onDeck : {}), cardSize: cardSize(s.views.onDeck?.cardSize), itemsPerPage: clampNumber(s.views.onDeck?.itemsPerPage, 1, 250, 12) };
   s.views.current = { enabled: true, ...(isObject(s.views.current) ? s.views.current : {}) };
-  s.views.collections = { enabled: true, ...(isObject(s.views.collections) ? s.views.collections : {}), cardSize: cardSize(s.views.collections?.cardSize), itemsPerPage: clampNumber(s.views.collections?.itemsPerPage, 1, 120, 12) };
+  s.views.collections = { enabled: true, ...(isObject(s.views.collections) ? s.views.collections : {}), cardSize: cardSize(s.views.collections?.cardSize), itemsPerPage: clampNumber(s.views.collections?.itemsPerPage, 1, 250, 12) };
+  s.views.database = { enabled: true, ...(isObject(s.views.database) ? s.views.database : {}), cardSize: cardSize(s.views.database?.cardSize), itemsPerPage: clampNumber(s.views.database?.itemsPerPage, 10, 250, 60) };
   delete s.views.dashboard;
 
   if (!isObject(s.design)) s.design = {};
@@ -177,6 +187,17 @@ function sanitize(settings) {
 
   const radius = (typeof oldCards !== 'undefined' ? oldCards.radius : undefined) ?? s.design.cards?.radius;
   s.design.cards = { radius: clampNumber(radius, 0, 32, 18) };
+
+  if (!isObject(s.design.itemDetail)) s.design.itemDetail = {};
+  if (!isObject(s.design.itemDetail.background)) s.design.itemDetail.background = {};
+  if (!["backdrop", "poster", "solid", "none"].includes(s.design.itemDetail.background.background)) s.design.itemDetail.background.background = "backdrop";
+  if (!["low", "medium", "high"].includes(s.design.itemDetail.background.shade)) s.design.itemDetail.background.shade = "medium";
+  if (!["none", "soft", "strong"].includes(s.design.itemDetail.background.blur)) s.design.itemDetail.background.blur = "soft";
+  if (!isObject(s.design.itemDetail.metadataFields)) s.design.itemDetail.metadataFields = DEFAULT_SETTINGS.design.itemDetail.metadataFields;
+  for (const key of ["games", "movies", "series"]) {
+    if (!Array.isArray(s.design.itemDetail.metadataFields[key])) s.design.itemDetail.metadataFields[key] = DEFAULT_SETTINGS.design.itemDetail.metadataFields[key];
+    s.design.itemDetail.metadataFields[key] = s.design.itemDetail.metadataFields[key].filter(value => typeof value === "string" && value.trim()).slice(0, 24);
+  }
 
   if (!isObject(s.backlog)) s.backlog = { sources: {} };
   if (!isObject(s.backlog.sources)) s.backlog.sources = {};

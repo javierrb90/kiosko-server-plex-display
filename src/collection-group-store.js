@@ -123,6 +123,19 @@ export class CollectionGroupStore {
     return group;
   }
 
+  async removeItemEverywhere(itemKeys = []) {
+    const keys = new Set((itemKeys || []).filter(Boolean).map(String));
+    if (!keys.size) return this.groups;
+    for (const group of this.groups) {
+      group.manualItemIds = unique((group.manualItemIds || []).filter(value => !keys.has(String(value))));
+      group.manualItemKeys = unique((group.manualItemKeys || []).filter(value => !keys.has(String(value))));
+      group.excludedItemIds = unique((group.excludedItemIds || []).filter(value => !keys.has(String(value))));
+      group.updatedAt = now();
+    }
+    await this.persist();
+    return this.groups;
+  }
+
   async removeItem(id, itemId, { exclude = false, itemKeys = [] } = {}) {
     const group = this.get(id);
     if (!group) throw new Error("Grupo no encontrado.");

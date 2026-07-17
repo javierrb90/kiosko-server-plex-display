@@ -30,3 +30,20 @@
 
 - [Item Registry](15-ITEM-REGISTRY.md)
 - [Release notes v6.1](RELEASE-NOTES-V6-1.md)
+
+- [Release notes v6.5 Phase 2](RELEASE-NOTES-V6-5-PHASE-2.md)
+
+- [Release notes v6.5.1 Hotfix](RELEASE-NOTES-V6-5-1-HOTFIX.md)
+
+- [Release notes v6.5.2 Refactor hotfix](RELEASE-NOTES-V6-5-2-REFACTOR-HOTFIX.md)
+
+- [Release notes v6.5.3 List hotfix](RELEASE-NOTES-V6-5-3-LIST-HOTFIX.md)
+
+- [Release notes v6.5.4 Database visibility](RELEASE-NOTES-V6-5-4-DATABASE-VISIBILITY.md)
+- [Release notes v6.6 JSON Database Core](RELEASE-NOTES-V6-6-JSON-DATABASE-CORE.md)
+
+- [Release notes v6.6.1 Hotfix](RELEASE-NOTES-V6-6-1-HOTFIX.md)
+
+- [Release notes v6.7 Item Detail & Tracking](RELEASE-NOTES-V6-7-ITEM-DETAIL-TRACKING.md)
+
+- [Release notes v6.7.1 Detail State Cleanup](RELEASE-NOTES-V6-7-1-DETAIL-STATE-CLEANUP.md)

@@ -5,6 +5,7 @@ import { createBacklogView } from "/views/backlog.js";
 import { createCollectionsView } from "/views/collections.js";
 import { createOnDeckView } from "/views/on-deck.js";
 import { createCurrentContentView } from "/views/current-content.js";
+import { createDatabaseView } from "/views/database.js";
 import { openItemDetail } from "/core/item-detail.js";
 
 const debug = () => {};
@@ -52,7 +53,7 @@ const state = {
 
 
 const LOCAL_VIEW_KEY = 'kiosko:active-view';
-const VALID_VIEWS = new Set(['backlog', 'on-deck', 'current-content', 'collections']);
+const VALID_VIEWS = new Set(['database', 'backlog', 'on-deck', 'current-content', 'collections']);
 
 function readLocalView(fallback = 'backlog') {
   try {
@@ -85,7 +86,12 @@ function api(path, options = {}) {
   return fetch(path, { ...options, headers }).then(async res => {
     const isJson = String(res.headers.get('content-type') || '').includes('application/json');
     const data = isJson ? await res.json() : await res.text();
-    if (!res.ok) throw new Error(data?.error || data || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const error = new Error(data?.error || data || `HTTP ${res.status}`);
+      error.status = res.status;
+      error.data = data;
+      throw error;
+    }
     return data;
   });
 }
@@ -392,7 +398,8 @@ async function openCurrentContentFromMini() {
     context: 'current',
     toast: message => ui.toast(message),
     labels: { title: '' },
-    collectionGroups: state.collectionGroups
+    collectionGroups: state.collectionGroups,
+    settings: state.settings
   });
   if (result?.action === 'open-current') navigate('current-content', { reason: 'mini actual' });
 }
@@ -466,6 +473,7 @@ function showCurrentToast(content = {}) {
 }
 /* legacy */
 
+views.register(createDatabaseView({ api, debug, ui, controlsRoot: viewControls }));
 views.register(createBacklogView({ api, debug, ui, controlsRoot: viewControls }));
 views.register(createOnDeckView({ api, debug, ui, controlsRoot: viewControls }));
 views.register(createCurrentContentView({ api, debug, ui, controlsRoot: viewControls }));
@@ -481,6 +489,7 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
     writeLocalView(id);
   }
   views.show(id, { reason });
+  try { if (persist) window.history.replaceState(null, '', `#/${id}`); } catch {}
   dock.querySelectorAll('button').forEach(btn => btn.classList.toggle('dock__item--active', btn.dataset.nav === id));
   if (persist) api('/api/state', { method: 'PUT', body: JSON.stringify({ activeView: id }) }).catch(debugError);
 }
@@ -499,6 +508,7 @@ function applyState(payload = {}) {
   state.completions = payload.completions || [];
   state.completionRatings = payload.completionRatings || {};
   state.onDeckMap = payload.onDeckMap || {};
+  views.update('database', { collectionGroups: state.collectionGroups, settings: state.settings });
   views.update('backlog', { backlog: state.backlog, completionRatings: state.completionRatings, onDeckMap: state.onDeckMap, collectionGroups: state.collectionGroups, settings: state.settings });
   views.update('on-deck', { onDeck: state.onDeck, completionRatings: state.completionRatings, collectionGroups: state.collectionGroups, settings: state.settings });
   views.update('current-content', { currentContent: payload.currentContent || null, onDeckMap: state.onDeckMap, backlogMap: buildBacklogMap(state.backlog), completionRatings: state.completionRatings, settings: state.settings });
@@ -556,7 +566,16 @@ function applyCompletionRatings(ratings) {
 function applyOnDeckMap(map) {
   if (map) state.onDeckMap = map;
 }
+function applyFullStatePayload(payload = {}) {
+  if (payload.backlog) state.backlog = payload.backlog;
+  if (Array.isArray(payload.onDeck)) state.onDeck = payload.onDeck;
+  if (Array.isArray(payload.completions)) state.completions = payload.completions;
+  applyCompletionRatings(payload.completionRatings);
+  applyOnDeckMap(payload.onDeckMap);
+}
+
 function refreshDataViews() {
+  views.update('database', { collectionGroups: state.collectionGroups || [], settings: state.settings });
   views.update('backlog', { backlog: state.backlog || {}, completionRatings: state.completionRatings || {}, onDeckMap: state.onDeckMap || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
   views.update('on-deck', { onDeck: state.onDeck || [], completionRatings: state.completionRatings || {}, collectionGroups: state.collectionGroups || [], settings: state.settings });
   views.update('collections', { completions: state.completions || [], collectionGroups: state.collectionGroups || [], settings: state.settings });
@@ -564,47 +583,74 @@ function refreshDataViews() {
 }
 function applyItemDelta(message = {}) {
   const payload = message.payload || {};
+  applyFullStatePayload(payload);
   switch (message.type) {
     case 'item:backlog-upserted':
       upsertBacklogState(payload.item || payload.backlogItem);
       applyCompletionRatings(payload.completionRatings);
       applyOnDeckMap(payload.onDeckMap);
+      views.update('database', { refresh: true });
       break;
     case 'item:backlog-removed':
       removeFromBacklogState(payload.item || payload);
+      views.update('database', { refresh: true });
       break;
     case 'item:moved-to-deck':
       if (payload.removed) removeFromBacklogState(payload.removed);
+      if (payload.replaced) { removeFromDeckState(payload.replaced); upsertBacklogState(payload.replaced); }
+      if (Array.isArray(payload.onDeck)) state.onDeck = payload.onDeck;
       if (payload.completionRemoved) removeFromCompletionsState(payload.completionRemoved);
-      upsertDeckState(payload.deckItem);
+      if (!Array.isArray(payload.onDeck)) upsertDeckState(payload.deckItem);
       applyCompletionRatings(payload.completionRatings);
       applyOnDeckMap(payload.onDeckMap);
+      views.update('database', { refresh: true });
       break;
     case 'item:moved-to-backlog':
       if (payload.removed) removeFromDeckState(payload.removed);
       upsertBacklogState(payload.backlogItem);
       applyCompletionRatings(payload.completionRatings);
       applyOnDeckMap(payload.onDeckMap);
+      views.update('database', { refresh: true });
       break;
     case 'item:completed':
       if (payload.from === 'backlog' && payload.removed) removeFromBacklogState(payload.removed);
       if (payload.from === 'on-deck' && payload.removed) removeFromDeckState(payload.removed);
+      if (payload.from === 'database' && payload.removed) { removeFromBacklogState(payload.removed); removeFromDeckState(payload.removed); }
       if (payload.removed && !payload.from) { removeFromBacklogState(payload.removed); removeFromDeckState(payload.removed); }
+      if (Array.isArray(payload.onDeck)) state.onDeck = payload.onDeck;
       upsertCompletionState(payload.completed);
       applyCompletionRatings(payload.completionRatings);
       applyOnDeckMap(payload.onDeckMap);
+      views.update('database', { refresh: true });
       break;
     case 'item:deck-removed':
       removeFromDeckState(payload.item || payload);
       applyOnDeckMap(payload.onDeckMap);
+      views.update('database', { refresh: true });
       break;
     case 'item:completion-updated':
       upsertCompletionState(payload.completed);
       applyCompletionRatings(payload.completionRatings);
+      views.update('database', { refresh: true });
       break;
     case 'item:completion-removed':
       removeFromCompletionsState(payload.item || payload);
       applyCompletionRatings(payload.completionRatings);
+      views.update('database', { refresh: true });
+      break;
+    case 'item:database-updated':
+      views.update('database', { refresh: true });
+      break;
+    case 'item:permanently-deleted':
+      removeFromBacklogState(payload.item || payload);
+      removeFromDeckState(payload.item || payload);
+      removeFromCompletionsState(payload.item || payload);
+      if (payload.backlog) state.backlog = payload.backlog;
+      if (Array.isArray(payload.onDeck)) state.onDeck = payload.onDeck;
+      if (Array.isArray(payload.completions)) state.completions = payload.completions;
+      applyCompletionRatings(payload.completionRatings);
+      applyOnDeckMap(payload.onDeckMap);
+      views.update('database', { refresh: true });
       break;
     default:
       return false;
@@ -621,6 +667,7 @@ const socket = new SocketClient({
     if (message.type === 'settings:update') {
       state.settings = message.payload;
       applyDesign(state.settings);
+      views.update('database', { settings: state.settings, refresh: true });
       views.update('backlog', { settings: state.settings });
       views.update('on-deck', { settings: state.settings });
       views.update('current-content', { settings: state.settings });
@@ -630,7 +677,7 @@ const socket = new SocketClient({
     if (message.type === 'backlog:update') { state.backlog = message.payload?.backlog || state.backlog || {}; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; if (message.payload?.onDeckMap) state.onDeckMap = message.payload.onDeckMap; views.update('backlog', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}), backlogMap: buildBacklogMap(state.backlog || {}) }); return; }
     if (message.type === 'on-deck:update') { state.onDeck = message.payload?.onDeck || state.onDeck || []; if (message.payload?.completionRatings) state.completionRatings = message.payload.completionRatings; views.update('on-deck', { ...(message.payload || {}), collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { ...(message.payload || {}) }); return; }
     if (message.type === 'completions:update') { state.completions = message.payload || []; state.completionRatings = Object.fromEntries((message.payload || []).filter(item => item?.canonicalId).map(item => [item.canonicalId, { rating: item.rating, completedAt: item.completedAt, id: item.id }])); views.update('collections', { completions: state.completions, collectionGroups: state.collectionGroups, settings: state.settings }); views.update('current-content', { completionRatings: state.completionRatings }); return; }
-    if (message.type === 'collection-groups:update') { state.collectionGroups = message.payload || []; views.update('backlog', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('on-deck', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('collections', { collectionGroups: state.collectionGroups, settings: state.settings }); return; }
+    if (message.type === 'collection-groups:update') { state.collectionGroups = message.payload || []; views.update('database', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('backlog', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('on-deck', { collectionGroups: state.collectionGroups, settings: state.settings }); views.update('collections', { collectionGroups: state.collectionGroups, settings: state.settings }); return; }
     if (message.type === 'custom-css:update') { refreshCustomCss(message.payload?.name); return; }
     if (message.type === 'notifications:open') { openNotificationsOverlay().catch(debugError); return; }
     if (message.type === 'privacy:update') {
@@ -783,14 +830,12 @@ async function openSettingsModal() {
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
-        ['general','General'], ['design','Visual'], ['sources','Fuentes'], ['notifications','Avisos'], ['plex','Plex'], ['collections','Colecciones'], ['data','Datos'], ['debug','Debug'], ['css','CSS']
+        ['general','General'], ['design','Visual'], ['item-detail','Ficha'], ['notifications','Avisos'], ['plex','Plex'], ['collections','Colecciones'], ['data','Datos'], ['debug','Debug'], ['css','CSS']
       ].map(([id,label], index) => `<button type="button" data-settings-tab="${id}" class="${index === 0 ? 'is-active' : ''}">${label}</button>`).join('')}
     </nav>
     <div class="settings-tabs__panels">
       <section data-settings-panel="general" class="settings-tab-panel is-active"><h3>General</h3>
-        <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colecciones</option></select></label>
-        <label class="ui-field"><span>Items por página · Backlog</span><input data-setting="backlogItemsPerPage" type="number" min="1" max="60" value="${escapeAttr(s.views?.backlog?.itemsPerPage || 12)}"></label>
-        <label class="ui-field"><span>Items por página · On Deck</span><input data-setting="onDeckItemsPerPage" type="number" min="1" max="120" value="${escapeAttr(s.views?.onDeck?.itemsPerPage || 12)}"></label>
+        <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="database" ${selected('database', s.display?.defaultView)}>Base de datos</option><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colecciones</option></select></label>
       </section>
       <section data-settings-panel="design" class="settings-tab-panel"><h3>Visual</h3>
         <div class="settings-fieldset"><h4>Colores</h4>
@@ -824,10 +869,20 @@ async function openSettingsModal() {
           <label class="ui-field"><span>Tamaño Colecciones</span><select data-setting="collectionsSize"><option value="small" ${selected('small', s.views?.collections?.cardSize)}>Pequeño</option><option value="medium" ${selected('medium', s.views?.collections?.cardSize)}>Medio</option><option value="large" ${selected('large', s.views?.collections?.cardSize)}>Grande</option></select></label>
         </div>
       </section>
-      <section data-settings-panel="sources" class="settings-tab-panel"><h3>Fuentes del Backlog</h3>
-        <label class="ui-check"><input type="checkbox" data-setting="plexRecentlyAdded" ${checked(s.backlog?.sources?.plexRecentlyAdded !== false)}> Plex · nuevo contenido añadido</label>
-        <label class="ui-check"><input type="checkbox" data-setting="plexPlayback" ${checked(s.backlog?.sources?.plexPlayback === true)}> Plex · contenido reproducido</label>
-        <label class="ui-check"><input type="checkbox" data-setting="playniteStarted" ${checked(s.backlog?.sources?.playniteStarted !== false)}> Playnite · juegos lanzados</label>
+      <section data-settings-panel="item-detail" class="settings-tab-panel"><h3>Ficha del item</h3>
+        <div class="settings-fieldset"><h4>Diseño visual</h4>
+          <label class="ui-field"><span>Fondo</span><select data-setting="detailBg"><option value="backdrop" ${selected('backdrop', s.design?.itemDetail?.background?.background || 'backdrop')}>Backdrop</option><option value="poster" ${selected('poster', s.design?.itemDetail?.background?.background)}>Poster</option><option value="solid" ${selected('solid', s.design?.itemDetail?.background?.background)}>Sólido</option><option value="none" ${selected('none', s.design?.itemDetail?.background?.background)}>Sin imagen</option></select></label>
+          <label class="ui-field"><span>Oscurecimiento</span><select data-setting="detailShade"><option value="low" ${selected('low', s.design?.itemDetail?.background?.shade)}>Bajo</option><option value="medium" ${selected('medium', s.design?.itemDetail?.background?.shade || 'medium')}>Medio</option><option value="high" ${selected('high', s.design?.itemDetail?.background?.shade)}>Alto</option></select></label>
+          <label class="ui-field"><span>Blur</span><select data-setting="detailBlur"><option value="none" ${selected('none', s.design?.itemDetail?.background?.blur)}>Nada</option><option value="soft" ${selected('soft', s.design?.itemDetail?.background?.blur || 'soft')}>Suave</option><option value="strong" ${selected('strong', s.design?.itemDetail?.background?.blur)}>Fuerte</option></select></label>
+        </div>
+        <div class="settings-fieldset"><h4>Metadata visible</h4>
+          <p class="settings-help">Escribe claves separadas por comas. Usa “Ver claves detectadas” para consultar la chuleta de metadata real.</p>
+          <label class="ui-field"><span>Juegos</span><textarea data-setting="detailMetaGames" rows="2">${escapeHtml((s.design?.itemDetail?.metadataFields?.games || []).join(', '))}</textarea></label>
+          <label class="ui-field"><span>Películas</span><textarea data-setting="detailMetaMovies" rows="2">${escapeHtml((s.design?.itemDetail?.metadataFields?.movies || []).join(', '))}</textarea></label>
+          <label class="ui-field"><span>Series</span><textarea data-setting="detailMetaSeries" rows="2">${escapeHtml((s.design?.itemDetail?.metadataFields?.series || []).join(', '))}</textarea></label>
+          <button type="button" class="ui-action-button" data-load-metadata-keys>Ver claves detectadas</button>
+          <pre class="metadata-keys-cheatsheet" data-metadata-keys hidden></pre>
+        </div>
       </section>
       <section data-settings-panel="notifications" class="settings-tab-panel"><h3>Notificaciones</h3>
         <label class="ui-check"><input type="checkbox" data-setting="toastEnabled" ${checked(s.notifications?.toastEnabled !== false)}> Mostrar toast</label>
@@ -876,11 +931,23 @@ async function openSettingsModal() {
               playnite: get('sourceColorPlaynite')?.value || '#8fe1b5',
               other: get('sourceColorOther')?.value || '#d8b4fe'
             },
+            itemBackground: {
+              enabled: get('itemBgEnabled')?.checked !== false,
+              opacity: Number(get('itemBgOpacity')?.value ?? 0.32),
+              blur: Number(get('itemBgBlur')?.value || 12),
+              overlayOpacity: Number(get('itemBgOverlayOpacity')?.value ?? 0.72),
+              grayscale: Number(get('itemBgGrayscale')?.value ?? 0)
+            },
             cards: {
-              backdropOpacity: Number(get('cardBackdropOpacity')?.value ?? 0.33),
-              backdropBlur: Number(get('cardBackdropBlur')?.value || 14),
-              overlayOpacity: Number(get('cardOverlayOpacity')?.value ?? 0.72),
-              showSourceText: get('showSourceText')?.checked === true
+              radius: Number(get('cardRadius')?.value ?? 18)
+            },
+            itemDetail: {
+              background: { background: get('detailBg')?.value || 'backdrop', shade: get('detailShade')?.value || 'medium', blur: get('detailBlur')?.value || 'soft' },
+              metadataFields: {
+                games: String(get('detailMetaGames')?.value || '').split(',').map(v => v.trim()).filter(Boolean),
+                movies: String(get('detailMetaMovies')?.value || '').split(',').map(v => v.trim()).filter(Boolean),
+                series: String(get('detailMetaSeries')?.value || '').split(',').map(v => v.trim()).filter(Boolean)
+              }
             },
             background: {
               rotationSeconds: Number(get('bgRotationSeconds')?.value || 12),
@@ -891,9 +958,10 @@ async function openSettingsModal() {
             }
           },
           views: {
-            backlog: { cardSize: get('backlogSize')?.value || 'medium', itemsPerPage: Number(get('backlogItemsPerPage')?.value || 12) },
-            onDeck: { cardSize: get('onDeckSize')?.value || 'medium', itemsPerPage: Number(get('onDeckItemsPerPage')?.value || 12) },
-            collections: { cardSize: get('collectionsSize')?.value || s.views?.collections?.cardSize || 'medium', itemsPerPage: Number(get('collectionsItemsPerPage')?.value || s.views?.collections?.itemsPerPage || 12) }
+            backlog: { cardSize: get('backlogSize')?.value || s.views?.backlog?.cardSize || 'medium', itemsPerPage: Number(s.views?.backlog?.itemsPerPage || 12) },
+            onDeck: { cardSize: get('onDeckSize')?.value || s.views?.onDeck?.cardSize || 'medium', itemsPerPage: Number(s.views?.onDeck?.itemsPerPage || 12) },
+            collections: { cardSize: get('collectionsSize')?.value || s.views?.collections?.cardSize || 'medium', itemsPerPage: Number(s.views?.collections?.itemsPerPage || 12) },
+            database: { cardSize: s.views?.database?.cardSize || 'medium', itemsPerPage: Number(s.views?.database?.itemsPerPage || 60) }
           },
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
           notifications: { toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
@@ -1007,6 +1075,16 @@ async function openSettingsModal() {
       node.addEventListener('change', () => { readVisualDesignPatch(); persistVisualDesignPatch(); });
     });
     readVisualDesignPatch();
+    modalRoot.querySelector('[data-load-metadata-keys]')?.addEventListener('click', async event => {
+      const out = modalRoot.querySelector('[data-metadata-keys]');
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      try {
+        const response = await api('/api/items/metadata-keys');
+        if (out) { out.hidden = false; out.textContent = JSON.stringify(response.keys || response, null, 2); }
+      } catch (error) { ui.toast('No se pudieron cargar las claves', { detail: error.message || String(error) }); }
+      finally { btn.disabled = false; }
+    });
     modalRoot.querySelectorAll('[data-debug]').forEach(btn => btn.addEventListener('click', async () => {
       const kind = btn.dataset.debug === 'notification' ? 'notification' : btn.dataset.debug;
       btn.disabled = true;
@@ -1032,6 +1110,7 @@ async function openSettingsModal() {
   await saveCustomCssText('global', customCssText).catch(debugError);
   refreshCustomCss('global');
   applyDesign(state.settings);
+  views.update('database', { settings: state.settings, refresh: true });
   views.update('backlog', { settings: state.settings });
   views.update('on-deck', { settings: state.settings });
   views.update('current-content', { settings: state.settings });

@@ -9,6 +9,7 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
   let groupMatch = 'any';
   let activeTypes = new Set(['games','movies','series']);
   let cardSize = 'medium';
+  let viewMode = 'grid';
   let search = '';
   let page = 0;
   let isVisible = false;
@@ -22,9 +23,11 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
   function currentSize() { return ['small','medium','large'].includes(cardSize) ? cardSize : 'medium'; }
   function label(type) { return typeLabels[type] || 'Otros'; }
   function sourceLabel(source) { return source === 'plex' ? 'Plex' : source === 'playnite' ? 'Playnite' : 'Otros'; }
+  function typeLabelForList(item = {}) { return typeLabels[item.collectionType] || item.type || 'Item'; }
   function stars(value = 0) { const n = Math.max(0, Math.min(5, Number(value) || 0)); return `<span class="star-rating">${'★'.repeat(n)}${'☆'.repeat(5 - n)}</span>`; }
+  function ratingFor(item = {}) { return Number(item.rating || 0); }
   function date(value) { const d = new Date(value); return Number.isFinite(d.getTime()) ? d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : ''; }
-  function configuredPageSize() { return clamp(Number(settings.views?.collections?.itemsPerPage), 1, 120, 12); }
+  function configuredPageSize() { return clamp(Number(settings.views?.collections?.itemsPerPage), 1, 250, 12); }
   function showSourceText() { return settings.design?.cards?.showSourceText === true; }
   function dayStart(date = new Date()) { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; }
   function dateGroupFor(item = {}) {
@@ -55,7 +58,7 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
 
 
   function sessionKey() { return 'kiosko:v5.7:collections'; }
-  function saveSession() { try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize, activeGroupIds: [...activeGroupIds], groupMatch })); } catch {} }
+  function saveSession() { try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize, viewMode, activeGroupIds: [...activeGroupIds], groupMatch })); } catch {} }
   function loadSession() {
     try {
       const parsed = JSON.parse(localStorage.getItem(sessionKey()) || localStorage.getItem('kiosko:v5.4.2:collections') || localStorage.getItem('kiosko:v5.4:collections') || 'null');
@@ -64,6 +67,7 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
       if (typeof parsed.search === 'string') search = parsed.search;
       if (Number.isFinite(Number(parsed.page))) page = Math.max(0, Number(parsed.page));
       if (['small','medium','large'].includes(parsed.cardSize)) cardSize = parsed.cardSize;
+      if (['grid','list'].includes(parsed.viewMode)) viewMode = parsed.viewMode;
       if (Array.isArray(parsed.activeGroupIds)) activeGroupIds = new Set(parsed.activeGroupIds);
       if (['any','all'].includes(parsed.groupMatch)) groupMatch = parsed.groupMatch;
     } catch {}
@@ -235,20 +239,41 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     if (data.length > 1 && isVisible) bgTimer = setInterval(() => setBackground(data, { randomize: true }), backgroundRotationMs());
   }
 
+
+  function csvEscape(value) {
+    const text = String(value ?? '');
+    return /[",\n\r;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+  function downloadCsv() {
+    const headers = ['title','subtitle','source','type','collectionType','rating','completedAt','updatedAt','canonicalId'];
+    const rows = filtered();
+    const csv = [headers.join(',')].concat(rows.map(item => headers.map(key => csvEscape(key === 'rating' ? ratingFor(item) : item[key])).join(','))).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `kiosko-collection-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function renderControls({ force = false } = {}) {
     if (!controlsRoot || !isVisible) return;
     if (!force && controlsMounted) return;
     controlsMounted = true;
-    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-collection-quick-search value="${escapeAttr(search)}" placeholder="Buscar en colecciones" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button" data-collection-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-collection-filter-meta></span></button></div>`;
+    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-collection-quick-search value="${escapeAttr(search)}" placeholder="Buscar en colecciones" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button" data-collection-toggle-view aria-label="Cambiar vista">${viewMode === 'grid' ? 'Lista' : 'Grid'}</button><button type="button" class="view-actions-button view-filter-button" data-collection-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-collection-filter-meta></span></button></div>`;
     const searchInput = controlsRoot.querySelector('[data-collection-quick-search]');
     searchInput?.addEventListener('input', event => { search = event.target.value || ''; page = 0; render(); });
+    controlsRoot.querySelector('[data-collection-toggle-view]')?.addEventListener('click', () => { viewMode = viewMode === 'grid' ? 'list' : 'grid'; renderControls({ force: true }); render(); });
     updateControlsState();
   }
 
   function updateControlsState() {
     if (!controlsRoot || !isVisible) return;
     const meta = controlsRoot.querySelector('[data-collection-filter-meta]');
-    if (meta) meta.textContent = `${activeTypes.size}/3 · ${currentSize().slice(0,1).toUpperCase()} · ${configuredPageSize()}${activeGroupIds.size ? ` · ${activeGroupIds.size} grupo(s)` : ''}`;
+    if (meta) meta.textContent = `${activeTypes.size}/3 · ${viewMode === 'grid' ? currentSize().slice(0,1).toUpperCase() : 'Lista'} · ${configuredPageSize()}${activeGroupIds.size ? ` · ${activeGroupIds.size} grupo(s)` : ''}`;
   }
 
   async function openControlsModal() {
@@ -264,7 +289,7 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
         </div>
         <label class="ui-field"><span>Items por página</span><input data-items-per-page type="number" min="1" max="120" value="${escapeAttr(configuredPageSize())}"></label>
       </section>
-      <section class="controls-modal__section"><h3>Grupos</h3>
+      <section class="controls-modal__section"><h3>Modo</h3><div class="segmented-control"><label><input type="radio" name="view-mode" value="grid" ${viewMode === 'grid' ? 'checked' : ''}><span>Grid</span></label><label><input type="radio" name="view-mode" value="list" ${viewMode === 'list' ? 'checked' : ''}><span>Lista</span></label></div></section><section class="controls-modal__section"><h3>Grupos</h3>
         <div class="controls-modal__checks groups-filter">
           ${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span data-group-chip="${escapeAttr(group.id)}">${escapeHtml(group.name)}</span><small>${activeGroupCount(group)} · ${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">Todavía no hay grupos. Puedes crearlos en Opciones → Colecciones.</p>'}
         </div>
@@ -279,9 +304,11 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
       body,
       actions: [
         { label: 'Cancelar', value: null },
+        { label: 'Exportar CSV', onClick: () => { downloadCsv(); return false; } },
         { label: 'Aplicar', variant: 'primary', onClick: root => ({
           activeTypes: [...root.querySelectorAll('[data-filter-type]:checked')].map(input => input.dataset.filterType),
           cardSize: root.querySelector('input[name="collection-size"]:checked')?.value || currentSize(),
+          viewMode: root.querySelector('input[name="view-mode"]:checked')?.value || viewMode,
           search: root.querySelector('[data-control-search]')?.value || search,
           itemsPerPage: Number(root.querySelector('[data-items-per-page]')?.value || configuredPageSize()),
           activeGroupIds: [...root.querySelectorAll('[data-filter-group]:checked')].map(input => input.dataset.filterGroup),
@@ -293,12 +320,13 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     activeTypes = new Set(result.activeTypes.filter(type => ['games','movies','series'].includes(type)));
     if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']);
     cardSize = ['small','medium','large'].includes(result.cardSize) ? result.cardSize : 'medium';
+    viewMode = ['grid','list'].includes(result.viewMode) ? result.viewMode : viewMode;
     activeGroupIds = new Set((result.activeGroupIds || []).filter(Boolean));
     groupMatch = ['any','all'].includes(result.groupMatch) ? result.groupMatch : 'any';
     search = result.search || search;
     await refreshCollectionGroups();
     page = 0;
-    const itemsPerPage = Math.max(1, Math.min(120, Number(result.itemsPerPage) || configuredPageSize()));
+    const itemsPerPage = Math.max(1, Math.min(250, Number(result.itemsPerPage) || configuredPageSize()));
     await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { collections: { cardSize, itemsPerPage } } }) }).catch(() => {});
     settings.views = settings.views || {};
     settings.views.collections = { ...(settings.views.collections || {}), cardSize, itemsPerPage };
@@ -313,6 +341,14 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     return `<div class="grid-empty grid-empty--rich"><strong>No hay resultados con estos filtros</strong><p>Prueba a activar más tipos o cambia la búsqueda actual.</p></div>`;
   }
 
+
+  function listMarkup(rows = []) {
+    return `<div class="kiosko-list" role="table">
+      <div class="kiosko-list__row kiosko-list__row--head" role="row"><span>Título</span><span>Fuente</span><span>Tipo</span><span>Rating</span><span>Fecha</span></div>
+      ${rows.map(item => `<button type="button" class="kiosko-list__row" data-id="${escapeAttr(item.id)}" data-source="${escapeAttr(item.source || '')}"><span><strong>${escapeHtml(item.title || 'Sin título')}</strong><small>${escapeHtml(item.subtitle || '')}</small></span><span>${escapeHtml(item.source || '')}</span><span>${escapeHtml(typeLabelForList(item))}</span><span>${ratingFor(item) ? ratingFor(item) : '—'}</span><span>${escapeHtml(new Date(item.completedAt || item.lastActivityAt || item.updatedAt || item.createdAt || '').toLocaleDateString('es-ES'))}</span></button>`).join('')}
+    </div>`;
+  }
+
   function render() {
     if (!el || !isVisible) return;
     const { rows, total, pages } = visible();
@@ -323,9 +359,11 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
     el.querySelector('[data-prev]').disabled = page <= 0;
     el.querySelector('[data-next]').disabled = page >= pages - 1;
     updateControlsState();
-    const grid = el.querySelector('.media-grid'); const cfg = sizeMap[currentSize()];
+    const grid = el.querySelector('.media-grid');
+    grid.classList.toggle('media-grid--list', viewMode === 'list'); const cfg = sizeMap[currentSize()];
     grid.style.setProperty('--card-width', `${cfg.width}px`); grid.style.setProperty('--card-gap', `${cfg.gap}px`); grid.style.setProperty('--card-poster-size', `${cfg.poster}px`); grid.style.setProperty('--mobile-columns', String(cfg.mobileColumns));
     if (!rows.length) { grid.innerHTML = emptyMarkup(); restartBackgroundRotation(); saveSession(); return; }
+    if (viewMode === 'list') { grid.innerHTML = listMarkup(rows); restartBackgroundRotation(); saveSession(); return; }
     grid.innerHTML = rows.map(item => {
       const bg = item.backdrop || item.poster || '';
       return `<article class="media-card media-card--rich completed-card" data-id="${escapeAttr(item.id)}" data-source="${escapeAttr(item.source)}">
@@ -353,7 +391,8 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
       item,
       context: 'collections',
       toast: message => ui.toast(message),
-      collectionGroups
+      collectionGroups,
+      settings
     });
   }
 
@@ -374,7 +413,7 @@ export function createCollectionsView({ api, ui, controlsRoot } = {}) {
         if (groupMatchButton) { groupMatch = groupMatchButton.dataset.groupMatchSet || 'any'; page = 0; render(); return; }
         const chip = event.target.closest('[data-group-chip]');
         if (chip) { activeGroupIds = new Set([chip.dataset.groupChip]); groupMatch = 'any'; page = 0; render(); return; }
-        const card = event.target.closest('.media-card'); if (card) { const item = find(card.dataset.id); if (item) await editItem(item); }
+        const card = event.target.closest('[data-id]'); if (card) { const item = find(card.dataset.id); if (item) await editItem(item); }
       });
       controlsRoot?.addEventListener('click', event => {
         if (!isVisible) return;

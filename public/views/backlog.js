@@ -11,6 +11,7 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
   let groupMatch = 'any';
   let activeTypes = new Set(['games','movies','series']);
   let cardSize = 'medium';
+  let viewMode = 'grid';
   let search = '';
   let page = 0;
   let isVisible = false;
@@ -40,7 +41,7 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
     return isRelatedToOnDeck(item) ? `<div class="media-card__notice">Serie en On Deck</div>` : '';
   }
 
-  function configuredPageSize() { return clamp(Number(settings.views?.backlog?.itemsPerPage), 1, 60, 12); }
+  function configuredPageSize() { return clamp(Number(settings.views?.backlog?.itemsPerPage), 1, 250, 12); }
   function itemDate(item) { return Date.parse(item.lastActivityAt || item.updatedAt || item.createdAt || ''); }
   function startOfToday() { const d = new Date(); d.setHours(0,0,0,0); return d.getTime(); }
   function groupLabelFor(item) {
@@ -84,7 +85,7 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
 
   function sessionKey() { return 'kiosko:v5.7:backlog'; }
   function saveSession() {
-    try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize, activeGroupIds: [...activeGroupIds], groupMatch })); } catch {}
+    try { localStorage.setItem(sessionKey(), JSON.stringify({ activeTypes: [...activeTypes], search, page, cardSize, viewMode, activeGroupIds: [...activeGroupIds], groupMatch })); } catch {}
   }
   function loadSession() {
     try {
@@ -94,6 +95,7 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
       if (typeof parsed.search === 'string') search = parsed.search;
       if (Number.isFinite(Number(parsed.page))) page = Math.max(0, Number(parsed.page));
       if (['small','medium','large'].includes(parsed.cardSize)) cardSize = parsed.cardSize;
+      if (['grid','list'].includes(parsed.viewMode)) viewMode = parsed.viewMode;
       if (Array.isArray(parsed.activeGroupIds)) activeGroupIds = new Set(parsed.activeGroupIds);
       if (['any','all'].includes(parsed.groupMatch)) groupMatch = parsed.groupMatch;
     } catch {}
@@ -179,19 +181,40 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
     }
   }
 
+
+  function csvEscape(value) {
+    const text = String(value ?? '');
+    return /[",\n\r;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+  function downloadCsv() {
+    const headers = ['title','subtitle','source','type','collectionType','rating','completedAt','updatedAt','canonicalId'];
+    const rows = allItems();
+    const csv = [headers.join(',')].concat(rows.map(item => headers.map(key => csvEscape(key === 'rating' ? ratingFor(item) : item[key])).join(','))).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `kiosko-backlog-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   function renderControls({ force = false } = {}) {
     if (!controlsRoot || !isVisible) return;
     if (!force && controlsMounted) return;
     controlsMounted = true;
-    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-backlog-quick-search value="${escapeAttr(search)}" placeholder="Buscar en backlog" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button" data-backlog-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-backlog-filter-meta></span></button></div>`;
+    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-backlog-quick-search value="${escapeAttr(search)}" placeholder="Buscar en backlog" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button" data-backlog-toggle-view aria-label="Cambiar vista">${viewMode === 'grid' ? 'Lista' : 'Grid'}</button><button type="button" class="view-actions-button view-filter-button" data-backlog-open-controls aria-label="Filtros y vista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v2H4V6Zm3 5h10v2H7v-2Zm3 5h4v2h-4v-2Z"/></svg><span class="view-filter-button__label">Filtros</span><span class="view-filter-button__meta" data-backlog-filter-meta></span></button></div>`;
     controlsRoot.querySelector('[data-backlog-quick-search]')?.addEventListener('input', event => { search = event.target.value || ''; page = 0; render(); });
+    controlsRoot.querySelector('[data-backlog-toggle-view]')?.addEventListener('click', () => { viewMode = viewMode === 'grid' ? 'list' : 'grid'; renderControls({ force: true }); render(); });
     updateControlsState();
   }
 
   function updateControlsState() {
     if (!controlsRoot || !isVisible) return;
     const meta = controlsRoot.querySelector('[data-backlog-filter-meta]');
-    if (meta) meta.textContent = `${activeTypes.size}/3 · ${currentSize().slice(0,1).toUpperCase()}${activeGroupIds.size ? ` · ${activeGroupIds.size} grupo(s)` : ''}`;
+    if (meta) meta.textContent = `${activeTypes.size}/3 · ${viewMode === 'grid' ? currentSize().slice(0,1).toUpperCase() : 'Lista'}${activeGroupIds.size ? ` · ${activeGroupIds.size} grupo(s)` : ''}`;
   }
 
   async function openControlsModal() {
@@ -200,10 +223,10 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
       <section class="controls-modal__section"><h3>Tipos</h3><div class="controls-modal__checks">
         ${['games','movies','series'].map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-type="${type}" ${activeTypes.has(type) ? 'checked' : ''}><span>${typeLabels[type]}</span><small>${counts[type] || 0}</small></label>`).join('')}
       </div></section>
-      <section class="controls-modal__section"><h3>Tamaño de carátula</h3><div class="controls-modal__sizes">
+      <section class="controls-modal__section"><h3>Vista y paginación</h3><div class="controls-modal__sizes">
         ${[['small','S'],['medium','M'],['large','L']].map(([value,label]) => `<label class="controls-modal__toggle"><input type="radio" name="backlog-size" value="${value}" ${currentSize() === value ? 'checked' : ''}><span>${label}</span></label>`).join('')}
-      </div></section>
-      <section class="controls-modal__section"><h3>Grupos</h3>
+      </div><label class="ui-field"><span>Items por página</span><input data-items-per-page type="number" min="1" max="250" value="${escapeAttr(configuredPageSize())}"></label></section>
+      <section class="controls-modal__section"><h3>Modo</h3><div class="segmented-control"><label><input type="radio" name="view-mode" value="grid" ${viewMode === 'grid' ? 'checked' : ''}><span>Grid</span></label><label><input type="radio" name="view-mode" value="list" ${viewMode === 'list' ? 'checked' : ''}><span>Lista</span></label></div></section><section class="controls-modal__section"><h3>Grupos</h3>
         <div class="controls-modal__checks groups-filter">${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span data-group-chip="${escapeAttr(group.id)}">${escapeHtml(group.name)}</span><small>${activeGroupCount(group)} · ${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">Todavía no hay grupos.</p>'}</div>
         <div class="segmented-control" role="group" aria-label="Coincidencia de grupos"><label><input type="radio" name="backlog-group-match" value="any" ${groupMatch === 'any' ? 'checked' : ''}><span>Cualquiera</span></label><label><input type="radio" name="backlog-group-match" value="all" ${groupMatch === 'all' ? 'checked' : ''}><span>Todos</span></label></div>
       </section>
@@ -213,10 +236,13 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
       body,
       actions: [
         { label: 'Cancelar', value: null },
+        { label: 'Exportar CSV', onClick: () => { downloadCsv(); return false; } },
         { label: 'Aplicar', variant: 'primary', onClick: root => ({
           activeTypes: [...root.querySelectorAll('[data-filter-type]:checked')].map(input => input.dataset.filterType),
           cardSize: root.querySelector('input[name="backlog-size"]:checked')?.value || currentSize(),
+          viewMode: root.querySelector('input[name="view-mode"]:checked')?.value || viewMode,
           search: root.querySelector('[data-control-search]')?.value || search,
+          itemsPerPage: Number(root.querySelector('[data-items-per-page]')?.value || configuredPageSize()),
           activeGroupIds: [...root.querySelectorAll('[data-filter-group]:checked')].map(input => input.dataset.filterGroup),
           groupMatch: root.querySelector('input[name="backlog-group-match"]:checked')?.value || 'any'
         }) }
@@ -226,18 +252,21 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
     activeTypes = new Set(result.activeTypes.filter(type => ['games','movies','series'].includes(type)));
     if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']);
     cardSize = ['small','medium','large'].includes(result.cardSize) ? result.cardSize : 'medium';
+    viewMode = ['grid','list'].includes(result.viewMode) ? result.viewMode : viewMode;
     activeGroupIds = new Set((result.activeGroupIds || []).filter(Boolean));
     groupMatch = ['any','all'].includes(result.groupMatch) ? result.groupMatch : 'any';
     search = result.search || search;
     page = 0;
-    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { backlog: { cardSize } } }) }).catch(() => {});
+    const itemsPerPage = Math.max(1, Math.min(250, Number(result.itemsPerPage) || configuredPageSize()));
+    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ views: { backlog: { cardSize, itemsPerPage } } }) }).catch(() => {});
+    settings.views = settings.views || {}; settings.views.backlog = { ...(settings.views.backlog || {}), cardSize, itemsPerPage };
     updateControlsState();
     render();
   }
 
   function emptyMarkup() {
     if (!rawItems().length) {
-      return `<div class="grid-empty grid-empty--rich"><strong>El backlog está vacío</strong><p>Cuando entre nuevo contenido desde Plex o lances juegos desde Playnite, aparecerán aquí.</p></div>`;
+      return `<div class="grid-empty grid-empty--rich"><strong>El backlog está vacío</strong><p>Añade desde Base de datos los items cuya actividad quieras seguir.</p></div>`;
     }
     return `<div class="grid-empty grid-empty--rich"><strong>No hay resultados con estos filtros</strong><p>Prueba a activar más tipos o cambia la búsqueda actual.</p></div>`;
   }
@@ -327,6 +356,26 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
     return `<div class="media-card__groups">${groups.slice(0, 3).map(group => `<span data-group-chip="${escapeAttr(group.id)}">${escapeHtml(group.name)}</span>`).join('')}${groups.length > 3 ? `<span>+${groups.length - 3}</span>` : ''}</div>`;
   }
 
+
+
+  function formatMiniDate(value) {
+    const d = new Date(value || '');
+    return Number.isFinite(d.getTime()) ? d.toLocaleDateString('es-ES', { day: '2-digit', month: 'short' }) : '';
+  }
+  function minimalDateMarkup(item = {}) {
+    const completed = formatMiniDate(item.completedAt);
+    if (completed) return `<time class="media-card__date" title="Finalizado">✓ ${escapeHtml(completed)}</time>`;
+    const active = formatMiniDate(item.lastActivityAt || item.lastSeenAt || item.updatedAt || item.createdAt);
+    return active ? `<time class="media-card__date" title="Última actividad">↻ ${escapeHtml(active)}</time>` : '';
+  }
+
+  function listMarkup(rows = []) {
+    return `<div class="kiosko-list" role="table">
+      <div class="kiosko-list__row kiosko-list__row--head" role="row"><span>Título</span><span>Fuente</span><span>Tipo</span><span>Rating</span><span>Fecha</span></div>
+      ${rows.map(item => `<button type="button" class="kiosko-list__row" data-id="${escapeAttr(item.id)}" data-source="${escapeAttr(item.source || '')}"><span><strong>${escapeHtml(item.title || 'Sin título')}</strong><small>${escapeHtml(item.subtitle || '')}</small></span><span>${escapeHtml(item.source || '')}</span><span>${escapeHtml((typeof labelForItem === 'function') ? labelForItem(item) : ((typeof label === 'function') ? label(item) : (item.collectionType || item.type || '')))}</span><span>${ratingFor(item) ? ratingFor(item) : '—'}</span><span>${escapeHtml(new Date(item.completedAt || item.lastActivityAt || item.updatedAt || item.createdAt || '').toLocaleDateString('es-ES'))}</span></button>`).join('')}
+    </div>`;
+  }
+
   function render() {
     if (!el || !isVisible) return;
     const { items, total, pages } = pageItems();
@@ -341,12 +390,14 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
     const cfg = sizeMap[currentSize()];
     grid.style.setProperty('--card-width', `${cfg.width}px`);
     grid.style.setProperty('--card-gap', `${cfg.gap}px`); grid.style.setProperty('--card-poster-size', `${cfg.poster}px`); grid.style.setProperty('--mobile-columns', String(cfg.mobileColumns));
+    grid.classList.toggle('media-grid--list', viewMode === 'list');
     if (!items.length) {
       grid.innerHTML = emptyMarkup();
       restartBackgroundRotation();
       saveSession();
       return;
     }
+    if (viewMode === 'list') { grid.innerHTML = listMarkup(items); restartBackgroundRotation(); saveSession(); return; }
     let lastGroup = '';
     const groupCounts = groupCountsForItems(items);
     grid.innerHTML = items.map(item => {
@@ -361,6 +412,7 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
           <div class="media-card__poster">${item.poster ? `<img src="${escapeAttr(item.poster)}" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0, 1))}</div>`}</div>
           <div class="media-card__meta">
             <strong>${escapeHtml(item.title || 'Sin título')}</strong>
+            ${minimalDateMarkup(item)}
             <span>${escapeHtml(item.subtitle || labelForItem(item))}</span>
             ${rating ? `<div class="media-card__completion">${stars(rating)}</div>` : ''}
             ${relatedOnDeckMarkup(item)}
@@ -382,7 +434,8 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
       item,
       context: 'backlog',
       toast: message => ui.toast(message),
-      collectionGroups
+      collectionGroups,
+      settings
     });
   }
 
@@ -400,7 +453,7 @@ export function createBacklogView({ api, ui, controlsRoot } = {}) {
       el.addEventListener('click', async (event) => {
         if (event.target.closest('[data-prev]')) { page -= 1; render(); return; }
         if (event.target.closest('[data-next]')) { page += 1; render(); return; }
-        const card = event.target.closest('.media-card');
+        const card = event.target.closest('[data-id]');
         const typeButton = event.target.closest('[data-toggle-type]');
         if (typeButton) { const type = typeButton.dataset.toggleType; if (activeTypes.has(type)) activeTypes.delete(type); else activeTypes.add(type); if (activeTypes.size < 1) activeTypes = new Set(['games','movies','series']); page = 0; render(); return; }
         const clearGroup = event.target.closest('[data-clear-group]');

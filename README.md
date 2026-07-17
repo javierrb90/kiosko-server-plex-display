@@ -1,4 +1,4 @@
-# Kiosko Media Center v6.1
+# Kiosko Media Center v6.5
 
 Kiosko Media Center es una aplicación web local para centralizar novedades, seguimiento y cierre de contenido multimedia y juegos.
 
@@ -101,3 +101,35 @@ data/items.json
 ```
 
 Las vistas existentes siguen funcionando igual, pero ahora todo item que pasa por Backlog, On Deck o Colecciones queda registrado en una capa común para futuras vistas y exportaciones.
+
+
+## v6.5 · Fase 2
+
+v6.5 completa la segunda fase del plan v6.x:
+
+- vista Base de datos sobre Item Registry;
+- límite de On Deck de 3 items por categoría;
+- modal de reemplazo cuando se alcanza el límite;
+- modo Grid/Lista en las vistas principales;
+- exportación CSV de vistas filtradas.
+
+
+## v6.6 · JSON Database Core
+
+Esta versión consolida la base de datos JSON migrable:
+
+- `items.json` pasa a schema versionado con entidades permanentes.
+- `item-activity.json` registra actividad asociada a items.
+- `backlog-entries.json` prepara Backlog como bandeja de recientes.
+- Las series son la entidad principal; episodios y temporadas actualizan la serie mediante actividad.
+- Base de datos permite eliminar definitivamente un item de todas las vistas.
+- Las fechas principales son `firstSeenAt`, `lastActivityAt` y `completedAt`.
+- El centro de notificaciones sigue independiente en JSON.
+
+## v6.7 · Item Detail & Tracking
+
+- Backlog pasa a ser seguimiento manual de actividad.
+- La ficha del item se reorganiza con acciones contextuales y menú `…`.
+- Diseño y metadata de ficha se configuran desde Opciones → Ficha.
+- Calificar ya no retira automáticamente de On Deck.
+- Base de datos se refresca en tiempo real también con Playnite.
