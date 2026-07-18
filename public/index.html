@@ -20,12 +20,14 @@
         <span class="notifications-trigger__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22a2.4 2.4 0 0 0 2.3-1.7H9.7A2.4 2.4 0 0 0 12 22Zm7-5-1.7-2.2V10a5.3 5.3 0 0 0-4-5.1V3a1.3 1.3 0 1 0-2.6 0v1.9a5.3 5.3 0 0 0-4 5.1v4.8L5 17v1.2h14V17Z"/></svg></span>
         <span class="notifications-trigger__badge" data-notifications-badge hidden>0</span>
       </button>
-      <nav id="dock" class="dock dock--flat" aria-label="Navegación principal">
-        <button data-nav="database" class="topbar-button" type="button" aria-label="Base de datos"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5c0-1.7 3.6-3 8-3s8 1.3 8 3v14c0 1.7-3.6 3-8 3s-8-1.3-8-3V5Zm8 1.6c3.5 0 6-.8 6-1.6s-2.5-1.6-6-1.6-6 .8-6 1.6 2.5 1.6 6 1.6Zm6 3.1c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V12c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6V9.7Zm0 5c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V19c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6v-4.3Z"/></svg></span></button>
-        <button data-nav="backlog" class="dock__item--active topbar-button" type="button" aria-label="Backlog"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 5h16v3H4v-3Zm0 5h10v3H4v-3Zm13 .5 2 2 3-4 1.6 1.2-4.4 5.8-3.6-3.6L17 15.5Z"/></svg></span></button>
-        <button data-nav="on-deck" class="topbar-button" type="button" aria-label="On Deck"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v3H5V4Zm0 5h10v3H5V9Zm0 5h8v3H5v-3Zm11.2 1.2V11l4.8 3-4.8 3Z"/></svg></span></button>
-        <button data-nav="collections" class="topbar-button" type="button" aria-label="Colecciones"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v7H4v-7Zm9 0h7v7h-7v-7Z"/></svg></span></button>
-      </nav>
+      <div class="primary-navigation" aria-label="Navegación principal">
+        <button data-nav="database" class="topbar-button primary-navigation__database" type="button" aria-label="Base de datos"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5c0-1.7 3.6-3 8-3s8 1.3 8 3v14c0 1.7-3.6 3-8 3s-8-1.3-8-3V5Zm8 1.6c3.5 0 6-.8 6-1.6s-2.5-1.6-6-1.6-6 .8-6 1.6 2.5 1.6 6 1.6Zm6 3.1c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V12c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6V9.7Zm0 5c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V19c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6v-4.3Z"/></svg></span></button>
+        <nav id="dock" class="dock dock--flat dock--workspaces" aria-label="Espacios de trabajo">
+          <button data-nav="backlog" class="dock__item--active topbar-button" type="button" aria-label="Backlog"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 5h16v3H4v-3Zm0 5h10v3H4v-3Zm13 .5 2 2 3-4 1.6 1.2-4.4 5.8-3.6-3.6L17 15.5Z"/></svg></span></button>
+          <button data-nav="on-deck" class="topbar-button" type="button" aria-label="On Deck"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v3H5V4Zm0 5h10v3H5V9Zm0 5h8v3H5v-3Zm11.2 1.2V11l4.8 3-4.8 3Z"/></svg></span></button>
+          <button data-nav="collections" class="topbar-button" type="button" aria-label="Colección"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h7v7H4V5Zm9 0h7v7h-7V5ZM4 14h7v7H4v-7Zm9 0h7v7h-7v-7Z"/></svg></span></button>
+        </nav>
+      </div>
     </div>
     <div class="app-topbar__right">
       <div id="view-controls" class="app-topbar__controls" aria-label="Controles de vista"></div>

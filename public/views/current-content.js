@@ -24,7 +24,7 @@ export function createCurrentContentView({ api, ui, controlsRoot } = {}) {
     const key = canonicalFor(media);
     const completion = ratings?.[key];
     if (onDeckMap?.[key]) return `<span class="deck-pill">On Deck</span>`;
-    if (completion?.rating) return `<span class="current-status-rated">${stars(completion.rating)}<button type="button" data-current-remove-rating aria-label="Eliminar de Colecciones">×</button></span>`;
+    if (completion?.rating) return `<span class="current-status-rated">${stars(completion.rating)}<button type="button" data-current-remove-rating aria-label="Eliminar de Colección">×</button></span>`;
     if (backlogMap?.[key]) return `<span class="deck-pill deck-pill--backlog">Backlog</span>`;
     return `<span class="deck-pill deck-pill--neutral">Sin clasificar</span>`;
   }
@@ -39,7 +39,7 @@ export function createCurrentContentView({ api, ui, controlsRoot } = {}) {
     const label = media.source === 'plex' ? 'Marcar como visto' : 'Marcar como terminado';
     return `<div class="current-rating-inline" aria-label="${escapeAttr(label)}">
       <span>Puntuar</span>
-      <div class="current-rating-stars">${[1,2,3,4,5].map(n => `<button type="button" data-current-rate="${n}" aria-label="${n} estrellas">${n <= currentRating ? '★' : '☆'}</button>`).join('')}</div><small>Al puntuar pasa a Colecciones</small>
+      <div class="current-rating-stars">${[1,2,3,4,5].map(n => `<button type="button" data-current-rate="${n}" aria-label="${n} estrellas">${n <= currentRating ? '★' : '☆'}</button>`).join('')}</div><small>Al puntuar pasa a Colección</small>
     </div>`;
   }
   async function clearCurrent() { await api('/api/current/clear', { method: 'POST' }); current = null; render(null); ui.toast('Contenido actual limpiado'); }
@@ -52,7 +52,7 @@ export function createCurrentContentView({ api, ui, controlsRoot } = {}) {
     const completion = ratings?.[canonicalFor(current)];
     if (!completion?.id) return;
     await api(`/api/completions/${encodeURIComponent(completion.id)}`, { method: 'DELETE' });
-    ui.toast('Eliminado de Colecciones');
+    ui.toast('Eliminado de Colección');
   }
   function openActions() { if (!current) return; ui.actionSheet({ title: current?.title || 'Contenido actual', actions: [ { id: 'clear', label: 'Limpiar contenido actual', description: 'Dejar la vista Actual vacía', run: clearCurrent } ] }); }
   function renderPrimaryActions(media) {

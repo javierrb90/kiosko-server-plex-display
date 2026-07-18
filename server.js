@@ -1478,15 +1478,21 @@ function isGameInDeckOrCompleted(item = {}) {
 }
 
 async function updateOnDeckActivityFromItem(input = {}) {
-  const item = normalizeDeckItem(input.source === "playnite" ? normalizePlayniteBacklogItem(input) : normalizePlexBacklogItem(input));
+  const normalized = input?.canonicalId && input?.source
+    ? input
+    : (input.source === "playnite" ? normalizePlayniteBacklogItem(input) : normalizePlexBacklogItem(input));
+  const item = normalizeDeckItem(normalized);
   if (!item?.canonicalId) return null;
   const existing = onDeckStore.findByCanonicalId(item.canonicalId);
   if (!existing) return null;
+  const detail = String(item.detail || item.subtitle || existing.detail || existing.subtitle || "").trim();
   const updated = await onDeckStore.upsert({
     ...existing,
     ...item,
+    detail,
+    subtitle: detail,
     addedToDeckAt: existing.addedToDeckAt,
-    lastActivityAt: new Date().toISOString()
+    lastActivityAt: item.lastActivityAt || new Date().toISOString()
   });
   broadcastBacklogAndCompletions();
   return updated;
@@ -1681,10 +1687,6 @@ async function handleTautulliWebhook(req, res) {
     runtime.plex = event.plex;
     runtime.currentContent = { ...event.plex, source: "plex", kind: "plex" };
     await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
-    if (event.startsPlayback) {
-      await updateOnDeckActivityFromItem({ ...metadata, source: "plex" });
-    }
-
     const isActivity = event.isLibraryAdded || event.startsPlayback || event.isWatched;
     let trackedItem = null;
     let savedBacklogItem = null;
@@ -1704,6 +1706,8 @@ async function handleTautulliWebhook(req, res) {
       trackedItem.subtitle = plexActivityDetail(metadata, event) || trackedItem.subtitle;
       trackedItem.detail = trackedItem.subtitle;
       trackedItem.meta = { ...(trackedItem.meta || {}), activityKind: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : event.startsPlayback ? "played" : "activity" };
+      trackedItem = canonicalizePlexSeriesItem(trackedItem);
+      await updateOnDeckActivityFromItem(trackedItem);
       await itemRegistryStore.upsert(trackedItem, { forceSubtitle: true, charred: shouldClearCharred(event.isLibraryAdded ? "plexLibraryAdded" : "plexPlayback") ? false : undefined, activity: { eventType: trackedItem.meta?.backlogSource || event.rawEvent || "plex_activity", title: trackedItem.title, subtitle: trackedItem.subtitle, activityAt: trackedItem.lastActivityAt } });
 
       const followed = findBacklogItemByCanonicalId(trackedItem.canonicalId);

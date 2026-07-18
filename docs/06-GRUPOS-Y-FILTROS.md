@@ -8,7 +8,7 @@ Se usan en:
 
 - Backlog;
 - On Deck;
-- Colecciones;
+- Colección;
 - fichas de detalle;
 - filtros.
 
@@ -83,7 +83,7 @@ Este orden se mantiene en:
 
 - Backlog;
 - On Deck;
-- Colecciones;
+- Colección;
 - cabecera;
 - modal de filtros.
 

@@ -10,7 +10,7 @@ Archivo:
 data/items.json
 ```
 
-Su objetivo es que un item no desaparezca del conocimiento de la app sólo porque salga de Backlog, On Deck o Colecciones.
+Su objetivo es que un item no desaparezca del conocimiento de la app sólo porque salga de Backlog, On Deck o Colección.
 
 ## Por qué existe
 
@@ -42,7 +42,7 @@ Las vistas siguen existiendo y funcionando, pero el registro central permite esc
 Cada vez que hay cambios relevantes en items, se programa una sincronización diferida:
 
 ```text
-Backlog + On Deck + Colecciones
+Backlog + On Deck + Colección
 → Item Registry
 ```
 
@@ -92,7 +92,7 @@ El registry no reemplaza todavía los stores existentes. Refleja su estado.
 |---|---|
 | `states.inBacklog` | El item está en Backlog. |
 | `states.inOnDeck` | El item está en On Deck. |
-| `states.completed` | El item está en Colecciones. |
+| `states.completed` | El item está en Colección. |
 | `status` | Resumen del estado principal. |
 
 Prioridad de `status`:
@@ -106,7 +106,7 @@ known
 
 ## Known
 
-Un item con estado `known` es un item que la aplicación conoce, pero que actualmente no está en Backlog, On Deck ni Colecciones.
+Un item con estado `known` es un item que la aplicación conoce, pero que actualmente no está en Backlog, On Deck ni Colección.
 
 Esto será importante para la futura vista Base de datos.
 

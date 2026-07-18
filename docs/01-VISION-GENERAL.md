@@ -17,7 +17,7 @@ Con esa información construye una experiencia de seguimiento:
 ```text
 Lo nuevo o pendiente entra en Backlog
 Lo que quieres seguir activamente pasa a On Deck
-Lo que terminas o puntúas pasa a Colecciones
+Lo que terminas o puntúas pasa a Colección
 Lo que ocurre ahora se muestra como Actual / toast
 ```
 
@@ -69,9 +69,9 @@ Serie en On Deck
 
 Esto permite ver la novedad sin duplicar el seguimiento de la serie.
 
-### 3. Colecciones como historial
+### 3. Colección como historial
 
-Colecciones guarda lo que ya fue completado, visto, terminado o puntuado.
+Colección guarda lo que ya fue completado, visto, terminado o puntuado.
 
 No es sólo un archivo: también permite filtrar, buscar y organizar con grupos.
 

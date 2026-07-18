@@ -3,7 +3,7 @@ import { escapeHtml, escapeAttr, clamp, typeFor, searchHaystack, itemMatchesGrou
 import { itemCardMarkup, itemListMarkup, activeFilterChipsMarkup, paginationMarkup } from '../core/item-renderer.js';
 
 const TYPE_LABELS = { games: 'Juegos', movies: 'Películas', series: 'Series' };
-const STATUS_LABELS = { '': 'Todos', known: 'Base', backlog: 'Backlog', 'on-deck': 'On Deck', completed: 'Colecciones' };
+const STATUS_LABELS = { '': 'Todos', known: 'Base', backlog: 'Backlog', 'on-deck': 'On Deck', completed: 'Colección' };
 const SIZE_MAP = { small: { width: 250, gap: 12, poster: 82, simpleWidth: 150, mobileColumns: 4 }, medium: { width: 330, gap: 16, poster: 112, simpleWidth: 190, mobileColumns: 3 }, large: { width: 430, gap: 20, poster: 150, simpleWidth: 240, mobileColumns: 2 } };
 const BASE_TYPES = [
   { id: 'games', singular: 'Juego', plural: 'Juegos' },
@@ -95,10 +95,13 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   }
   function ensureActiveTypes() {
     const ids = availableTypes();
-    if (!activeTypes.size || [...activeTypes].some(type => !ids.includes(type))) activeTypes = new Set(ids);
+    activeTypes = new Set([...activeTypes].filter(type => ids.includes(type)));
+    if (!activeTypes.size) applyWorkspaceTypes();
   }
   function workspaceKey(){ return id === 'on-deck' ? 'onDeck' : id; }
   function workspaceConfig(){ return settings?.workspaces?.[workspaceKey()] || {}; }
+  function workspaceVisibleTypes(){ const configured=workspaceConfig().visibleTypes; return Array.isArray(configured) && configured.length ? configured : availableTypes(); }
+  function applyWorkspaceTypes(){ activeTypes = new Set(workspaceVisibleTypes().filter(type => availableTypes().includes(type))); if (!activeTypes.size) activeTypes = new Set(availableTypes()); }
   function currentSize() { return cardSize || workspaceConfig().cardSize || settings?.views?.[id]?.cardSize || 'medium'; }
   function queryUrl() {
     const params = new URLSearchParams({ view, page: '1', limit: '5000', sort, direction, sync: '1' });
@@ -116,7 +119,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     const q = search.trim().toLowerCase();
     let rows = [...allItems]
       .filter(item => activeTypes.has(typeFor(item)))
-      .filter(item => charredOnly ? Boolean(item.states?.charred) : true)
+      .filter(item => charredOnly ? Boolean(item.grill?.charred || item.states?.charred) : true)
       .filter(item => !source || item.source === source)
       .filter(item => !allowStatus || !status || item.status === status || item.states?.[status] === true)
       .filter(item => !q || searchHaystack(item).includes(q))
@@ -177,67 +180,68 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   }
   function renderControls({ force = false } = {}) {
     if (!controlsRoot || !isVisible) return;
+    const localRoot = el?.querySelector('[data-section-controls]');
     if (!force && controlsMounted) return;
     controlsMounted = true;
-    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-quick-search value="${escapeAttr(search)}" placeholder="Buscar en todos los espacios" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button global-charred-filter ${charredOnly?'is-active':''}" data-global-charred title="Mostrar solo achicharrados"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg><strong data-global-charred-count>${allItems.filter(item=>item.states?.charred).length}</strong></button><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span><span class="view-filter-button__meta" data-filter-meta></span></button></div>`;
+    controlsRoot.innerHTML = `<div class="collection-toolbar collection-toolbar--global"><label class="collection-search"><input type="search" data-quick-search value="${escapeAttr(search)}" placeholder="Buscar en todos los espacios" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button global-charred-filter ${charredOnly?'is-active':''}" data-global-charred title="Mostrar solo achicharrados"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg><strong data-global-charred-count>${allItems.filter(item=>item.grill?.charred || item.states?.charred).length}</strong></button></div>`;
+    if (localRoot) localRoot.innerHTML = `<div class="workspace-toolbar"><button type="button" class="view-actions-button view-filter-button ${activeGroupIds.size ? 'is-active' : ''}" data-open-filters title="Filtrar por grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1V19l-3.6 1v-7.9L4 5Z"/></svg><span class="view-filter-button__label">Filtros</span>${activeGroupIds.size ? `<strong class="workspace-toolbar__badge">${activeGroupIds.size}</strong>` : ''}</button><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span></button></div>`;
     controlsRoot.querySelector('[data-quick-search]')?.addEventListener('input', event => {
       search = event.target.value || '';
       localStorage.setItem('bbqueue:global-search', search);
       page = 1;
       window.clearTimeout(searchDebounce);
       searchDebounce = window.setTimeout(() => {
-        applyFilters();
-        render();
-        saveSession();
+        applyFilters(); render(); saveSession();
         window.dispatchEvent(new CustomEvent('bbqueue:global-search', { detail: { value: search, source: id } }));
       }, 220);
     });
     controlsRoot.querySelector('[data-global-charred]')?.addEventListener('click', () => { charredOnly=!charredOnly; localStorage.setItem('bbqueue:charred-only',charredOnly?'1':'0'); window.dispatchEvent(new CustomEvent('bbqueue:charred-filter',{detail:charredOnly})); renderControls({force:true}); render(); });
-    controlsRoot.querySelector('[data-toggle-view]')?.addEventListener('click', () => { viewMode = viewMode === 'grid' ? 'list' : 'grid'; renderControls({ force: true }); render(); saveSession(); });
-    controlsRoot.querySelector('[data-open-controls]')?.addEventListener('click', openControlsModal);
+    localRoot?.querySelector('[data-toggle-view]')?.addEventListener('click', () => { viewMode = viewMode === 'grid' ? 'list' : 'grid'; renderControls({ force: true }); render(); saveSession(); });
+    localRoot?.querySelector('[data-open-filters]')?.addEventListener('click', openFiltersModal);
+    localRoot?.querySelector('[data-open-controls]')?.addEventListener('click', openControlsModal);
     updateControlsState();
   }
   function updateControlsState() {
-    const meta = controlsRoot?.querySelector('[data-filter-meta]');
-    if (meta) meta.textContent = `${activeTypes.size}/${availableTypes().length} · ${activeGroupIds.size ? activeGroupIds.size + ' grupos · ' : ''}${viewMode === 'grid' ? currentSize().slice(0,1).toUpperCase() : 'Lista'} · ${limit}`;
+    const localRoot = el?.querySelector('[data-section-controls]');
+    localRoot?.querySelector('[data-open-filters]')?.classList.toggle('is-active', activeGroupIds.size > 0);
+  }
+  function bindPanelEditorNavigation() {
+    setTimeout(() => {
+      const root = [...document.querySelectorAll('.ui-modal-root--workspace')].at(-1);
+      const scroller = root?.querySelector('.panel-editor__scroll');
+      const buttons = [...(root?.querySelectorAll('[data-panel-jump]') || [])];
+      if (!root || !scroller || !buttons.length) return;
+      const sections = buttons.map(button => root.querySelector(`#${button.dataset.panelJump}`)).filter(Boolean);
+      const update = () => { const top=scroller.getBoundingClientRect().top+70; let active=sections[0]; for(const section of sections){ if(section.getBoundingClientRect().top<=top) active=section; } buttons.forEach(button=>button.classList.toggle('is-active',button.dataset.panelJump===active?.id)); };
+      buttons.forEach(button=>button.addEventListener('click',()=>root.querySelector(`#${button.dataset.panelJump}`)?.scrollIntoView({behavior:'smooth',block:'start'})));
+      scroller.addEventListener('scroll',update,{passive:true}); update();
+    },0);
+  }
+  async function openFiltersModal() {
+    const body = `<div class="panel-editor panel-editor--filters"><nav class="panel-editor__anchors"><button type="button" class="is-active" data-panel-jump="filter-groups">Grupos</button></nav><div class="panel-editor__scroll">
+      <section id="filter-groups" class="panel-editor__section"><header><span>Filtros temporales</span><h3>Grupos</h3><p>Los grupos son etiquetas transversales; no son la Colección.</p></header><div class="segmented-control"><label><input type="radio" name="group-match" value="any" ${groupMatch === 'any' ? 'checked' : ''}><span>Cualquiera</span></label><label><input type="radio" name="group-match" value="all" ${groupMatch === 'all' ? 'checked' : ''}><span>Todos</span></label></div><div class="controls-modal__checks">${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">No hay grupos creados.</p>'}</div></section>
+    </div></div>`;
+    const modalPromise = ui.open({ title: `${title} · filtros`, className: 'ui-modal-root--workspace ui-modal-root--filters', body, actions: [{ label: 'Limpiar', value: '__clear__' }, { label: 'Cerrar', variant: 'primary', onClick: root => ({ activeGroupIds:[...root.querySelectorAll('[data-filter-group]:checked')].map(input=>input.dataset.filterGroup), groupMatch:root.querySelector('input[name="group-match"]:checked')?.value||'any' }) }] });
+    bindPanelEditorNavigation();
+    const result = await modalPromise;
+    if (!result) return;
+    if (result === '__clear__') { activeGroupIds=new Set(); groupMatch='any'; }
+    else { activeGroupIds=new Set(result.activeGroupIds||[]); groupMatch=result.groupMatch; }
+    page=1; applyFilters(); renderControls({force:true}); render(); saveSession();
   }
   async function openControlsModal() {
-    const body = `<div class="controls-modal workspace-controls">
-      <section class="controls-modal__section controls-modal__section--mobile-search"><h3>Búsqueda</h3><label class="ui-field"><span>Buscar</span><input type="search" data-control-search value="${escapeAttr(search)}" placeholder="Buscar"></label></section>
-      <section class="controls-modal__section workspace-controls__section"><div class="workspace-controls__heading"><span>Contenido</span><h3>Tipos visibles</h3><p>Elige qué clases de elementos aparecen en este espacio.</p></div><div class="controls-modal__checks">${availableTypes().map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-type="${escapeAttr(type)}" ${activeTypes.has(type) ? 'checked' : ''}><span>${escapeHtml(typePluralLabel(type, settings))}</span></label>`).join('')}</div></section>
-      <section class="controls-modal__section workspace-controls__section"><div class="workspace-controls__heading"><span>Contenido</span><h3>Grupos</h3><p>Filtra por uno o varios grupos.</p></div><div class="segmented-control"><label><input type="radio" name="group-match" value="any" ${groupMatch === 'any' ? 'checked' : ''}><span>Cualquiera</span></label><label><input type="radio" name="group-match" value="all" ${groupMatch === 'all' ? 'checked' : ''}><span>Todos</span></label></div><div class="controls-modal__checks">${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">No hay grupos creados.</p>'}</div></section>
-      ${allowStatus ? `<section class="controls-modal__section workspace-controls__section"><div class="workspace-controls__heading"><span>Contenido</span><h3>Estado y fuente</h3><p>Acota los resultados por situación o procedencia.</p></div><label class="ui-field"><span>Estado</span><select data-control-status>${Object.entries(STATUS_LABELS).map(([value,label]) => `<option value="${escapeAttr(value)}" ${status === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}</select></label><label class="ui-field"><span>Fuente</span><input data-control-source value="${escapeAttr(source)}" placeholder="plex, playnite..."></label></section>` : `<section class="controls-modal__section workspace-controls__section"><div class="workspace-controls__heading"><span>Contenido</span><h3>Fuente</h3></div><label class="ui-field"><span>Fuente</span><input data-control-source value="${escapeAttr(source)}" placeholder="plex, playnite..."></label></section>`}
-      <section class="controls-modal__section workspace-controls__section"><div class="workspace-controls__heading"><span>Presentación</span><h3>Diseño</h3><p>Configura cómo se muestran los elementos.</p></div><div class="segmented-control"><label><input type="radio" name="view-mode" value="grid" ${viewMode === 'grid' ? 'checked' : ''}><span>Grid</span></label><label><input type="radio" name="view-mode" value="list" ${viewMode === 'list' ? 'checked' : ''}><span>Lista</span></label></div><div class="controls-modal__sizes">${[['small','Pequeño'],['medium','Mediano'],['large','Grande']].map(([value,label]) => `<label class="controls-modal__toggle"><input type="radio" name="size" value="${value}" ${currentSize() === value ? 'checked' : ''}><span>${label}</span></label>`).join('')}</div><div class="workspace-format-picker"><strong>Diseño de tarjeta</strong><div class="segmented-control"><label><input type="radio" name="card-format" value="simple" ${cardFormat === 'simple' ? 'checked' : ''}><span>Simple</span></label><label><input type="radio" name="card-format" value="standard" ${cardFormat === 'standard' ? 'checked' : ''}><span>Normal</span></label></div></div>${id === 'database' ? `<label class="controls-modal__toggle"><input type="checkbox" data-include-charred ${includeCharred ? 'checked' : ''}><span>Incluir achicharrados por defecto</span></label>` : ''}<label class="ui-field"><span>Items por página</span><input data-items-per-page type="number" min="6" max="500" value="${escapeAttr(limit)}"></label></section>
-      <section class="controls-modal__section workspace-controls__section"><div class="workspace-controls__heading"><span>Presentación</span><h3>Orden</h3></div><label class="ui-field"><span>Ordenar por</span><select data-control-sort>${[['lastActivityAt','Última actividad'],['firstSeenAt','Entrada en BD'],['updatedAt','Actualización'],['title','Título'],['rating','Rating'],['completedAt','Completado']].map(([value,label]) => `<option value="${value}" ${sort === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><div class="segmented-control"><label><input type="radio" name="direction" value="desc" ${direction === 'desc' ? 'checked' : ''}><span>Desc</span></label><label><input type="radio" name="direction" value="asc" ${direction === 'asc' ? 'checked' : ''}><span>Asc</span></label></div></section>
-    </div>`;
-    const result = await ui.open({ title: `${title} · espacio de trabajo`, className: 'ui-modal-root--workspace', body, actions: [{ label: 'Cancelar', value: null }, { label: 'Aplicar', variant: 'primary', onClick: root => ({ search: root.querySelector('[data-control-search]')?.value || search, activeTypes: [...root.querySelectorAll('[data-filter-type]:checked')].map(input => input.dataset.filterType), activeGroupIds: [...root.querySelectorAll('[data-filter-group]:checked')].map(input => input.dataset.filterGroup), groupMatch: root.querySelector('input[name="group-match"]:checked')?.value || groupMatch, source: root.querySelector('[data-control-source]')?.value.trim() || '', status: root.querySelector('[data-control-status]')?.value || '', viewMode: root.querySelector('input[name="view-mode"]:checked')?.value || viewMode, cardSize: root.querySelector('input[name="size"]:checked')?.value || cardSize, cardFormat: root.querySelector('input[name="card-format"]:checked')?.value || cardFormat, includeCharred: root.querySelector('[data-include-charred]')?.checked === true, limit: clamp(root.querySelector('[data-items-per-page]')?.value, 6, 500, limit), sort: root.querySelector('[data-control-sort]')?.value || sort, direction: root.querySelector('input[name="direction"]:checked')?.value || direction }) }] });
-    if (!result) return;
-    search = result.search;
-    activeTypes = new Set((result.activeTypes || []).filter(Boolean));
-    activeGroupIds = new Set(result.activeGroupIds || []);
-    groupMatch = ['any','all'].includes(result.groupMatch) ? result.groupMatch : 'any';
-    source = result.source;
-    status = result.status;
-    viewMode = result.viewMode;
-    cardSize = result.cardSize;
-    cardFormat = result.cardFormat;
-    includeCharred = result.includeCharred;
-    limit = result.limit;
-    sort = result.sort;
-    direction = result.direction;
-    page = 1;
-    applyFilters();
-    renderControls({ force: true });
-    render();
-    saveSession();
-    const key = workspaceKey();
-    const existing = settings?.workspaces?.[key] || {};
-    const workspacePatch = { ...existing, sort, cardSize, cardFormat, grouping: existing.grouping || (groupByDate ? 'lastActivity' : 'none') };
-    try {
-      settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ workspaces: { [key]: workspacePatch }, views: { [id]: { ...(settings?.views?.[id] || {}), cardSize, cardFormat, itemsPerPage: limit } } }) });
-    } catch (error) {
-      ui.toast('No se pudo guardar el espacio de trabajo', { detail: error.message || '' });
-    }
+    const ws = workspaceConfig();
+    const grouping = ws.grouping || (groupByDate ? 'lastActivity' : 'none');
+    const body = `<div class="panel-editor"><nav class="panel-editor__anchors"><button type="button" class="is-active" data-panel-jump="workspace-presentation">Presentación</button><button type="button" data-panel-jump="workspace-organization">Organización</button></nav><div class="panel-editor__scroll">
+      <section id="workspace-presentation" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Presentación</h3><p>Configuración persistente de ${escapeHtml(title)}.</p></header><div class="workspace-visible-types"><h4>Tipos visibles</h4><p class="settings-help">Define qué tipos forman parte de este espacio de trabajo.</p><div class="controls-modal__checks">${availableTypes().map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-type="${escapeAttr(type)}" ${activeTypes.has(type) ? 'checked' : ''}><span>${escapeHtml(typePluralLabel(type, settings))}</span></label>`).join('')}</div></div><div class="setting-choice-grid"><label><input type="radio" name="view-mode" value="grid" ${viewMode==='grid'?'checked':''}><span><strong>Grid</strong><small>Tarjetas visuales</small></span></label><label><input type="radio" name="view-mode" value="list" ${viewMode==='list'?'checked':''}><span><strong>Lista</strong><small>Filas compactas</small></span></label></div><div class="setting-choice-grid setting-choice-grid--three">${[['small','Pequeño'],['medium','Mediano'],['large','Grande']].map(([value,label])=>`<label><input type="radio" name="size" value="${value}" ${currentSize()===value?'checked':''}><span><strong>${label}</strong><small>Tamaño de tarjeta</small></span></label>`).join('')}</div><div class="setting-choice-grid"><label><input type="radio" name="card-format" value="simple" ${cardFormat==='simple'?'checked':''}><span><strong>Simple</strong><small>Carátula protagonista</small></span></label><label><input type="radio" name="card-format" value="standard" ${cardFormat==='standard'?'checked':''}><span><strong>Normal</strong><small>Carátula e información</small></span></label></div><label class="ui-field"><span>Items por página</span><input data-items-per-page type="number" min="6" max="500" value="${escapeAttr(limit)}"></label></section>
+      <section id="workspace-organization" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Organización</h3></header><label class="ui-field"><span>Agrupar por</span><select data-control-grouping><option value="none" ${grouping==='none'?'selected':''}>Sin agrupación</option><option value="lastActivity" ${grouping==='lastActivity'?'selected':''}>Última actividad</option><option value="completedAt" ${grouping==='completedAt'?'selected':''}>Fecha de finalización</option><option value="type" ${grouping==='type'?'selected':''}>Tipo</option><option value="group" ${grouping==='group'?'selected':''}>Grupo</option></select></label><label class="ui-field"><span>Ordenar por</span><select data-control-sort>${[['lastActivityAt','Última actividad'],['firstSeenAt','Entrada en base de datos'],['updatedAt','Actualización'],['title','Título'],['rating','Calificación'],['completedAt','Finalización']].map(([value,label])=>`<option value="${value}" ${sort===value?'selected':''}>${label}</option>`).join('')}</select></label><div class="segmented-control"><label><input type="radio" name="direction" value="desc" ${direction==='desc'?'checked':''}><span>Descendente</span></label><label><input type="radio" name="direction" value="asc" ${direction==='asc'?'checked':''}><span>Ascendente</span></label></div></section>
+    </div></div>`;
+    const modalPromise = ui.open({ title: `${title} · configuración`, className: 'ui-modal-root--workspace', body, actions: [{ label:'Cancelar',value:null },{ label:'Guardar',variant:'primary',onClick:root=>({ visibleTypes:[...root.querySelectorAll('[data-workspace-type]:checked')].map(input=>input.dataset.workspaceType), viewMode:root.querySelector('input[name="view-mode"]:checked')?.value||viewMode, cardSize:root.querySelector('input[name="size"]:checked')?.value||cardSize, cardFormat:root.querySelector('input[name="card-format"]:checked')?.value||cardFormat, limit:clamp(root.querySelector('[data-items-per-page]')?.value,6,500,limit), grouping:root.querySelector('[data-control-grouping]')?.value||grouping, sort:root.querySelector('[data-control-sort]')?.value||sort, direction:root.querySelector('input[name="direction"]:checked')?.value||direction }) }] });
+    bindPanelEditorNavigation();
+    const result = await modalPromise;
+    if(!result)return; activeTypes=new Set(result.visibleTypes?.length ? result.visibleTypes : availableTypes()); viewMode=result.viewMode; cardSize=result.cardSize; cardFormat=result.cardFormat; limit=result.limit; sort=result.sort; direction=result.direction; page=1; applyFilters(); renderControls({force:true}); render(); saveSession();
+    const key=workspaceKey(); const existing=settings?.workspaces?.[key]||{}; const workspacePatch={...existing,visibleTypes:[...activeTypes],grouping:result.grouping,sort,direction,cardSize,cardFormat,viewMode,itemsPerPage:limit};
+    try { settings=await api('/api/settings',{method:'PUT',body:JSON.stringify({workspaces:{[key]:workspacePatch},views:{[id]:{...(settings?.views?.[id]||{}),cardSize,cardFormat,itemsPerPage:limit}}})}); } catch(error){ ui.toast('No se pudo guardar el espacio de trabajo',{detail:error.message||''}); }
   }
   async function openCreateManualItem() {
     if (id !== 'database') return;
@@ -290,7 +294,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   function render() {
     if (!el || !isVisible) return;
     applyFilters();
-    const charredCount = allItems.filter(item => item.states?.charred).length;
+    const charredCount = allItems.filter(item => item.grill?.charred || item.states?.charred).length;
     const charredButton = el.querySelector('[data-toggle-charred]'); if (charredButton) { charredButton.hidden = !charredCount; charredButton.classList.toggle('is-active', charredOnly); const node=charredButton.querySelector('[data-charred-count]'); if(node) node.textContent=String(charredCount); }
     const count = el.querySelector('[data-section-count]');
     if (count) count.textContent = String(total);
@@ -350,7 +354,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     mount(target) {
       el = target;
       loadSession();
-      el.innerHTML = `<div class="app-section ${id}-view unified-view"><div class="section-bg" data-dynamic-bg><div class="section-bg__image is-visible"></div></div><header class="section-title"><div class="section-title__main"><h1>${escapeHtml(title)} <span data-section-count>0</span></h1>${id === 'database' ? '<button type="button" class="section-title__add" data-create-manual-item title="Crear item">＋</button>' : ''}</div><div data-active-filter-chips></div></header><main class="unified-view__content"><div class="media-grid unified-grid" data-items-grid></div></main><footer class="unified-view__footer" data-pagination></footer></div>`;
+      el.innerHTML = `<div class="app-section ${id}-view unified-view"><div class="section-bg" data-dynamic-bg><div class="section-bg__image is-visible"></div></div><header class="section-title"><div class="section-title__row"><div class="section-title__main"><h1>${escapeHtml(title)} <span data-section-count>0</span></h1>${id === 'database' ? '<button type="button" class="section-title__add" data-create-manual-item title="Crear item">＋</button>' : ''}</div><div class="section-title__controls" data-section-controls></div></div><div data-active-filter-chips></div></header><main class="unified-view__content"><div class="media-grid unified-grid" data-items-grid></div></main><footer class="unified-view__footer" data-pagination></footer></div>`;
       charredOnly = localStorage.getItem('bbqueue:charred-only') === '1';
       window.addEventListener('bbqueue:global-search', event => {
         const detail = event.detail;
@@ -366,16 +370,18 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
         if (event.target.closest('[data-page-prev]')) { page = Math.max(1, page - 1); render(); saveSession(); return; }
         if (event.target.closest('[data-page-next]')) { page = Math.min(pages, page + 1); render(); saveSession(); return; }
         if (event.target.closest('[data-create-manual-item]')) { openCreateManualItem(); return; }
+        const removeGroup = event.target.closest('[data-remove-group-filter]');
+        if (removeGroup) { activeGroupIds.delete(removeGroup.dataset.removeGroupFilter); page=1; applyFilters(); renderControls({force:true}); render(); saveSession(); return; }
         
         const item = findItemFromEvent(event);
         if (item) openItem(item);
       });
     },
-    show() { isVisible = true; el?.classList.add('view--active'); el?.classList.remove('view--render-hidden'); el?.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); load(); },
+    show() { isVisible = true; applyWorkspaceTypes(); el?.classList.add('view--active'); el?.classList.remove('view--render-hidden'); el?.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); load(); },
     hide() { isVisible = false; controlsMounted = false; if (controlsRoot) controlsRoot.innerHTML = ''; el?.classList.remove('view--active'); el?.setAttribute('aria-hidden', 'true'); },
     update(payload = {}) {
       if (payload.collectionGroups) collectionGroups = payload.collectionGroups;
-      if (payload.settings) { settings = payload.settings; const ws=workspaceConfig(); if(ws.sort) sort=ws.sort; if(ws.cardSize) cardSize=ws.cardSize; if(ws.cardFormat) cardFormat=ws.cardFormat; }
+      if (payload.settings) { settings = payload.settings; const ws=workspaceConfig(); if(ws.sort) sort=ws.sort; if(ws.cardSize) cardSize=ws.cardSize; if(ws.cardFormat) cardFormat=ws.cardFormat; applyWorkspaceTypes(); }
       if (payload.item) applyItemUpdate(payload.item);
       if (payload.refresh && isVisible) load();
       else if (isVisible && !payload.item) render();

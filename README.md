@@ -8,7 +8,7 @@ Su objetivo no es sustituir a Plex, Playnite, Sonarr, Radarr o Tautulli, sino ac
 Novedades / actividad entrante
 → Backlog
 → On Deck
-→ Colecciones
+→ Colección
 ```
 
 La versión **v6.1** marca la primera base estable del proyecto después de la fase de iteración v5.x.
@@ -34,7 +34,7 @@ La aplicación se organiza alrededor de cuatro conceptos:
 | **Backlog** | Bandeja de novedades o candidatos pendientes. |
 | **On Deck** | Contenido activo o en seguimiento. |
 | **Actual** | Lo que está sonando/jugándose/reproduciéndose ahora. |
-| **Colecciones** | Historial de elementos completados, vistos o puntuados. |
+| **Colección** | Historial de elementos completados, vistos o puntuados. |
 
 Además existe una capa auxiliar:
 
@@ -100,7 +100,7 @@ v6.1 añade la base de datos permanente interna de items:
 data/items.json
 ```
 
-Las vistas existentes siguen funcionando igual, pero ahora todo item que pasa por Backlog, On Deck o Colecciones queda registrado en una capa común para futuras vistas y exportaciones.
+Las vistas existentes siguen funcionando igual, pero ahora todo item que pasa por Backlog, On Deck o Colección queda registrado en una capa común para futuras vistas y exportaciones.
 
 
 ## v6.5 · Fase 2
@@ -133,3 +133,9 @@ Esta versión consolida la base de datos JSON migrable:
 - Diseño y metadata de ficha se configuran desde Opciones → Ficha.
 - Calificar ya no retira automáticamente de On Deck.
 - Base de datos se refresca en tiempo real también con Playnite.
+
+
+## Documentación de interfaz
+
+- [Terminología](docs/TERMINOLOGIA.md)
+- [Opciones, espacios y filtros](docs/OPCIONES-Y-PANELES.md)

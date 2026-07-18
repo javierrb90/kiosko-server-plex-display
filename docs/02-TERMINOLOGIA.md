@@ -1,140 +1,62 @@
-# 02 · Terminología
+# Terminología oficial de BBQueue
 
-## Backlog
+Esta terminología es la referencia para interfaz, documentación y código nuevo.
 
-Bandeja de entrada de elementos pendientes o novedades.
+## Item
+Entidad única de la biblioteca: juego, película, serie, libro u otro tipo personalizado.
 
-No significa “todo lo que existe en Plex/Playnite”. Sólo contiene elementos relevantes detectados por eventos o añadidos manualmente.
+## Biblioteca
+Registro permanente de todos los items conocidos. Un item no desaparece de la biblioteca al salir de un espacio de trabajo.
 
-Ejemplos:
+## Espacio de trabajo
+Segmento fijo de la biblioteca con presentación y organización propias. Los espacios incluidos son:
 
-- película añadida a Plex;
-- episodio nuevo detectado por Tautulli;
-- juego iniciado en Playnite;
-- contenido reproducido si la fuente de playback está activada.
+- **Base de datos:** todos los items.
+- **Backlog:** items añadidos manualmente a la lista de pendientes.
+- **On Deck:** selección manual activa, con límite por tipo.
+- **Colección:** items marcados como **Terminados**.
 
-## On Deck
+Las reglas de pertenencia de estos espacios son fijas. El usuario puede cambiar su presentación, agrupación y orden.
 
-Lista de seguimiento activo.
+## Colección
+Nombre singular del espacio de items terminados. No debe utilizarse como sinónimo de grupo.
 
-Representa elementos que el usuario quiere tener presentes. Para series, normalmente se guarda la serie, no cada episodio.
-
-Ejemplo:
-
-```text
-The X-Files
-```
-
-aunque Backlog pueda contener una novedad concreta:
-
-```text
-The X-Files · Nuevo episodio · S01E24
-```
-
-## Actual
-
-Contenido actual, reciente o activo.
-
-Se alimenta desde eventos de Plex/Tautulli o Playnite. Puede mostrarse como toast, mini-card o vista.
-
-## Colecciones
-
-Historial de elementos completados, vistos o puntuados.
-
-Un elemento llega a Colecciones cuando:
-
-- se marca como visto;
-- se marca como terminado;
-- se puntúa;
-- se completa desde Backlog, On Deck o Actual.
-
-## Notificación
-
-Aviso registrado en el sistema.
-
-Puede venir de:
-
-- Tautulli;
-- Plex;
-- Sonarr/Radarr;
-- Playnite;
-- endpoint externo `/api/notifications` o `/api/notify`;
-- pruebas internas.
+La calificación y la review son independientes: un item puede tener ambas sin estar terminado, y puede estar terminado sin calificación.
 
 ## Grupo
+Etiqueta transversal para organizar y filtrar items. Puede ser manual, dinámico o mixto. Un grupo:
 
-Agrupación de elementos de Colecciones, Backlog u On Deck.
+- no es un espacio de trabajo;
+- no cambia el estado Terminado;
+- no mueve items a Colección;
+- puede contener items de cualquier espacio.
 
-Hay tres modos:
+## Presentación
+Configuración persistente del aspecto de un espacio: Grid o Lista, diseño Simple o Normal, tamaño e items por página.
 
-| Modo | Descripción |
-|---|---|
-| Manual | El usuario añade elementos a mano. |
-| Dinámico | El grupo se calcula por reglas. |
-| Mixto | Combina reglas dinámicas y elementos manuales. |
+## Organización
+Configuración persistente de agrupación, criterio de orden y dirección.
 
 ## Filtro
+Restricción temporal sobre el espacio actual. Los filtros por tipo, grupo o parrilla no modifican la pertenencia ni la configuración persistente.
 
-Restricción visual aplicada a una vista.
+## Detalle o estado visible
+Texto orgánico que resume la última actividad relevante del item. Las integraciones pueden volver a actualizarlo.
 
-Tipos de filtro:
+## Última actividad
+Fecha y hora usada para ordenar y calcular la parrilla. Debe conservar precisión de hora, minutos y segundos.
 
-- tipo: Juegos / Películas / Series;
-- grupo;
-- coincidencia de grupos: Cualquiera / Todos;
-- búsqueda textual.
+## Parrilla
+Sistema de atención basado en la última actividad y en los límites del espacio actual.
 
-## Coincidir
+- **Normal:** dentro del periodo esperado.
+- **Quemándose:** se aproxima al límite.
+- **Achicharrado:** ha superado el límite o fue marcado manualmente.
 
-Selector que define cómo se combinan varios grupos activos:
+El cálculo depende del espacio: al mover un item se actualiza su actividad y se aplican los límites del nuevo espacio.
 
-| Valor | Significado |
-|---|---|
-| Cualquiera | Mostrar elementos que estén en al menos un grupo seleccionado. |
-| Todos | Mostrar elementos que estén en todos los grupos seleccionados. |
+## Review
+Opinión única asociada al item. Es independiente del diario, la calificación y el estado Terminado.
 
-## Canonical ID
-
-Identificador estable de un elemento.
-
-Sirve para deduplicar y relacionar entradas entre vistas. Ejemplos conceptuales:
-
-```text
-plex:movies:1234
-plex:series:5678
-plex:episode:9999
-playnite:elden-ring
-```
-
-## Rating Key
-
-Identificador interno de Plex.
-
-Puede referirse a película, serie, temporada o episodio. Kiosko lo usa para construir identificadores estables.
-
-## Evento delta
-
-Mensaje WebSocket pequeño que comunica sólo un cambio concreto.
-
-Ejemplos:
-
-```text
-item:moved-to-deck
-item:completed
-item:backlog-upserted
-item:deck-removed
-```
-
-Sustituye a broadcasts globales pesados para acciones de item.
-
-## Snapshot
-
-Carga inicial completa del estado de la aplicación.
-
-Se obtiene por HTTP desde:
-
-```text
-GET /api/snapshot
-```
-
-Debe usarse para arranque/sincronización inicial, no como mecanismo principal para cada acción.
+## Diario
+Historial de anotaciones vinculadas a actualizaciones de actividad. Cada entrada puede incluir texto e imagen.

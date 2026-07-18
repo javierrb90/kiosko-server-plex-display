@@ -73,16 +73,15 @@ export function itemListMarkup(items = [], { context = 'database', groups = [] }
 }
 export function activeFilterChipsMarkup({ activeTypes = new Set(), activeGroupIds = new Set(), groups = [], source = '', status = '', search = '', groupMatch = 'any' } = {}) {
   const chips = [];
-  if (activeTypes.size && activeTypes.size < 3) chips.push(...[...activeTypes].map(type => typeLabel(type)));
   for (const id of activeGroupIds) {
     const group = groups.find(g => g.id === id);
-    if (group) chips.push(`Grupo: ${group.name}`);
+    if (group) chips.push(`<span class="active-filter-chip"><span>Grupo: ${escapeHtml(group.name)}</span><button type="button" data-remove-group-filter="${escapeAttr(id)}" aria-label="Quitar filtro del grupo ${escapeAttr(group.name)}">×</button></span>`);
   }
-  if (activeGroupIds.size > 1) chips.push(groupMatch === 'all' ? 'Todos los grupos' : 'Cualquier grupo');
-  if (source) chips.push(`Fuente: ${source}`);
-  if (status) chips.push(`Estado: ${status}`);
-  if (search) chips.push(`Buscar: ${search}`);
-  return chips.length ? `<div class="active-filter-chips">${chips.map(chip => `<span>${escapeHtml(chip)}</span>`).join('')}</div>` : '';
+  if (activeGroupIds.size > 1) chips.push(`<span class="active-filter-chip active-filter-chip--mode">${groupMatch === 'all' ? 'Todos los grupos' : 'Cualquier grupo'}</span>`);
+  if (source) chips.push(`<span class="active-filter-chip">Fuente: ${escapeHtml(source)}</span>`);
+  if (status) chips.push(`<span class="active-filter-chip">Estado: ${escapeHtml(status)}</span>`);
+  if (search) chips.push(`<span class="active-filter-chip">Buscar: ${escapeHtml(search)}</span>`);
+  return chips.length ? `<div class="active-filter-chips">${chips.join('')}</div>` : '';
 }
 export function paginationMarkup({ page = 1, pages = 1, total = 0 } = {}) {
   return `<nav class="pagination-bar unified-pagination" aria-label="Paginación"><button type="button" data-page-prev ${page <= 1 ? 'disabled' : ''}>‹</button><strong>${page}/${pages}</strong><button type="button" data-page-next ${page >= pages ? 'disabled' : ''}>›</button></nav>`;

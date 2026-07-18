@@ -47,10 +47,10 @@ export const DEFAULT_SETTINGS = {
   },
   grill: { enabled: true, defaults: { backlog: 30, onDeck: 7 }, limits: {}, clearCharredOn: { manual: true, journal: true, playniteStarted: true, plexPlayback: false, plexLibraryAdded: false } },
   workspaces: {
-    database: { membership: "all", grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
-    backlog: { membership: "manual", grouping: "lastActivity", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
-    onDeck: { membership: "manual", grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium", maxPerType: 3 },
-    collections: { membership: "completed", grouping: "none", sort: "completedAt", cardFormat: "standard", cardSize: "medium" }
+    database: { membership: "all", visibleTypes: ["games","movies","series"], grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
+    backlog: { membership: "manual", visibleTypes: ["games","movies","series"], grouping: "lastActivity", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
+    onDeck: { membership: "manual", visibleTypes: ["games","movies","series"], grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium", maxPerType: 3 },
+    collections: { membership: "completed", visibleTypes: ["games","movies","series"], grouping: "none", sort: "completedAt", cardFormat: "standard", cardSize: "medium" }
   },
   views: {
     notifications: { enabled: true, itemsPerPage: 50 },
@@ -178,6 +178,8 @@ function sanitize(settings) {
     if (!isObject(s.workspaces[key])) s.workspaces[key] = {};
     const base = workspaceDefaults[key];
     s.workspaces[key] = { ...base, ...s.workspaces[key] };
+    if (!Array.isArray(s.workspaces[key].visibleTypes) || !s.workspaces[key].visibleTypes.length) s.workspaces[key].visibleTypes = [...base.visibleTypes];
+    else s.workspaces[key].visibleTypes = [...new Set(s.workspaces[key].visibleTypes.map(value => String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-')).filter(Boolean))];
     if (!["none","lastActivity","completedAt","type","group"].includes(s.workspaces[key].grouping)) s.workspaces[key].grouping = base.grouping;
     if (!["lastActivityAt","title","rating","completedAt"].includes(s.workspaces[key].sort)) s.workspaces[key].sort = base.sort;
     if (!["simple","standard"].includes(s.workspaces[key].cardFormat)) s.workspaces[key].cardFormat = base.cardFormat;

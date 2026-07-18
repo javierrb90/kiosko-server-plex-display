@@ -142,14 +142,14 @@ Desde Actual se puede:
 - ver estado:
   - On Deck;
   - Backlog;
-  - Colecciones;
+  - Colección;
   - sin clasificar.
 
-## Colecciones
+## Colección
 
 ### Propósito
 
-Colecciones es el historial.
+Colección es el historial.
 
 Contiene contenido visto, terminado, completado o puntuado.
 
@@ -173,7 +173,7 @@ Contiene contenido visto, terminado, completado o puntuado.
 
 ### Uso principal
 
-Colecciones sirve para consultar, filtrar y organizar el historial.
+Colección sirve para consultar, filtrar y organizar el historial.
 
 ## Notificaciones
 

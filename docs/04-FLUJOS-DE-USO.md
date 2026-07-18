@@ -6,10 +6,10 @@
 Evento externo o acción manual
 → Backlog
 → On Deck
-→ Colecciones
+→ Colección
 ```
 
-No todos los elementos pasan por todas las fases. Algunos pueden ir directamente a Colecciones o quedarse sólo como notificación.
+No todos los elementos pasan por todas las fases. Algunos pueden ir directamente a Colección o quedarse sólo como notificación.
 
 ## Película nueva de Plex
 
@@ -21,7 +21,7 @@ No todos los elementos pasan por todas las fases. Algunos pueden ir directamente
 6. Puede aparecer una notificación/toast.
 7. El usuario decide:
    - verla después: On Deck;
-   - marcarla como vista: Colecciones;
+   - marcarla como vista: Colección;
    - descartarla: borrar del Backlog.
 
 ## Episodio nuevo de Tautulli `created`
@@ -74,12 +74,12 @@ Al puntuar o completar:
 
 ```text
 Backlog / On Deck / Actual
-→ Colecciones
+→ Colección
 ```
 
 Efectos:
 
-- se crea o actualiza entrada en Colecciones;
+- se crea o actualiza entrada en Colección;
 - se elimina de On Deck si estaba allí;
 - se elimina de Backlog si aplica;
 - se emite evento delta;
@@ -99,7 +99,7 @@ Puede borrarse de:
 
 - Backlog;
 - On Deck;
-- Colecciones.
+- Colección.
 
 Cada acción emite un evento delta específico.
 

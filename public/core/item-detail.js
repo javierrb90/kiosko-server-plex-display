@@ -78,7 +78,7 @@ function posterMarkup(item = {}) {
 function statusLabel(context, item = {}) {
   if (context === 'backlog') return 'Backlog';
   if (context === 'on-deck') return 'On Deck';
-  if (context === 'collections') return item.rating ? `Valorado · ${'★'.repeat(Number(item.rating)||0)}${'☆'.repeat(5-(Number(item.rating)||0))}` : 'Colecciones';
+  if (context === 'collections') return item.rating ? `Valorado · ${'★'.repeat(Number(item.rating)||0)}${'☆'.repeat(5-(Number(item.rating)||0))}` : 'Colección';
   if (context === 'current') return 'Actual';
   if (context === 'database') return 'Base de datos';
   return typeLabel(item);
@@ -302,7 +302,7 @@ async function applyRating({ ui, api, item, context, rating, toast }) {
   if (context === 'current') response = await api('/api/current/complete', { method: 'POST', body: JSON.stringify({ rating, removeFromDeck }) });
   else response = await api(`/api/items/${canonical}/complete`, { method: 'POST', body: JSON.stringify({ rating, removeFromDeck, from: context }) });
   Object.assign(item, response.completed || {}, { rating: Number(rating), completedAt: response.completed?.completedAt || item.completedAt, status: 'completed', states: { ...(item.states || {}), completed: true, inOnDeck: false, inBacklog: false } });
-  toast('Calificado y movido a Colecciones');
+  toast('Calificado y movido a Colección');
   return { context, completed: response.completed };
 }
 
@@ -465,7 +465,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const rating = Math.max(0, Math.min(5, Number(item.rating) || 0));
     const body = `<form class="item-detail-form item-detail-assessment" data-assessment-form>
       <section class="assessment-rating"><span>Calificación</span><div class="assessment-stars">${[1,2,3,4,5].map(n => `<label><input type="radio" name="assessment-rating" value="${n}" ${rating === n ? 'checked' : ''}><span>${n <= rating ? '★' : '☆'}</span></label>`).join('')}<button type="button" data-assessment-clear>Sin calificación</button></div></section>
-      <label class="assessment-completed"><input type="checkbox" data-assessment-completed ${isInCollection(item, currentContext) ? 'checked' : ''}><span><strong>Terminado</strong><small>Incluye el item en Colecciones.</small></span></label>
+      <label class="assessment-completed"><input type="checkbox" data-assessment-completed ${isInCollection(item, currentContext) ? 'checked' : ''}><span><strong>Terminado</strong><small>Incluye el item en Colección.</small></span></label>
       <section class="assessment-review"><span>Review opcional</span>${journalComposerMarkup({ comment: item.review?.comment || '', image: item.review?.image || '' })}</section>
       <footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button><button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="assessment-save">Guardar</button></footer>
     </form>`;
@@ -481,7 +481,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const response = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/assessment`, { method:'PUT', body:JSON.stringify(payload) });
     mergeReturnedItem(response);
     item.review = response.review || null; item.journalCount = response.journalCount ?? item.journalCount; item.latestJournalEntry = response.latestJournalEntry ?? item.latestJournalEntry;
-    onItemUpdated({ ...item }); renderBody(root); toast(payload.completed ? 'Guardado en Colecciones' : 'Valoración actualizada');
+    onItemUpdated({ ...item }); renderBody(root); toast(payload.completed ? 'Guardado en Colección' : 'Valoración actualizada');
   }
   async function showReviewForm(root) {
     const body = `<form class="item-detail-form" data-review-form>${journalComposerMarkup({ comment: item.review?.comment || '', image: item.review?.image || '' })}<footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button>${item.review ? '<button type="button" class="item-detail-control item-detail-control--danger-quiet" data-detail-action="review-delete">Eliminar review</button>' : ''}<button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="review-save">Guardar review</button></footer></form>`;
@@ -558,8 +558,8 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
         if (isInDeck(item, currentContext)) { await api(`/api/items/${canonical}/deck`, { method: 'DELETE' }); item.states = { ...(item.states || {}), inOnDeck: false }; item.status = 'known'; item.lastActivityAt = new Date().toISOString(); onItemUpdated({ ...item }); toast('Quitado de On Deck'); renderBody(root); return; }
         const response = await postDeckWithReplacement(`/api/items/${canonical}/deck`); if (!response) return; mergeReturnedItem(response); item.states = { ...(item.states || {}), inOnDeck: true, inBacklog: false, completed: false }; item.completedAt = null; item.status = 'on-deck'; onItemUpdated({ ...item }); toast('Movido a On Deck'); renderBody(root); return;
       }
-      if (action === 'remove-collection') { const ok = await ui.confirm({ title: 'Quitar de Colecciones', message: 'Se retirará la calificación/finalización, pero el item seguirá en Base de datos.', confirmText: 'Quitar' }); if (!ok) return; const response = await api(`/api/items/${canonical}/collection`, { method: 'DELETE' }); mergeReturnedItem(response); item.rating = null; item.completedAt = null; item.states = { ...(item.states || {}), completed: false, inBacklog: false, inOnDeck: false }; item.status = 'known'; item.lastActivityAt = response?.item?.lastActivityAt || item.lastActivityAt || new Date().toISOString(); if (currentContext === 'collections') currentContext = 'database'; onItemUpdated({ ...item }); toast('Quitado de Colecciones'); renderBody(root); return; }
-      if (action === 'delete-permanent') { const ok = await ui.confirm({ title: 'Eliminar definitivamente', message: 'Esto eliminará el item de la base de datos, Backlog, On Deck, Colecciones, grupos y assets locales asociados. ¿Continuar?', confirmText: 'Eliminar definitivamente', danger: true }); if (!ok) return; await api(`/api/items/${canonical}/delete`, { method: 'POST' }); currentContext = 'removed'; toast('Item eliminado definitivamente'); renderBody(root); return; }
+      if (action === 'remove-collection') { const ok = await ui.confirm({ title: 'Quitar de Colección', message: 'Se retirará la calificación/finalización, pero el item seguirá en Base de datos.', confirmText: 'Quitar' }); if (!ok) return; const response = await api(`/api/items/${canonical}/collection`, { method: 'DELETE' }); mergeReturnedItem(response); item.rating = null; item.completedAt = null; item.states = { ...(item.states || {}), completed: false, inBacklog: false, inOnDeck: false }; item.status = 'known'; item.lastActivityAt = response?.item?.lastActivityAt || item.lastActivityAt || new Date().toISOString(); if (currentContext === 'collections') currentContext = 'database'; onItemUpdated({ ...item }); toast('Quitado de Colección'); renderBody(root); return; }
+      if (action === 'delete-permanent') { const ok = await ui.confirm({ title: 'Eliminar definitivamente', message: 'Esto eliminará el item de la base de datos, Backlog, On Deck, Colección, grupos y assets locales asociados. ¿Continuar?', confirmText: 'Eliminar definitivamente', danger: true }); if (!ok) return; await api(`/api/items/${canonical}/delete`, { method: 'POST' }); currentContext = 'removed'; toast('Item eliminado definitivamente'); renderBody(root); return; }
     } finally { busy = false; }
   }
   return new Promise(resolve => {

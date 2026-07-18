@@ -529,7 +529,7 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
   }
   views.show(id, { reason });
   try { if (persist) window.history.replaceState(null, '', hashForView(id)); } catch {}
-  dock.querySelectorAll('button').forEach(btn => btn.classList.toggle('dock__item--active', btn.dataset.nav === id));
+  document.querySelectorAll('[data-nav]').forEach(btn => btn.classList.toggle('dock__item--active', btn.dataset.nav === id));
   if (persist) api('/api/state', { method: 'PUT', body: JSON.stringify({ activeView: id }) }).catch(debugError);
 }
 
@@ -784,7 +784,7 @@ const socket = new SocketClient({
   onError(event) { debugError('Error de WebSocket', event); }
 });
 
-dock.addEventListener('click', event => {
+document.querySelector('.primary-navigation')?.addEventListener('click', event => {
   const btn = event.target.closest('button[data-nav]');
   if (!btn) return;
   closeNotificationsOverlay();
@@ -832,6 +832,13 @@ settingsTrigger?.addEventListener('click', () => openSettingsModal().catch(debug
 function colorField(name, label, value, help = '') {
   return `<label class="ui-field color-field"><span>${escapeHtml(label)}</span><div class="color-field__control"><input data-setting="${escapeAttr(name)}" type="color" value="${escapeAttr(value)}"><code data-color-preview="${escapeAttr(name)}">${escapeHtml(String(value || '').toUpperCase())}</code></div>${help ? `<small class="ui-field__help">${escapeHtml(help)}</small>` : ''}</label>`;
 }
+function valueField(name, label, value, { min = 0, max = 100, step = 1, unit = '', help = '' } = {}) {
+  return `<label class="ui-field ui-value-field"><span>${escapeHtml(label)}</span><div class="ui-value-field__control"><input data-setting-range="${escapeAttr(name)}" type="range" min="${min}" max="${max}" step="${step}" value="${escapeAttr(value)}"><span class="ui-number-control"><input data-setting="${escapeAttr(name)}" type="number" min="${min}" max="${max}" step="${step}" value="${escapeAttr(value)}"><em>${escapeHtml(unit)}</em></span></div>${help ? `<small class="ui-field__help">${escapeHtml(help)}</small>` : ''}</label>`;
+}
+function radiusField(name, label, value) {
+  const presets = [[0,'Recto'],[8,'Suave'],[16,'Redondeado'],[28,'Muy redondeado']];
+  return `<div class="ui-field ui-radius-field"><span>${escapeHtml(label)}</span><div class="radius-presets">${presets.map(([v,l])=>`<button type="button" data-setting-preset="${escapeAttr(name)}" data-value="${v}" class="${Number(value)===v?'is-active':''}"><i style="border-radius:${v}px"></i><span>${l}</span><small>${v} px</small></button>`).join('')}</div><label class="ui-number-control ui-number-control--standalone"><input data-setting="${escapeAttr(name)}" type="number" min="0" max="48" step="1" value="${escapeAttr(value)}"><em>px</em></label></div>`;
+}
 function bindColorFieldPreviews(root) {
   root.querySelectorAll('input[type="color"][data-setting]').forEach(input => {
     const update = () => {
@@ -868,7 +875,7 @@ function collectionGroupsSettingsMarkup(groups = []) {
     ['platform','Plataforma'], ['genre','Género'], ['developer','Desarrollador'], ['publisher','Publisher'],
     ['year','Año'], ['source','Fuente'], ['type','Tipo'], ['title','Título']
   ];
-  return `<div class="settings-fieldset"><h4>Grupos de Colecciones</h4>
+  return `<div class="settings-fieldset"><h4>Grupos</h4><p class="settings-help">Los grupos organizan items de forma transversal. No son la Colección ni cambian el estado Terminado.</p>
     <div class="collection-groups-manager" data-groups-manager>
       ${groups.length ? groups.map(group => `<article class="collection-group-row" data-group-id="${escapeAttr(group.id)}"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.mode || 'manual')} · ${(group.rules || []).length} regla(s)</small></div><button type="button" class="ui-action-button ui-action-button--danger" data-delete-group="${escapeAttr(group.id)}">Eliminar</button></article>`).join('') : '<p class="settings-help">Todavía no hay grupos creados.</p>'}
     </div>
@@ -922,7 +929,11 @@ function grillSettingsMarkup(settings = {}) {
   const seen = new Set();
   const unique = types.filter(type => type?.id && !seen.has(type.id) && seen.add(type.id));
   const cell = (type, view, fallback) => { const value = grill.limits?.[type]?.[view]; return value === false ? '' : (value || fallback); };
-  return `<div class="settings-fieldset"><h4>Sistema de parrilla</h4><p class="settings-help">Los estados “quemándose” y “achicharrado” se calculan dinámicamente según el espacio de trabajo y sus límites.</p><label class="ui-check"><input type="checkbox" data-setting="grillEnabled" ${grill.enabled !== false ? 'checked' : ''}> Activar sistema de parrilla</label><div class="grill-settings-table"><div></div><strong>Backlog</strong><strong>On Deck</strong>${unique.map(type => `<span>${escapeHtml(type.label)}</span><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="backlog" value="${escapeAttr(cell(type.id,'backlog',grill.defaults?.backlog || 30))}"><small>días</small></label><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="onDeck" value="${escapeAttr(cell(type.id,'onDeck',grill.defaults?.onDeck || 7))}"><small>días</small></label>`).join('')}</div></div><div class="settings-fieldset"><h4>Quitar achicharrado automáticamente</h4><p class="settings-help">Elige qué actividades deben resetear el estado manual de achicharrado.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="grillClearManual" ${(grill.clearCharredOn?.manual ?? true) ? 'checked' : ''}> Acciones manuales (mover, editar actividad)</label><label class="ui-check"><input type="checkbox" data-setting="grillClearJournal" ${(grill.clearCharredOn?.journal ?? true) ? 'checked' : ''}> Guardar actividad / diario</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlaynite" ${(grill.clearCharredOn?.playniteStarted ?? true) ? 'checked' : ''}> Inicio de juego desde Playnite</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexPlayback" ${(grill.clearCharredOn?.plexPlayback ?? false) ? 'checked' : ''}> Reproducción en Plex</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexLibrary" ${(grill.clearCharredOn?.plexLibraryAdded ?? false) ? 'checked' : ''}> Nuevo episodio / añadido en Plex</label></div></div>`;
+  return `<div class="settings-fieldset"><h4>Sistema de parrilla</h4><p class="settings-help">Los estados “quemándose” y “achicharrado” se calculan dinámicamente según el espacio de trabajo y sus límites.</p><label class="ui-check"><input type="checkbox" data-setting="grillEnabled" ${grill.enabled !== false ? 'checked' : ''}> Activar sistema de parrilla</label><div class="grill-settings-table"><div></div><strong>Backlog</strong><strong>On Deck</strong>${unique.map(type => `<span>${escapeHtml(type.label)}</span><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="backlog" value="${escapeAttr(cell(type.id,'backlog',grill.defaults?.backlog || 30))}"><small>días</small></label><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="onDeck" value="${escapeAttr(cell(type.id,'onDeck',grill.defaults?.onDeck || 7))}"><small>días</small></label>`).join('')}</div></div>`;
+}
+function integrationBehaviorMarkup(settings = {}) {
+  const grill = settings.grill || {};
+  return `<div class="settings-fieldset"><h4>Playnite</h4><p class="settings-help">Configura cómo afectan los eventos de Playnite a la biblioteca y a la parrilla.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="playniteStarted" ${settings.backlog?.sources?.playniteStarted !== false ? 'checked' : ''}> Observar inicio de juegos</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlaynite" ${(grill.clearCharredOn?.playniteStarted ?? true) ? 'checked' : ''}> Quitar Achicharrado al iniciar</label></div></div><div class="settings-fieldset"><h4>Plex / Tautulli</h4><p class="settings-help">Cada evento puede actualizar el item y decidir si reinicia su estado de parrilla.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="plexRecentlyAdded" ${settings.backlog?.sources?.plexRecentlyAdded !== false ? 'checked' : ''}> Observar contenido añadido</label><label class="ui-check"><input type="checkbox" data-setting="plexPlayback" ${settings.backlog?.sources?.plexPlayback !== false ? 'checked' : ''}> Observar reproducciones</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexLibrary" ${(grill.clearCharredOn?.plexLibraryAdded ?? false) ? 'checked' : ''}> Añadido quita Achicharrado</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexPlayback" ${(grill.clearCharredOn?.plexPlayback ?? false) ? 'checked' : ''}> Reproducción quita Achicharrado</label></div></div><div class="settings-fieldset"><h4>Actividad manual</h4><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="grillClearManual" ${(grill.clearCharredOn?.manual ?? true) ? 'checked' : ''}> Mover o editar actividad quita Achicharrado</label><label class="ui-check"><input type="checkbox" data-setting="grillClearJournal" ${(grill.clearCharredOn?.journal ?? true) ? 'checked' : ''}> Guardar diario quita Achicharrado</label></div></div>`;
 }
 function readGrillSettings(root, settings = {}) {
   const limits = {}; root.querySelectorAll('[data-grill-type]').forEach(input => { const type=input.dataset.grillType; const view=input.dataset.grillView; limits[type] ||= {}; limits[type][view] = Math.max(1, Number(input.value) || (view === 'onDeck' ? 7 : 30)); });
@@ -941,20 +952,20 @@ async function openSettingsModal() {
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
-        ['general','General'], ['appearance','Apariencia'], ['content','Contenido'], ['workspaces','Espacios de trabajo'], ['grill','Parrilla'], ['integrations','Integraciones'], ['advanced','Avanzado']
+        ['general','General'], ['appearance','Apariencia'], ['content','Biblioteca'], ['workspaces','Espacios de trabajo'], ['grill','Parrilla'], ['integrations','Integraciones'], ['advanced','Datos y diagnóstico']
       ].map(([id,label], index) => `<button type="button" data-settings-tab="${id}" class="${index === 0 ? 'is-active' : ''}">${label}</button>`).join('')}
     </nav>
     <div class="settings-tabs__content"><nav class="settings-subnav" data-settings-subnav aria-label="Subsecciones"></nav><div class="settings-tabs__panels">
       <section data-settings-panel="general" class="settings-tab-panel is-active"><h3>General</h3>
-        <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="database" ${selected('database', s.display?.defaultView)}>Base de datos</option><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colecciones</option></select></label>
+        <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="database" ${selected('database', s.display?.defaultView)}>Base de datos</option><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colección</option></select></label>
       </section>
 
-      <section data-settings-panel="workspaces" class="settings-tab-panel"><h3>Espacios incluidos</h3>
-        <p class="settings-help">Todos los espacios son segmentos de la misma Base de datos. Estas reglas preparan el modelo para futuros espacios personalizados.</p>
-        ${[['database','Base de datos','Todos los items'],['backlog','Backlog','Pertenencia manual'],['onDeck','On Deck','Pertenencia manual · límite por tipo'],['collections','Colecciones','Marcado como terminado']].map(([key,label,rule]) => { const ws=s.workspaces?.[key]||{}; return `<article class="workspace-rule-card"><header><div><strong>${label}</strong><small>${rule}</small></div><span>${key==='collections'?'Dinámico':key==='database'?'Global':'Manual'}</span></header><div class="workspace-rule-grid"><label class="ui-field"><span>Agrupación</span><select data-workspace-setting="${key}.grouping"><option value="none" ${selected('none',ws.grouping||'none')}>Sin agrupación</option><option value="lastActivity" ${selected('lastActivity',ws.grouping)}>Última actividad</option><option value="completedAt" ${selected('completedAt',ws.grouping)}>Fecha de finalización</option><option value="type" ${selected('type',ws.grouping)}>Tipo</option><option value="group" ${selected('group',ws.grouping)}>Grupo</option></select></label><label class="ui-field"><span>Orden</span><select data-workspace-setting="${key}.sort"><option value="lastActivityAt" ${selected('lastActivityAt',ws.sort||'lastActivityAt')}>Última actividad</option><option value="title" ${selected('title',ws.sort)}>Título</option><option value="rating" ${selected('rating',ws.sort)}>Calificación</option><option value="completedAt" ${selected('completedAt',ws.sort)}>Finalización</option></select></label><label class="ui-field"><span>Diseño</span><select data-workspace-setting="${key}.cardFormat"><option value="simple" ${selected('simple',ws.cardFormat)}>Simple</option><option value="standard" ${selected('standard',ws.cardFormat||'standard')}>Normal</option></select></label><label class="ui-field"><span>Tamaño</span><select data-workspace-setting="${key}.cardSize"><option value="small" ${selected('small',ws.cardSize)}>Pequeño</option><option value="medium" ${selected('medium',ws.cardSize||'medium')}>Mediano</option><option value="large" ${selected('large',ws.cardSize)}>Grande</option></select></label></div></article>`; }).join('')}
+      <section data-settings-panel="workspaces" class="settings-tab-panel"><h3>Organización por espacio</h3>
+        <p class="settings-help">Los espacios son fijos. Aquí solo defines su presentación y organización predeterminadas.</p>
+        ${[['database','Base de datos','Todos los items'],['backlog','Backlog','Pertenencia manual'],['onDeck','On Deck','Pertenencia manual · límite por tipo'],['collections','Colección','Items marcados como terminados']].map(([key,label,rule]) => { const ws=s.workspaces?.[key]||{}; const visibleTypes=new Set(ws.visibleTypes||['games','movies','series']); return `<article class="workspace-rule-card"><header><div><strong>${label}</strong><small>${rule}</small></div></header><div class="workspace-type-settings"><span>Tipos visibles</span><div class="controls-modal__checks">${[{id:'games',singular:'Juego',plural:'Juegos'},{id:'movies',singular:'Película',plural:'Películas'},{id:'series',singular:'Serie',plural:'Series'},...(s.itemTypes||[])].filter((type,index,rows)=>type?.id&&rows.findIndex(row=>row.id===type.id)===index).map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-visible-type="${key}:${escapeAttr(type.id)}" ${visibleTypes.has(type.id)?'checked':''}><span>${escapeHtml(type.plural||type.singular||type.id)}</span></label>`).join('')}</div></div><div class="workspace-rule-grid"><label class="ui-field"><span>Agrupación</span><select data-workspace-setting="${key}.grouping"><option value="none" ${selected('none',ws.grouping||'none')}>Sin agrupación</option><option value="lastActivity" ${selected('lastActivity',ws.grouping)}>Última actividad</option><option value="completedAt" ${selected('completedAt',ws.grouping)}>Fecha de finalización</option><option value="type" ${selected('type',ws.grouping)}>Tipo</option><option value="group" ${selected('group',ws.grouping)}>Grupo</option></select></label><label class="ui-field"><span>Orden</span><select data-workspace-setting="${key}.sort"><option value="lastActivityAt" ${selected('lastActivityAt',ws.sort||'lastActivityAt')}>Última actividad</option><option value="title" ${selected('title',ws.sort)}>Título</option><option value="rating" ${selected('rating',ws.sort)}>Calificación</option><option value="completedAt" ${selected('completedAt',ws.sort)}>Finalización</option></select></label><label class="ui-field"><span>Diseño</span><select data-workspace-setting="${key}.cardFormat"><option value="simple" ${selected('simple',ws.cardFormat)}>Simple</option><option value="standard" ${selected('standard',ws.cardFormat||'standard')}>Normal</option></select></label><label class="ui-field"><span>Tamaño</span><select data-workspace-setting="${key}.cardSize"><option value="small" ${selected('small',ws.cardSize)}>Pequeño</option><option value="medium" ${selected('medium',ws.cardSize||'medium')}>Mediano</option><option value="large" ${selected('large',ws.cardSize)}>Grande</option></select></label></div></article>`; }).join('')}
       </section>
       <section data-settings-panel="grill" class="settings-tab-panel"><h3>Parrilla</h3>${grillSettingsMarkup(s)}</section>
-      <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Visual</h3>
+      <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Tema y fondos</h3>
         <div class="settings-fieldset"><h4>Colores</h4>
           ${colorField('accentColor', 'Color de acento', s.design?.accentColor || '#8fafef')}
           ${colorField('grillColorNormal', 'Borde normal', s.design?.grillColors?.normal || '#161a22')}
@@ -962,28 +973,25 @@ async function openSettingsModal() {
           ${colorField('grillColorCharred', 'Achicharrado', s.design?.grillColors?.charred || '#ef3340')}
         </div>
         <div class="settings-fieldset"><h4>Fondo de vistas</h4>
-          <label class="ui-field"><span>Rotación cada segundos</span><input data-setting="bgRotationSeconds" type="range" min="3" max="120" step="1" value="${escapeAttr(bg.rotationSeconds || 12)}"></label>
-          <label class="ui-field"><span>Opacidad del fondo</span><input data-setting="bgOpacity" type="range" min="0" max="1" step="0.01" value="${escapeAttr(bg.opacity ?? 0.28)}"></label>
-          <label class="ui-field"><span>Blur del fondo</span><input data-setting="bgBlur" type="range" min="0" max="48" step="1" value="${escapeAttr(bg.blur ?? 18)}"></label>
-          <label class="ui-field"><span>Oscurecimiento del fondo</span><input data-setting="bgOverlayOpacity" type="range" min="0" max="1" step="0.01" value="${escapeAttr(bg.overlayOpacity ?? 0.76)}"></label>
-          <label class="ui-field"><span>Blanco y negro del fondo</span><input data-setting="bgGrayscale" type="range" min="0" max="100" step="1" value="${escapeAttr(bg.grayscale ?? 0)}"></label>
+          ${valueField('bgRotationSeconds', 'Rotación de fondos', bg.rotationSeconds || 12, { min:3,max:120,step:1,unit:'s',help:'Tiempo entre cambios de fondo.' })}
+          ${valueField('bgOpacity', 'Opacidad del fondo', bg.opacity ?? 0.28, { min:0,max:1,step:.01,unit:'' })}
+          ${valueField('bgBlur', 'Desenfoque del fondo', bg.blur ?? 18, { min:0,max:48,step:1,unit:'px' })}
+          ${valueField('bgOverlayOpacity', 'Oscurecimiento del fondo', bg.overlayOpacity ?? 0.76, { min:0,max:1,step:.01 })}
+          ${valueField('bgGrayscale', 'Blanco y negro', bg.grayscale ?? 0, { min:0,max:100,step:1,unit:'%' })}
           ${colorField('bgOverlayColor', 'Color de capa', bg.overlayColor || '#05070c')}
-          <label class="ui-field"><span>Fade entre fondos</span><input data-setting="bgFadeSeconds" type="range" min="0" max="5" step="0.05" value="${escapeAttr(bg.fadeSeconds ?? 1.2)}"></label>
+          ${valueField('bgFadeSeconds', 'Transición entre fondos', bg.fadeSeconds ?? 1.2, { min:0,max:5,step:.05,unit:'s' })}
         </div>
         <div class="settings-fieldset"><h4>Contenido de las tarjetas</h4><p class="settings-help">Define qué elementos aparecen en cada diseño de tarjeta.</p>${[['simple','Simple'],['standard','Normal']].map(([format,label]) => `<div class="card-visibility-settings"><h5>${label}</h5><div class="settings-check-grid">${[['title','Título'],['detail','Estado / detalle'],['rating','Calificación'],['date','Fecha'],['type','Tipo'],['groups','Grupos'],['state','Vista activa'],['journal','Diario'],['grill','Parrilla']].map(([key,text]) => { const current=s.design?.gridCards?.[format] || {}; const fallback=format==='simple' ? ['title','detail','rating','journal','grill'].includes(key) : key!=='type'; return `<label class="ui-check"><input type="checkbox" data-card-default="${format}.${key}" ${(current[key] ?? fallback) ? 'checked' : ''}> ${text}</label>`; }).join('')}</div></div>`).join('')}</div><div class="settings-fieldset"><h4>Tarjetas</h4>
           <label class="ui-check"><input type="checkbox" data-setting="itemBgEnabled" ${checked(itemBg.enabled !== false)}> Usar backdrop dentro de cada item</label>
-          <label class="ui-field"><span>Opacidad del backdrop</span><input data-setting="itemBgOpacity" type="range" min="0" max="1" step="0.01" value="${escapeAttr(itemBg.opacity ?? 0.32)}"></label>
-          <label class="ui-field"><span>Blur del backdrop</span><input data-setting="itemBgBlur" type="range" min="0" max="36" step="1" value="${escapeAttr(itemBg.blur ?? 12)}"></label>
-          <label class="ui-field"><span>Oscurecimiento de tarjeta</span><input data-setting="itemBgOverlayOpacity" type="range" min="0" max="1" step="0.01" value="${escapeAttr(itemBg.overlayOpacity ?? 0.72)}"></label>
-          <label class="ui-field"><span>Blanco y negro del backdrop</span><input data-setting="itemBgGrayscale" type="range" min="0" max="100" step="1" value="${escapeAttr(itemBg.grayscale ?? 0)}"></label>
-          <label class="ui-field"><span>Radio de la tarjeta</span><input data-setting="cardRadius" type="range" min="0" max="32" step="1" value="${escapeAttr(cards.radius ?? 18)}"></label><label class="ui-field"><span>Radio de carátula · Simple</span><input data-setting="posterRadiusSimple" type="range" min="0" max="32" step="1" value="${escapeAttr(cards.posterRadiusSimple ?? 14)}"></label><label class="ui-field"><span>Radio de carátula · Normal</span><input data-setting="posterRadiusStandard" type="range" min="0" max="32" step="1" value="${escapeAttr(cards.posterRadiusStandard ?? 12)}"></label>
+          ${valueField('itemBgOpacity', 'Opacidad del backdrop', itemBg.opacity ?? 0.32, { min:0,max:1,step:.01 })}
+          ${valueField('itemBgBlur', 'Desenfoque del backdrop', itemBg.blur ?? 12, { min:0,max:36,step:1,unit:'px' })}
+          ${valueField('itemBgOverlayOpacity', 'Oscurecimiento de tarjeta', itemBg.overlayOpacity ?? 0.72, { min:0,max:1,step:.01 })}
+          ${valueField('itemBgGrayscale', 'Blanco y negro del backdrop', itemBg.grayscale ?? 0, { min:0,max:100,step:1,unit:'%' })}
+          ${radiusField('cardRadius', 'Radio de tarjeta', cards.radius ?? 18)}${radiusField('posterRadiusSimple', 'Radio de carátula · Simple', cards.posterRadiusSimple ?? 14)}${radiusField('posterRadiusStandard', 'Radio de carátula · Normal', cards.posterRadiusStandard ?? 12)}
         </div>
         <div class="settings-fieldset"><h4>Escala</h4>
           <label class="ui-field"><span>Tamaño de fuente</span><select data-setting="fontScale"><option value="small" ${selected('small', s.design?.fontScale)}>Pequeño</option><option value="medium" ${selected('medium', s.design?.fontScale)}>Medio</option><option value="large" ${selected('large', s.design?.fontScale)}>Grande</option></select></label>
           <label class="ui-field"><span>Densidad UI</span><select data-setting="density"><option value="compact" ${selected('compact', s.design?.density)}>Compacta</option><option value="comfortable" ${selected('comfortable', s.design?.density)}>Cómoda</option><option value="large" ${selected('large', s.design?.density)}>Grande</option></select></label>
-          <label class="ui-field"><span>Tamaño Backlog</span><select data-setting="backlogSize"><option value="small" ${selected('small', s.views?.backlog?.cardSize)}>Pequeño</option><option value="medium" ${selected('medium', s.views?.backlog?.cardSize)}>Medio</option><option value="large" ${selected('large', s.views?.backlog?.cardSize)}>Grande</option></select></label>
-          <label class="ui-field"><span>Tamaño On Deck</span><select data-setting="onDeckSize"><option value="small" ${selected('small', s.views?.onDeck?.cardSize)}>Pequeño</option><option value="medium" ${selected('medium', s.views?.onDeck?.cardSize)}>Medio</option><option value="large" ${selected('large', s.views?.onDeck?.cardSize)}>Grande</option></select></label>
-          <label class="ui-field"><span>Tamaño Colecciones</span><select data-setting="collectionsSize"><option value="small" ${selected('small', s.views?.collections?.cardSize)}>Pequeño</option><option value="medium" ${selected('medium', s.views?.collections?.cardSize)}>Medio</option><option value="large" ${selected('large', s.views?.collections?.cardSize)}>Grande</option></select></label>
         </div>
       </section>
       <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Ficha del item</h3>
@@ -1009,11 +1017,10 @@ async function openSettingsModal() {
         <label class="ui-check"><input type="checkbox" data-setting="soundEnabled" ${checked(s.notifications?.soundEnabled === true)}> Sonido</label>
         <label class="ui-field"><span>Tamaño toast</span><select data-setting="toastSize"><option value="small" ${selected('small', s.notifications?.toastSize)}>Pequeño</option><option value="medium" ${selected('medium', s.notifications?.toastSize)}>Medio</option><option value="large" ${selected('large', s.notifications?.toastSize)}>Grande</option></select></label>
       </section>
-      <section data-settings-panel="integrations" class="settings-tab-panel"><h3>Plex</h3>
-        <label class="ui-field"><span>URL</span><input data-setting="plexUrl" type="text" value="${escapeAttr(s.plex?.url || '')}" placeholder="http://IP:32400"></label>
-        <label class="ui-field"><span>Token</span><input data-setting="plexToken" type="password" value="${escapeAttr(s.plex?.token || '')}"></label>
+      <section data-settings-panel="integrations" class="settings-tab-panel"><h3>Integraciones</h3>
+        <div class="settings-fieldset"><h4>Conexión Plex</h4><p class="settings-help">Credenciales del servidor Plex usadas por la integración y Tautulli.</p><label class="ui-field"><span>URL</span><input data-setting="plexUrl" type="text" value="${escapeAttr(s.plex?.url || '')}" placeholder="http://IP:32400"></label><label class="ui-field"><span>Token</span><input data-setting="plexToken" type="password" value="${escapeAttr(s.plex?.token || '')}"></label></div>${integrationBehaviorMarkup(s)}
       </section>
-      <section data-settings-panel="content" class="settings-tab-panel"><h3>Colecciones</h3>
+      <section data-settings-panel="content" class="settings-tab-panel"><h3>Grupos</h3>
         ${collectionGroupsSettingsMarkup(state.collectionGroups || [])}
       </section>
       <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Datos y mantenimiento</h3>
@@ -1021,7 +1028,7 @@ async function openSettingsModal() {
           <button type="button" class="ui-action-button" data-export-backup>Exportar backup</button>
           <button type="button" class="ui-action-button" data-refresh-css>Recargar CSS</button>
         </div>
-        <p class="settings-help">El backup incluye ajustes, estado, backlog, colecciones, notificaciones y CSS global.</p>
+        <p class="settings-help">El backup incluye ajustes, estado, Backlog, Colección, notificaciones y CSS global.</p>
       </section>
       <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Debug</h3>
         <div class="debug-actions"><button type="button" data-debug="notification">Notificación</button><button type="button" data-debug="plex">Plex</button><button type="button" data-debug="game">Playnite</button></div>
@@ -1087,7 +1094,7 @@ async function openSettingsModal() {
             database: { cardSize: s.views?.database?.cardSize || 'medium', cardFormat: s.views?.database?.cardFormat || 'standard', includeCharred: s.views?.database?.includeCharred === true, itemsPerPage: Number(s.views?.database?.itemsPerPage || 60) }
           },
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
-          workspaces: Object.fromEntries(['database','backlog','onDeck','collections'].map(key => [key, Object.fromEntries(['grouping','sort','cardFormat','cardSize'].map(field => [field, root.querySelector(`[data-workspace-setting="${key}.${field}"]`)?.value]))])),
+          workspaces: Object.fromEntries(['database','backlog','onDeck','collections'].map(key => [key, { ...Object.fromEntries(['grouping','sort','cardFormat','cardSize'].map(field => [field, root.querySelector(`[data-workspace-setting="${key}.${field}"]`)?.value])), visibleTypes: [...root.querySelectorAll(`[data-workspace-visible-type^="${key}:"]:checked`)].map(input => input.dataset.workspaceVisibleType.split(':').slice(1).join(':')) }])),
           itemTypes: readCustomTypesFromSettings(root),
           notifications: { toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
           plex: { url: get('plexUrl')?.value || '', token: get('plexToken')?.value || '' },
@@ -1099,7 +1106,7 @@ async function openSettingsModal() {
     ]
   });
   setTimeout(() => {
-    const refreshSettingsSubnav = tab => { const nav = modalRoot.querySelector('[data-settings-subnav]'); const scroller = modalRoot.querySelector('.settings-tabs__panels'); const panels = [...modalRoot.querySelectorAll(`[data-settings-panel="${tab}"]`)]; if (!nav) return; nav.innerHTML = panels.map((panel,index) => { if (!panel.id) panel.id = `settings-${tab}-${index}`; const label = panel.querySelector('h3')?.textContent || `Sección ${index+1}`; return `<button type="button" data-settings-jump="${panel.id}">${label}</button>`; }).join(''); const buttons=[...nav.querySelectorAll('[data-settings-jump]')]; buttons.forEach(button => button.addEventListener('click', () => modalRoot.querySelector(`#${button.dataset.settingsJump}`)?.scrollIntoView({behavior:'smooth',block:'start'}))); const update=()=>{ let active=panels[0]; const top=(scroller?.getBoundingClientRect().top||0)+90; for(const panel of panels){ if(panel.getBoundingClientRect().top<=top) active=panel; } buttons.forEach(button=>button.classList.toggle('is-active',button.dataset.settingsJump===active?.id)); }; scroller?.addEventListener('scroll',update,{passive:true}); requestAnimationFrame(update); };
+    const refreshSettingsSubnav = tab => { const nav = modalRoot.querySelector('[data-settings-subnav]'); const scroller = modalRoot.querySelector('.settings-tabs__panels'); const panels = [...modalRoot.querySelectorAll(`[data-settings-panel="${tab}"]`)]; const targets = panels.flatMap(panel => { const sections=[...panel.querySelectorAll(':scope > .settings-fieldset')]; return sections.length ? sections : [panel]; }); if (!nav) return; nav.innerHTML = targets.map((panel,index) => { if (!panel.id) panel.id = `settings-${tab}-${index}`; const label = panel.querySelector(':scope > h4, :scope > h3')?.textContent || `Sección ${index+1}`; return `<button type="button" data-settings-jump="${panel.id}">${label}</button>`; }).join(''); const buttons=[...nav.querySelectorAll('[data-settings-jump]')]; buttons.forEach(button => button.addEventListener('click', () => modalRoot.querySelector(`#${button.dataset.settingsJump}`)?.scrollIntoView({behavior:'smooth',block:'start'}))); const update=()=>{ let active=targets[0]; const top=(scroller?.getBoundingClientRect().top||0)+90; for(const panel of targets){ if(panel.getBoundingClientRect().top<=top) active=panel; } buttons.forEach(button=>button.classList.toggle('is-active',button.dataset.settingsJump===active?.id)); }; scroller?.addEventListener('scroll',update,{passive:true}); requestAnimationFrame(update); };
     modalRoot.querySelectorAll('[data-settings-tab]').forEach(btn => btn.addEventListener('click', () => {
       const tab = btn.dataset.settingsTab;
       modalRoot.querySelectorAll('[data-settings-tab]').forEach(node => node.classList.toggle('is-active', node === btn));
@@ -1169,6 +1176,8 @@ async function openSettingsModal() {
     });
 
     bindColorFieldPreviews(modalRoot);
+    modalRoot.querySelectorAll('[data-setting-range]').forEach(range => { const input=modalRoot.querySelector(`[data-setting="${range.dataset.settingRange}"]`); if(!input) return; const syncFromRange=()=>{input.value=range.value; input.dispatchEvent(new Event('input',{bubbles:true}));}; const syncFromInput=()=>{range.value=input.value;}; range.addEventListener('input',syncFromRange); input.addEventListener('input',syncFromInput); });
+    modalRoot.querySelectorAll('[data-setting-preset]').forEach(button => button.addEventListener('click',()=>{ const input=modalRoot.querySelector(`[data-setting="${button.dataset.settingPreset}"]`); if(!input)return; input.value=button.dataset.value; input.dispatchEvent(new Event('input',{bubbles:true})); button.parentElement.querySelectorAll('[data-setting-preset]').forEach(node=>node.classList.toggle('is-active',node===button)); }));
     const readVisualDesignPatch = () => {
       const root = modalRoot;
       const patch = {
