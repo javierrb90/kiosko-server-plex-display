@@ -42,9 +42,9 @@ export function itemState(item = {}, context = '') {
   const states = item.states || {};
   return {
     inDatabase: true,
-    inBacklog: states.inBacklog === true || item.tracked === true || context === 'backlog',
-    inOnDeck: states.inOnDeck === true || item.inOnDeck === true || context === 'on-deck',
-    inCollection: states.completed === true || Boolean(item.rating || item.completedAt) || context === 'collections',
+    inBacklog: states.inBacklog === true || item.tracked === true,
+    inOnDeck: states.inOnDeck === true || item.inOnDeck === true,
+    inCollection: states.completed === true || Boolean(item.completedAt),
     rating: Number(item.rating || 0),
     completedAt: item.completedAt || null
   };

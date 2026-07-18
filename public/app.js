@@ -677,6 +677,7 @@ function applyItemDelta(message = {}) {
       applyCompletionRatings(payload.completionRatings);
       views.update('database', { refresh: true });
       break;
+    case 'item:assessment-updated':
     case 'item:journal-updated':
       if (payload.item) {
         views.update('database', { item: payload.item });
@@ -918,12 +919,14 @@ function grillSettingsMarkup(settings = {}) {
     { id:'games', label:'Juegos' }, { id:'movies', label:'Películas' }, { id:'series', label:'Series' },
     ...(settings.itemTypes || []).map(type => ({ id:type.id, label:type.plural || type.singular || type.id }))
   ];
+  const seen = new Set();
+  const unique = types.filter(type => type?.id && !seen.has(type.id) && seen.add(type.id));
   const cell = (type, view, fallback) => { const value = grill.limits?.[type]?.[view]; return value === false ? '' : (value || fallback); };
-  return `<div class="settings-fieldset"><h4>Sistema de parrilla</h4><p class="settings-help">BBQueue revisará al cargar la página los items de Backlog y On Deck cuya última actividad supere estos límites.</p><label class="ui-check"><input type="checkbox" data-setting="grillEnabled" ${grill.enabled !== false ? 'checked' : ''}> Activar sistema de parrilla</label><div class="grill-settings-table"><div></div><strong>Backlog</strong><strong>On Deck</strong>${types.map(type => `<span>${escapeHtml(type.label)}</span><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="backlog" value="${escapeAttr(cell(type.id,'backlog',grill.defaults?.backlog || 30))}"><small>días</small></label><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="onDeck" value="${escapeAttr(cell(type.id,'onDeck',grill.defaults?.onDeck || 7))}"><small>días</small></label>`).join('')}</div></div>`;
+  return `<div class="settings-fieldset"><h4>Sistema de parrilla</h4><p class="settings-help">Los estados “quemándose” y “achicharrado” se calculan dinámicamente según el espacio de trabajo y sus límites.</p><label class="ui-check"><input type="checkbox" data-setting="grillEnabled" ${grill.enabled !== false ? 'checked' : ''}> Activar sistema de parrilla</label><div class="grill-settings-table"><div></div><strong>Backlog</strong><strong>On Deck</strong>${unique.map(type => `<span>${escapeHtml(type.label)}</span><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="backlog" value="${escapeAttr(cell(type.id,'backlog',grill.defaults?.backlog || 30))}"><small>días</small></label><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="onDeck" value="${escapeAttr(cell(type.id,'onDeck',grill.defaults?.onDeck || 7))}"><small>días</small></label>`).join('')}</div></div><div class="settings-fieldset"><h4>Quitar achicharrado automáticamente</h4><p class="settings-help">Elige qué actividades deben resetear el estado manual de achicharrado.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="grillClearManual" ${(grill.clearCharredOn?.manual ?? true) ? 'checked' : ''}> Acciones manuales (mover, editar actividad)</label><label class="ui-check"><input type="checkbox" data-setting="grillClearJournal" ${(grill.clearCharredOn?.journal ?? true) ? 'checked' : ''}> Guardar actividad / diario</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlaynite" ${(grill.clearCharredOn?.playniteStarted ?? true) ? 'checked' : ''}> Inicio de juego desde Playnite</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexPlayback" ${(grill.clearCharredOn?.plexPlayback ?? false) ? 'checked' : ''}> Reproducción en Plex</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexLibrary" ${(grill.clearCharredOn?.plexLibraryAdded ?? false) ? 'checked' : ''}> Nuevo episodio / añadido en Plex</label></div></div>`;
 }
 function readGrillSettings(root, settings = {}) {
   const limits = {}; root.querySelectorAll('[data-grill-type]').forEach(input => { const type=input.dataset.grillType; const view=input.dataset.grillView; limits[type] ||= {}; limits[type][view] = Math.max(1, Number(input.value) || (view === 'onDeck' ? 7 : 30)); });
-  return { enabled: root.querySelector('[data-setting="grillEnabled"]')?.checked !== false, defaults: { backlog: Number(settings.grill?.defaults?.backlog || 30), onDeck: Number(settings.grill?.defaults?.onDeck || 7) }, limits };
+  return { enabled: root.querySelector('[data-setting="grillEnabled"]')?.checked !== false, defaults: { backlog: Number(settings.grill?.defaults?.backlog || 30), onDeck: Number(settings.grill?.defaults?.onDeck || 7) }, limits, clearCharredOn: { manual: root.querySelector('[data-setting="grillClearManual"]')?.checked !== false, journal: root.querySelector('[data-setting="grillClearJournal"]')?.checked !== false, playniteStarted: root.querySelector('[data-setting="grillClearPlaynite"]')?.checked !== false, plexPlayback: root.querySelector('[data-setting="grillClearPlexPlayback"]')?.checked === true, plexLibraryAdded: root.querySelector('[data-setting="grillClearPlexLibrary"]')?.checked === true } };
 }
 
 async function openSettingsModal() {
@@ -938,12 +941,17 @@ async function openSettingsModal() {
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
-        ['general','General'], ['appearance','Apariencia'], ['content','Contenido'], ['grill','Parrilla'], ['integrations','Integraciones'], ['advanced','Avanzado']
+        ['general','General'], ['appearance','Apariencia'], ['content','Contenido'], ['workspaces','Espacios de trabajo'], ['grill','Parrilla'], ['integrations','Integraciones'], ['advanced','Avanzado']
       ].map(([id,label], index) => `<button type="button" data-settings-tab="${id}" class="${index === 0 ? 'is-active' : ''}">${label}</button>`).join('')}
     </nav>
     <div class="settings-tabs__content"><nav class="settings-subnav" data-settings-subnav aria-label="Subsecciones"></nav><div class="settings-tabs__panels">
       <section data-settings-panel="general" class="settings-tab-panel is-active"><h3>General</h3>
         <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="database" ${selected('database', s.display?.defaultView)}>Base de datos</option><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colecciones</option></select></label>
+      </section>
+
+      <section data-settings-panel="workspaces" class="settings-tab-panel"><h3>Espacios incluidos</h3>
+        <p class="settings-help">Todos los espacios son segmentos de la misma Base de datos. Estas reglas preparan el modelo para futuros espacios personalizados.</p>
+        ${[['database','Base de datos','Todos los items'],['backlog','Backlog','Pertenencia manual'],['onDeck','On Deck','Pertenencia manual · límite por tipo'],['collections','Colecciones','Marcado como terminado']].map(([key,label,rule]) => { const ws=s.workspaces?.[key]||{}; return `<article class="workspace-rule-card"><header><div><strong>${label}</strong><small>${rule}</small></div><span>${key==='collections'?'Dinámico':key==='database'?'Global':'Manual'}</span></header><div class="workspace-rule-grid"><label class="ui-field"><span>Agrupación</span><select data-workspace-setting="${key}.grouping"><option value="none" ${selected('none',ws.grouping||'none')}>Sin agrupación</option><option value="lastActivity" ${selected('lastActivity',ws.grouping)}>Última actividad</option><option value="completedAt" ${selected('completedAt',ws.grouping)}>Fecha de finalización</option><option value="type" ${selected('type',ws.grouping)}>Tipo</option><option value="group" ${selected('group',ws.grouping)}>Grupo</option></select></label><label class="ui-field"><span>Orden</span><select data-workspace-setting="${key}.sort"><option value="lastActivityAt" ${selected('lastActivityAt',ws.sort||'lastActivityAt')}>Última actividad</option><option value="title" ${selected('title',ws.sort)}>Título</option><option value="rating" ${selected('rating',ws.sort)}>Calificación</option><option value="completedAt" ${selected('completedAt',ws.sort)}>Finalización</option></select></label><label class="ui-field"><span>Diseño</span><select data-workspace-setting="${key}.cardFormat"><option value="simple" ${selected('simple',ws.cardFormat)}>Simple</option><option value="standard" ${selected('standard',ws.cardFormat||'standard')}>Normal</option></select></label><label class="ui-field"><span>Tamaño</span><select data-workspace-setting="${key}.cardSize"><option value="small" ${selected('small',ws.cardSize)}>Pequeño</option><option value="medium" ${selected('medium',ws.cardSize||'medium')}>Mediano</option><option value="large" ${selected('large',ws.cardSize)}>Grande</option></select></label></div></article>`; }).join('')}
       </section>
       <section data-settings-panel="grill" class="settings-tab-panel"><h3>Parrilla</h3>${grillSettingsMarkup(s)}</section>
       <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Visual</h3>
@@ -962,7 +970,7 @@ async function openSettingsModal() {
           ${colorField('bgOverlayColor', 'Color de capa', bg.overlayColor || '#05070c')}
           <label class="ui-field"><span>Fade entre fondos</span><input data-setting="bgFadeSeconds" type="range" min="0" max="5" step="0.05" value="${escapeAttr(bg.fadeSeconds ?? 1.2)}"></label>
         </div>
-        <div class="settings-fieldset"><h4>Contenido de las tarjetas</h4><p class="settings-help">Define qué elementos aparecen en cada diseño de tarjeta.</p>${[['simple','Simple'],['standard','Normal']].map(([format,label]) => `<div class="card-visibility-settings"><h5>${label}</h5><div class="settings-check-grid">${[['title','Título'],['detail','Estado / detalle'],['rating','Calificación'],['date','Fecha'],['type','Tipo'],['groups','Grupos'],['state','Vista activa'],['journal','Diario'],['grill','Parrilla']].map(([key,text]) => { const current=s.design?.gridCards?.[format] || {}; const fallback=format==='simple' ? ['detail','rating','journal','grill'].includes(key) : key!=='type'; return `<label class="ui-check"><input type="checkbox" data-card-default="${format}.${key}" ${(current[key] ?? fallback) ? 'checked' : ''}> ${text}</label>`; }).join('')}</div></div>`).join('')}</div><div class="settings-fieldset"><h4>Tarjetas</h4>
+        <div class="settings-fieldset"><h4>Contenido de las tarjetas</h4><p class="settings-help">Define qué elementos aparecen en cada diseño de tarjeta.</p>${[['simple','Simple'],['standard','Normal']].map(([format,label]) => `<div class="card-visibility-settings"><h5>${label}</h5><div class="settings-check-grid">${[['title','Título'],['detail','Estado / detalle'],['rating','Calificación'],['date','Fecha'],['type','Tipo'],['groups','Grupos'],['state','Vista activa'],['journal','Diario'],['grill','Parrilla']].map(([key,text]) => { const current=s.design?.gridCards?.[format] || {}; const fallback=format==='simple' ? ['title','detail','rating','journal','grill'].includes(key) : key!=='type'; return `<label class="ui-check"><input type="checkbox" data-card-default="${format}.${key}" ${(current[key] ?? fallback) ? 'checked' : ''}> ${text}</label>`; }).join('')}</div></div>`).join('')}</div><div class="settings-fieldset"><h4>Tarjetas</h4>
           <label class="ui-check"><input type="checkbox" data-setting="itemBgEnabled" ${checked(itemBg.enabled !== false)}> Usar backdrop dentro de cada item</label>
           <label class="ui-field"><span>Opacidad del backdrop</span><input data-setting="itemBgOpacity" type="range" min="0" max="1" step="0.01" value="${escapeAttr(itemBg.opacity ?? 0.32)}"></label>
           <label class="ui-field"><span>Blur del backdrop</span><input data-setting="itemBgBlur" type="range" min="0" max="36" step="1" value="${escapeAttr(itemBg.blur ?? 12)}"></label>
@@ -1079,6 +1087,7 @@ async function openSettingsModal() {
             database: { cardSize: s.views?.database?.cardSize || 'medium', cardFormat: s.views?.database?.cardFormat || 'standard', includeCharred: s.views?.database?.includeCharred === true, itemsPerPage: Number(s.views?.database?.itemsPerPage || 60) }
           },
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
+          workspaces: Object.fromEntries(['database','backlog','onDeck','collections'].map(key => [key, Object.fromEntries(['grouping','sort','cardFormat','cardSize'].map(field => [field, root.querySelector(`[data-workspace-setting="${key}.${field}"]`)?.value]))])),
           itemTypes: readCustomTypesFromSettings(root),
           notifications: { toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
           plex: { url: get('plexUrl')?.value || '', token: get('plexToken')?.value || '' },
@@ -1090,7 +1099,7 @@ async function openSettingsModal() {
     ]
   });
   setTimeout(() => {
-    const refreshSettingsSubnav = tab => { const nav = modalRoot.querySelector('[data-settings-subnav]'); const panels = [...modalRoot.querySelectorAll(`[data-settings-panel="${tab}"]`)]; if (!nav) return; nav.innerHTML = panels.map((panel,index) => { if (!panel.id) panel.id = `settings-${tab}-${index}`; const label = panel.querySelector('h3')?.textContent || `Sección ${index+1}`; return `<button type="button" data-settings-jump="${panel.id}">${label}</button>`; }).join(''); nav.querySelectorAll('[data-settings-jump]').forEach(button => button.addEventListener('click', () => modalRoot.querySelector(`#${button.dataset.settingsJump}`)?.scrollIntoView({behavior:'smooth',block:'start'}))); };
+    const refreshSettingsSubnav = tab => { const nav = modalRoot.querySelector('[data-settings-subnav]'); const scroller = modalRoot.querySelector('.settings-tabs__panels'); const panels = [...modalRoot.querySelectorAll(`[data-settings-panel="${tab}"]`)]; if (!nav) return; nav.innerHTML = panels.map((panel,index) => { if (!panel.id) panel.id = `settings-${tab}-${index}`; const label = panel.querySelector('h3')?.textContent || `Sección ${index+1}`; return `<button type="button" data-settings-jump="${panel.id}">${label}</button>`; }).join(''); const buttons=[...nav.querySelectorAll('[data-settings-jump]')]; buttons.forEach(button => button.addEventListener('click', () => modalRoot.querySelector(`#${button.dataset.settingsJump}`)?.scrollIntoView({behavior:'smooth',block:'start'}))); const update=()=>{ let active=panels[0]; const top=(scroller?.getBoundingClientRect().top||0)+90; for(const panel of panels){ if(panel.getBoundingClientRect().top<=top) active=panel; } buttons.forEach(button=>button.classList.toggle('is-active',button.dataset.settingsJump===active?.id)); }; scroller?.addEventListener('scroll',update,{passive:true}); requestAnimationFrame(update); };
     modalRoot.querySelectorAll('[data-settings-tab]').forEach(btn => btn.addEventListener('click', () => {
       const tab = btn.dataset.settingsTab;
       modalRoot.querySelectorAll('[data-settings-tab]').forEach(node => node.classList.toggle('is-active', node === btn));
@@ -1180,8 +1189,15 @@ async function openSettingsModal() {
             overlayOpacity: Number(root.querySelector('[data-setting="itemBgOverlayOpacity"]')?.value ?? 0.72),
             grayscale: Number(root.querySelector('[data-setting="itemBgGrayscale"]')?.value ?? 0)
           },
+          grillColors: {
+            normal: root.querySelector('[data-setting="grillColorNormal"]')?.value || '#161a22',
+            hot: root.querySelector('[data-setting="grillColorHot"]')?.value || '#f3b61f',
+            charred: root.querySelector('[data-setting="grillColorCharred"]')?.value || '#ef3340'
+          },
           cards: {
-            radius: Number(root.querySelector('[data-setting="cardRadius"], [data-setting="posterRadiusSimple"], [data-setting="posterRadiusStandard"], [data-setting="grillColorNormal"], [data-setting="grillColorHot"], [data-setting="grillColorCharred"]')?.value ?? 18)
+            radius: Number(root.querySelector('[data-setting="cardRadius"]')?.value ?? 18),
+            posterRadiusSimple: Number(root.querySelector('[data-setting="posterRadiusSimple"]')?.value ?? 14),
+            posterRadiusStandard: Number(root.querySelector('[data-setting="posterRadiusStandard"]')?.value ?? 12)
           }
         }
       };
@@ -1204,6 +1220,7 @@ async function openSettingsModal() {
         views.update('on-deck', { settings: state.settings });
         views.update('current-content', { settings: state.settings });
         views.update('collections', { settings: state.settings });
+        views.update('database', { settings: state.settings });
       } catch (error) {
         debugError('No se pudieron guardar opciones de tarjetas', error);
       }
@@ -1266,7 +1283,7 @@ async function loadInitialSnapshot() {
 }
 
 window.addEventListener('error', event => debugError('Error no controlado', { message: event.message, filename: event.filename, line: event.lineno }));
-loadInitialSnapshot().finally(() => { socket.connect(); showGrillReviewOnce(); });
+loadInitialSnapshot().finally(() => { socket.connect(); });
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>\'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }
 function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }

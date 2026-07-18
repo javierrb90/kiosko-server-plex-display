@@ -27,10 +27,24 @@ export function itemCardMarkup(item = {}, { context = 'database', groups = [], f
   const grillClass = grill.charred ? " is-charred" : grill.hot ? " is-hot" : "";
   const turnedClass = grill.turned ? " is-turned" : "";
   const formatClass = ` media-card--${escapeAttr(format)}`;
+  const titleText = String(item.title || '');
+  const detailText = String(detailFor(item) || '');
+  const titleLength = titleText.length;
+  const detailLength = detailText.length;
+  const titleWords = titleText.split(/\s+/).filter(Boolean);
+  const detailWords = detailText.split(/\s+/).filter(Boolean);
+  const longestTitleWord = titleWords.reduce((max, word) => Math.max(max, word.length), 0);
+  const longestDetailWord = detailWords.reduce((max, word) => Math.max(max, word.length), 0);
+  let titleFit = titleLength > 84 ? .88 : titleLength > 62 ? .92 : titleLength > 42 ? .96 : 1;
+  let detailFit = detailLength > 96 ? .9 : detailLength > 72 ? .94 : detailLength > 48 ? .97 : 1;
+  if (longestTitleWord > 24) titleFit *= .94;
+  else if (longestTitleWord > 16) titleFit *= .97;
+  if (longestDetailWord > 24) detailFit *= .94;
+  else if (longestDetailWord > 16) detailFit *= .97;
   const defaults = format === 'simple' ? { title:true, detail:true, rating:true, date:false, type:false, groups:false, state:false, journal:true, grill:true } : { title:true, detail:true, rating:true, date:true, type:false, groups:true, state:true, journal:true, grill:true };
   const show = { ...defaults, ...(visibility || {}) };
   
-  return `<article class="media-card media-card--rich item-card source-${escapeAttr(item.source || 'other')}${grillClass}${turnedClass}${formatClass}" data-id="${escapeAttr(key)}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}">
+  return `<article style="--title-fit:${titleFit};--detail-fit:${detailFit}" class="media-card media-card--rich item-card source-${escapeAttr(item.source || 'other')}${grillClass}${turnedClass}${formatClass}" data-id="${escapeAttr(key)}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}">
     ${show.grill && (grill.hot || grill.charred) ? `<span class="media-card__heat" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg></span>` : ""}
     ${bg ? `<div class="media-card__bg" style="background-image:url('${escapeAttr(bg)}')"></div>` : ''}
     <div class="media-card__surface">
@@ -53,7 +67,7 @@ export function itemListMarkup(items = [], { context = 'database', groups = [] }
     ${items.map(item => {
       const st = itemState(item, context);
       const status = [st.inBacklog ? 'Backlog' : '', st.inOnDeck ? 'On Deck' : '', st.inCollection ? 'Calificado' : ''].filter(Boolean).join(' · ') || 'Base';
-      return `<button type="button" class="kiosko-list__row item-list-row" role="row" data-id="${escapeAttr(stableItemKey(item))}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}"><span><strong>${escapeHtml(item.title || 'Sin título')}</strong><small>${escapeHtml(detailFor(item))}</small>${groupPillsMarkup(item, groups)}</span><span>${escapeHtml(item.source || '')}</span><span>${escapeHtml(typeLabel(typeFor(item)))}</span><span>${escapeHtml(status)}</span><span>${item.rating ? escapeHtml(String(item.rating)) : '—'}</span><span>${escapeHtml(formatDate(item.completedAt || item.lastActivityAt || item.updatedAt, { short: false }))}</span></button>`;
+      const grill=item.grill||{}; const grillClass=grill.charred?" is-charred":grill.hot?" is-hot":""; return `<button type="button" class="kiosko-list__row item-list-row${grillClass}" role="row" data-id="${escapeAttr(stableItemKey(item))}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}"><span><strong>${escapeHtml(item.title || 'Sin título')}</strong><small>${escapeHtml(detailFor(item))}</small>${groupPillsMarkup(item, groups)}</span><span>${escapeHtml(item.source || '')}</span><span>${escapeHtml(typeLabel(typeFor(item)))}</span><span>${escapeHtml(status)}</span><span>${item.rating ? escapeHtml(String(item.rating)) : '—'}</span><span>${escapeHtml(formatDate(item.completedAt || item.lastActivityAt || item.updatedAt, { short: false }))}</span>${(grill.hot||grill.charred)?`<span class="kiosko-list__heat" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg></span>`:""}</button>`;
     }).join('')}
   </div>`;
 }

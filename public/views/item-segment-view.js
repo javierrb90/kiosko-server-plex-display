@@ -41,7 +41,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   let limit = defaultLimit;
   let pages = 1;
   let total = 0;
-  let search = '';
+  let search = localStorage.getItem('bbqueue:global-search') || '';
   let activeTypes = new Set(['games','movies','series']);
   let activeGroupIds = new Set();
   let groupMatch = 'any';
@@ -59,6 +59,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   let collectionGroups = [];
   let settings = {};
   let loadingSeq = 0;
+  let searchDebounce = 0;
 
   function sessionKey() { return `kiosko:v6.8:${id}`; }
   function saveSession() {
@@ -66,9 +67,9 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   }
   function loadSession() {
     try {
-      const incomingSearch = id === 'database' ? localStorage.getItem('bbqueue:database-search') : '';
+      const incomingSearch = localStorage.getItem('bbqueue:global-search') || '';
       const parsed = JSON.parse(localStorage.getItem(sessionKey()) || 'null');
-      if (!parsed) { if (incomingSearch) { search = incomingSearch; localStorage.removeItem('bbqueue:database-search'); sessionStorage.setItem('bbqueue:focus-database-search', '1'); } return; }
+      if (!parsed) { if (incomingSearch) search = incomingSearch; return; }
       if (typeof parsed.search === 'string') search = parsed.search;
       if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(Boolean));
       if (Array.isArray(parsed.activeGroupIds)) activeGroupIds = new Set(parsed.activeGroupIds);
@@ -84,7 +85,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       else if (['simple','standard'].includes(parsed.cardFormat)) cardFormat = parsed.cardFormat;
       if (typeof parsed.includeCharred === 'boolean') includeCharred = parsed.includeCharred;
       limit = clamp(parsed.limit, 6, 500, defaultLimit);
-      if (incomingSearch) { search = incomingSearch; localStorage.removeItem('bbqueue:database-search'); sessionStorage.setItem('bbqueue:focus-database-search', '1'); }
+      if (incomingSearch) search = incomingSearch;
     } catch {}
   }
   function availableTypes() {
@@ -96,7 +97,9 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     const ids = availableTypes();
     if (!activeTypes.size || [...activeTypes].some(type => !ids.includes(type))) activeTypes = new Set(ids);
   }
-  function currentSize() { return cardSize || settings?.views?.[id]?.cardSize || 'medium'; }
+  function workspaceKey(){ return id === 'on-deck' ? 'onDeck' : id; }
+  function workspaceConfig(){ return settings?.workspaces?.[workspaceKey()] || {}; }
+  function currentSize() { return cardSize || workspaceConfig().cardSize || settings?.views?.[id]?.cardSize || 'medium'; }
   function queryUrl() {
     const params = new URLSearchParams({ view, page: '1', limit: '5000', sort, direction, sync: '1' });
     return `/api/items?${params.toString()}`;
@@ -113,7 +116,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     const q = search.trim().toLowerCase();
     let rows = [...allItems]
       .filter(item => activeTypes.has(typeFor(item)))
-      .filter(item => id !== "database" ? true : (charredOnly ? Boolean(item.states?.charred) : (includeCharred || !item.states?.charred)))
+      .filter(item => charredOnly ? Boolean(item.states?.charred) : true)
       .filter(item => !source || item.source === source)
       .filter(item => !allowStatus || !status || item.status === status || item.states?.[status] === true)
       .filter(item => !q || searchHaystack(item).includes(q))
@@ -131,23 +134,30 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     visibleItems = rows.slice((page - 1) * limit, page * limit);
   }
   function groupRowsMarkup(rows = []) {
-    if (!groupByDate) return viewMode === 'list' ? itemListMarkup(rows, { context: id, groups: collectionGroups }) : rows.map(item => itemCardMarkup(item, { context: id, groups: collectionGroups, format: cardFormat, visibility: settings?.design?.gridCards?.[cardFormat] || {} })).join('');
+    const grouping = workspaceConfig().grouping || (groupByDate ? 'lastActivity' : 'none');
+    const effectiveGroupByDate = grouping === 'lastActivity' || grouping === 'completedAt';
+    if (!effectiveGroupByDate) return viewMode === 'list' ? itemListMarkup(rows, { context: id, groups: collectionGroups }) : rows.map(item => itemCardMarkup(item, { context: id, groups: collectionGroups, format: cardFormat, visibility: settings?.design?.gridCards?.[cardFormat] || {} })).join('');
     const today = new Date(); today.setHours(0,0,0,0);
     const one = 86400000;
     const labelFor = item => {
-      const t = Date.parse(item.lastActivityAt || item.updatedAt || item.createdAt || '');
+      const raw = grouping === 'completedAt' ? item.completedAt : (item.lastActivityAt || item.updatedAt || item.createdAt);
+      const t = Date.parse(raw || '');
       if (!Number.isFinite(t)) return 'ANTERIOR';
       if (t >= today.getTime()) return 'HOY';
       if (t >= today.getTime() - one) return 'AYER';
       if (t >= today.getTime() - one * 7) return 'ÚLTIMA SEMANA';
       return 'ANTERIOR';
     };
-    let last = '';
-    return rows.map(item => {
-      const label = labelFor(item);
-      const heading = label !== last ? `<div class="media-date-heading">${escapeHtml(label)}</div>` : '';
-      last = label;
-      return `${heading}${itemCardMarkup(item, { context: id, groups: collectionGroups, format: cardFormat, visibility: settings?.design?.gridCards?.[cardFormat] || {} })}`;
+    const order = ['HOY','AYER','ÚLTIMA SEMANA','ANTERIOR'];
+    const buckets = new Map(order.map(label => [label, []]));
+    for (const item of rows) buckets.get(labelFor(item)).push(item);
+    return order.map(label => {
+      const items = buckets.get(label);
+      if (!items.length) return '';
+      const markup = viewMode === 'list'
+        ? itemListMarkup(items, { context: id, groups: collectionGroups })
+        : items.map(item => itemCardMarkup(item, { context: id, groups: collectionGroups, format: cardFormat, visibility: settings?.design?.gridCards?.[cardFormat] || {} })).join('');
+      return `<div class="media-date-heading">${escapeHtml(label)}</div>${markup}`;
     }).join('');
   }
   async function load({ resetPage = false } = {}) {
@@ -169,9 +179,20 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     if (!controlsRoot || !isVisible) return;
     if (!force && controlsMounted) return;
     controlsMounted = true;
-    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-quick-search value="${escapeAttr(search)}" placeholder="Buscar en Base de datos" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span><span class="view-filter-button__meta" data-filter-meta></span></button></div>`;
-    controlsRoot.querySelector('[data-quick-search]')?.addEventListener('input', event => { const value = event.target.value || ''; if (id !== 'database' && value) { try { localStorage.setItem('bbqueue:database-search', value); sessionStorage.setItem('bbqueue:focus-database-search', '1'); } catch {} window.location.hash = '#/database'; return; } search = value; page = 1; applyFilters(); render(); saveSession(); });
-    if (id === 'database' && sessionStorage.getItem('bbqueue:focus-database-search') === '1') { sessionStorage.removeItem('bbqueue:focus-database-search'); requestAnimationFrame(() => { const input = controlsRoot.querySelector('[data-quick-search]'); input?.focus(); input?.setSelectionRange(input.value.length, input.value.length); }); }
+    controlsRoot.innerHTML = `<div class="collection-toolbar"><label class="collection-search"><input type="search" data-quick-search value="${escapeAttr(search)}" placeholder="Buscar en todos los espacios" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button global-charred-filter ${charredOnly?'is-active':''}" data-global-charred title="Mostrar solo achicharrados"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg><strong data-global-charred-count>${allItems.filter(item=>item.states?.charred).length}</strong></button><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span><span class="view-filter-button__meta" data-filter-meta></span></button></div>`;
+    controlsRoot.querySelector('[data-quick-search]')?.addEventListener('input', event => {
+      search = event.target.value || '';
+      localStorage.setItem('bbqueue:global-search', search);
+      page = 1;
+      window.clearTimeout(searchDebounce);
+      searchDebounce = window.setTimeout(() => {
+        applyFilters();
+        render();
+        saveSession();
+        window.dispatchEvent(new CustomEvent('bbqueue:global-search', { detail: { value: search, source: id } }));
+      }, 220);
+    });
+    controlsRoot.querySelector('[data-global-charred]')?.addEventListener('click', () => { charredOnly=!charredOnly; localStorage.setItem('bbqueue:charred-only',charredOnly?'1':'0'); window.dispatchEvent(new CustomEvent('bbqueue:charred-filter',{detail:charredOnly})); renderControls({force:true}); render(); });
     controlsRoot.querySelector('[data-toggle-view]')?.addEventListener('click', () => { viewMode = viewMode === 'grid' ? 'list' : 'grid'; renderControls({ force: true }); render(); saveSession(); });
     controlsRoot.querySelector('[data-open-controls]')?.addEventListener('click', openControlsModal);
     updateControlsState();
@@ -209,6 +230,14 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     renderControls({ force: true });
     render();
     saveSession();
+    const key = workspaceKey();
+    const existing = settings?.workspaces?.[key] || {};
+    const workspacePatch = { ...existing, sort, cardSize, cardFormat, grouping: existing.grouping || (groupByDate ? 'lastActivity' : 'none') };
+    try {
+      settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ workspaces: { [key]: workspacePatch }, views: { [id]: { ...(settings?.views?.[id] || {}), cardSize, cardFormat, itemsPerPage: limit } } }) });
+    } catch (error) {
+      ui.toast('No se pudo guardar el espacio de trabajo', { detail: error.message || '' });
+    }
   }
   async function openCreateManualItem() {
     if (id !== 'database') return;
@@ -269,8 +298,9 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     if (chips) chips.innerHTML = activeFilterChipsMarkup({ activeTypes, activeGroupIds, groups: collectionGroups, source, status: allowStatus ? status : '', search, groupMatch });
     const grid = el.querySelector('[data-items-grid]');
     if (!grid) return;
-    grid.className = viewMode === 'list' ? 'media-grid media-grid--list unified-grid' : `media-grid unified-grid card-format-${cardFormat}`;
-    const size = SIZE_MAP[currentSize()] || SIZE_MAP.medium;
+    const resolvedSize = currentSize();
+    grid.className = viewMode === 'list' ? `media-grid media-grid--list unified-grid card-size-${resolvedSize}` : `media-grid unified-grid card-format-${cardFormat} card-size-${resolvedSize}`;
+    const size = SIZE_MAP[resolvedSize] || SIZE_MAP.medium;
     grid.style.setProperty('--card-min', `${size.width}px`);
     grid.style.setProperty('--card-width', `${cardFormat === 'simple' ? size.simpleWidth : size.width}px`);
     grid.style.setProperty('--card-gap', `${size.gap}px`);
@@ -290,7 +320,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     if (view === 'database') return true;
     if (view === 'backlog') return item.status === 'backlog' || item.states?.inBacklog === true;
     if (view === 'on-deck') return item.status === 'on-deck' || item.states?.inOnDeck === true;
-    if (view === 'collections') return item.status === 'completed' || item.states?.completed === true || Boolean(item.rating || item.completedAt);
+    if (view === 'collections') return item.status === 'completed' || item.states?.completed === true || Boolean(item.completedAt);
     return true;
   }
   function applyItemUpdate(item = {}) {
@@ -320,12 +350,23 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     mount(target) {
       el = target;
       loadSession();
-      el.innerHTML = `<div class="app-section ${id}-view unified-view"><div class="section-bg" data-dynamic-bg><div class="section-bg__image is-visible"></div></div><header class="section-title"><div class="section-title__main"><h1>${escapeHtml(title)} <span data-section-count>0</span></h1>${id === 'database' ? '<button type="button" class="section-title__charred" data-toggle-charred hidden><span aria-hidden="true">♨</span><strong data-charred-count>0</strong></button><button type="button" class="section-title__add" data-create-manual-item title="Crear item">＋</button>' : ''}</div><div data-active-filter-chips></div></header><main class="unified-view__content"><div class="media-grid unified-grid" data-items-grid></div></main><footer class="unified-view__footer" data-pagination></footer></div>`;
+      el.innerHTML = `<div class="app-section ${id}-view unified-view"><div class="section-bg" data-dynamic-bg><div class="section-bg__image is-visible"></div></div><header class="section-title"><div class="section-title__main"><h1>${escapeHtml(title)} <span data-section-count>0</span></h1>${id === 'database' ? '<button type="button" class="section-title__add" data-create-manual-item title="Crear item">＋</button>' : ''}</div><div data-active-filter-chips></div></header><main class="unified-view__content"><div class="media-grid unified-grid" data-items-grid></div></main><footer class="unified-view__footer" data-pagination></footer></div>`;
+      charredOnly = localStorage.getItem('bbqueue:charred-only') === '1';
+      window.addEventListener('bbqueue:global-search', event => {
+        const detail = event.detail;
+        const value = typeof detail === 'object' && detail ? detail.value : detail;
+        const sourceView = typeof detail === 'object' && detail ? detail.source : '';
+        if (sourceView === id) return;
+        search = String(value || '');
+        page = 1;
+        if (isVisible) { renderControls({ force: true }); render(); }
+      });
+      window.addEventListener('bbqueue:charred-filter', event => { charredOnly=Boolean(event.detail); page=1; if(isVisible){renderControls({force:true});render();} });
       el.addEventListener('click', event => {
         if (event.target.closest('[data-page-prev]')) { page = Math.max(1, page - 1); render(); saveSession(); return; }
         if (event.target.closest('[data-page-next]')) { page = Math.min(pages, page + 1); render(); saveSession(); return; }
         if (event.target.closest('[data-create-manual-item]')) { openCreateManualItem(); return; }
-        if (event.target.closest('[data-toggle-charred]')) { charredOnly = !charredOnly; page = 1; render(); return; }
+        
         const item = findItemFromEvent(event);
         if (item) openItem(item);
       });
@@ -334,7 +375,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     hide() { isVisible = false; controlsMounted = false; if (controlsRoot) controlsRoot.innerHTML = ''; el?.classList.remove('view--active'); el?.setAttribute('aria-hidden', 'true'); },
     update(payload = {}) {
       if (payload.collectionGroups) collectionGroups = payload.collectionGroups;
-      if (payload.settings) settings = payload.settings;
+      if (payload.settings) { settings = payload.settings; const ws=workspaceConfig(); if(ws.sort) sort=ws.sort; if(ws.cardSize) cardSize=ws.cardSize; if(ws.cardFormat) cardFormat=ws.cardFormat; }
       if (payload.item) applyItemUpdate(payload.item);
       if (payload.refresh && isVisible) load();
       else if (isVisible && !payload.item) render();

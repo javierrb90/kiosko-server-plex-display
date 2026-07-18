@@ -45,7 +45,13 @@ export const DEFAULT_SETTINGS = {
       }
     }
   },
-  grill: { enabled: true, defaults: { backlog: 30, onDeck: 7 }, limits: {} },
+  grill: { enabled: true, defaults: { backlog: 30, onDeck: 7 }, limits: {}, clearCharredOn: { manual: true, journal: true, playniteStarted: true, plexPlayback: false, plexLibraryAdded: false } },
+  workspaces: {
+    database: { membership: "all", grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
+    backlog: { membership: "manual", grouping: "lastActivity", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
+    onDeck: { membership: "manual", grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium", maxPerType: 3 },
+    collections: { membership: "completed", grouping: "none", sort: "completedAt", cardFormat: "standard", cardSize: "medium" }
+  },
   views: {
     notifications: { enabled: true, itemsPerPage: 50 },
     backlog: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
@@ -166,11 +172,29 @@ function sanitize(settings) {
   s.views.database = { enabled: true, ...(isObject(s.views.database) ? s.views.database : {}), cardSize: cardSize(s.views.database?.cardSize), cardFormat: ["compact","standard","expanded"].includes(s.views.database?.cardFormat) ? s.views.database.cardFormat : "standard", includeCharred: s.views.database?.includeCharred === true, itemsPerPage: clampNumber(s.views.database?.itemsPerPage, 10, 250, 60) };
   delete s.views.dashboard;
 
+  if (!isObject(s.workspaces)) s.workspaces = {};
+  const workspaceDefaults = DEFAULT_SETTINGS.workspaces;
+  for (const key of ["database","backlog","onDeck","collections"]) {
+    if (!isObject(s.workspaces[key])) s.workspaces[key] = {};
+    const base = workspaceDefaults[key];
+    s.workspaces[key] = { ...base, ...s.workspaces[key] };
+    if (!["none","lastActivity","completedAt","type","group"].includes(s.workspaces[key].grouping)) s.workspaces[key].grouping = base.grouping;
+    if (!["lastActivityAt","title","rating","completedAt"].includes(s.workspaces[key].sort)) s.workspaces[key].sort = base.sort;
+    if (!["simple","standard"].includes(s.workspaces[key].cardFormat)) s.workspaces[key].cardFormat = base.cardFormat;
+    s.workspaces[key].cardSize = cardSize(s.workspaces[key].cardSize);
+  }
+
   if (!isObject(s.grill)) s.grill = {};
   s.grill.enabled = s.grill.enabled !== false;
   if (!isObject(s.grill.defaults)) s.grill.defaults = {};
   s.grill.defaults.backlog = clampNumber(s.grill.defaults.backlog, 1, 3650, 30);
   s.grill.defaults.onDeck = clampNumber(s.grill.defaults.onDeck, 1, 3650, 7);
+  if (!isObject(s.grill.clearCharredOn)) s.grill.clearCharredOn = {};
+  s.grill.clearCharredOn.manual = s.grill.clearCharredOn.manual !== false;
+  s.grill.clearCharredOn.journal = s.grill.clearCharredOn.journal !== false;
+  s.grill.clearCharredOn.playniteStarted = s.grill.clearCharredOn.playniteStarted !== false;
+  s.grill.clearCharredOn.plexPlayback = s.grill.clearCharredOn.plexPlayback === true;
+  s.grill.clearCharredOn.plexLibraryAdded = s.grill.clearCharredOn.plexLibraryAdded === true;
   if (!isObject(s.grill.limits)) s.grill.limits = {};
   const grillTypes = ["games","movies","series", ...s.itemTypes.map(type => type.id)];
   for (const type of grillTypes) {
@@ -219,8 +243,15 @@ function sanitize(settings) {
   s.design.itemBackground.overlayOpacity = normalizeOpacity(s.design.itemBackground.overlayOpacity, 0.72);
   s.design.itemBackground.grayscale = clampNumber(s.design.itemBackground.grayscale, 0, 100, 0);
 
-  const radius = (typeof oldCards !== 'undefined' ? oldCards.radius : undefined) ?? s.design.cards?.radius;
-  s.design.cards = { radius: clampNumber(radius, 0, 32, 18) };
+  const radius = oldCards.radius ?? s.design.cards?.radius;
+  const posterRadiusSimple = oldCards.posterRadiusSimple ?? s.design.cards?.posterRadiusSimple;
+  const posterRadiusStandard = oldCards.posterRadiusStandard ?? s.design.cards?.posterRadiusStandard;
+  s.design.cards = {
+    ...s.design.cards,
+    radius: clampNumber(radius, 0, 32, 18),
+    posterRadiusSimple: clampNumber(posterRadiusSimple, 0, 32, 14),
+    posterRadiusStandard: clampNumber(posterRadiusStandard, 0, 32, 12)
+  };
 
   if (!isObject(s.design.itemDetail)) s.design.itemDetail = {};
   if (!isObject(s.design.itemDetail.background)) s.design.itemDetail.background = {};

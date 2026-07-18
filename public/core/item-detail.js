@@ -27,6 +27,27 @@ function inputDate(value) {
   const date = new Date(value || '');
   return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '';
 }
+function relativeDaysText(value) {
+  const date = new Date(value || '');
+  if (!Number.isFinite(date.getTime())) return '';
+  const days = Math.max(0, Math.floor((Date.now() - date.getTime()) / 86400000));
+  if (!days) return 'Hoy';
+  if (days === 1) return 'Hace 1 día';
+  return `Hace ${days} días`;
+}
+function activityStateDescriptor(item = {}) {
+  if (item.states?.charred || item.grill?.charred) return { key: 'charred', label: 'Achicharrado' };
+  if (item.grill?.hot) return { key: 'hot', label: 'Quemándose' };
+  return { key: 'normal', label: '' };
+}
+function activityTurnButtonMarkup(item = {}) {
+  const date = item.lastActivityAt || item.lastSeenAt || item.firstSeenAt || item.completedAt;
+  if (!date) return '';
+  const state = activityStateDescriptor(item);
+  const icon = item.completedAt ? '✓' : (item.lastActivityAt || item.lastSeenAt) ? '↻' : '＋';
+  const label = item.completedAt ? 'Finalización' : (item.lastActivityAt || item.lastSeenAt) ? 'Última actividad' : 'Entrada en base de datos';
+  return `<button type="button" class="item-detail__activity-turn ${state.key !== 'normal' ? `is-${state.key}` : ''}" data-detail-action="activity" title="Actualizar actividad" aria-label="${escapeAttr(label)}: ${escapeAttr(formatDate(date))}"><span class="item-detail__activity-turn-date"><span class="item-detail__activity-turn-icon">${icon}</span><span class="item-detail__activity-turn-copy"><strong>${escapeHtml(formatDate(date))}</strong><small>${escapeHtml(relativeDaysText(date))}</small></span></span>${state.label ? `<span class="item-detail__activity-turn-state">${escapeHtml(state.label)}</span>` : ''}</button>`;
+}
 function itemDateLine(item = {}) {
   const date = item.completedAt || item.lastActivityAt || item.lastSeenAt || item.firstSeenAt;
   if (!date) return '';
@@ -113,13 +134,15 @@ function metadataRows(item = {}, settings = {}) {
   return metadataFieldsFor(item, settings).map(key => [META_LABELS[key] || key.replace(/^meta\./, ''), metaValue(item, key)]).filter(([, value]) => Boolean(value));
 }
 function ratingControlMarkup(item = {}, context = '') {
-  const rating = Number(item.rating || 0);
+  const rating = Math.max(0, Math.min(5, Number(item.rating) || 0));
   if (!['backlog', 'on-deck', 'collections', 'current', 'database'].includes(context)) return '';
-  return `<div class="item-detail__rate"><div class="item-detail__stars">${[1,2,3,4,5].map(n => `<button type="button" data-item-rate="${n}" aria-label="${n} estrellas">${n <= rating ? '★' : '☆'}</button>`).join('')}</div></div>`;
+  const stars = rating ? `${'★'.repeat(rating)}${'☆'.repeat(5-rating)}` : '☆☆☆☆☆';
+  const status = item.states?.completed || item.completedAt ? 'Terminado' : rating ? `${rating} de 5` : 'Valorar';
+  return `<button type="button" class="item-detail__assessment-trigger" data-detail-action="assessment" aria-label="Abrir valoración y finalización"><span class="item-detail__assessment-stars">${stars}</span><small>${escapeHtml(status)}</small></button>`;
 }
-function isInBacklog(item = {}, context = '') { return context === 'backlog' || item.states?.inBacklog === true; }
-function isInDeck(item = {}, context = '') { return context === 'on-deck' || item.states?.inOnDeck === true; }
-function isInCollection(item = {}, context = '') { return context === 'collections' || item.states?.completed === true || Boolean(item.rating || item.completedAt); }
+function isInBacklog(item = {}, context = '') { return item.states?.inBacklog === true; }
+function isInDeck(item = {}, context = '') { return item.states?.inOnDeck === true; }
+function isInCollection(item = {}, context = '') { return item.states?.completed === true || Boolean(item.completedAt); }
 function isManualEditableItem(item = {}) {
   return item.source === 'kiosko' || item.source === 'manual' || item.meta?.createdByKiosko || item.metadata?.createdByKiosko;
 }
@@ -191,19 +214,22 @@ function groupsMarkup(item = {}, context = '', collectionGroups = []) {
   const activeGroups = collectionGroups.filter(group => itemInGroup(item, group));
   return `<div class="item-detail__groups item-detail__groups--compact" data-detail-groups><div class="item-detail__groups-head"><span>Grupos</span><button type="button" class="item-detail__group-add" data-detail-action="groups" aria-label="Gestionar grupos" title="Gestionar grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>${activeGroups.length ? `<div class="item-detail__group-list">${activeGroups.map(group => `<span class="item-detail__group-chip">${escapeHtml(group.name)}</span>`).join('')}</div>` : ''}<div class="item-detail__group-picker" data-detail-group-picker hidden></div></div>`;
 }
+function workspaceActionIcon(kind = 'backlog') {
+  if (kind === 'deck') return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h9v3H5V7Zm0 7h14v3H5v-3Zm11-7 3 1.9L16 11V7Z"/></svg>`;
+  return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h10a2 2 0 0 1 2 2v10H9a2 2 0 0 1-2-2V5Zm-2 4H3v10a2 2 0 0 0 2 2h10v-2H7V9Z"/></svg>`;
+}
 function primaryActionsMarkup(item = {}, context = '') {
   const backlog = isInBacklog(item, context);
   const deck = isInDeck(item, context);
-  if (backlog) return `<button type="button" class="item-detail__quick item-detail__quick--remove" data-detail-action="toggle-backlog"><span aria-hidden="true">−</span><span>Quitar de Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--move" data-detail-action="toggle-deck"><span aria-hidden="true">→</span><span>Mover a Deck</span></button>`;
-  if (deck) return `<button type="button" class="item-detail__quick item-detail__quick--move" data-detail-action="toggle-backlog"><span aria-hidden="true">←</span><span>Mover a Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--remove" data-detail-action="toggle-deck"><span aria-hidden="true">−</span><span>Quitar de Deck</span></button>`;
-  if (isInCollection(item, context)) return '';
-  return `<button type="button" class="item-detail__quick item-detail__quick--add" data-detail-action="toggle-backlog"><span aria-hidden="true">＋</span><span>Añadir a Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--add" data-detail-action="toggle-deck"><span aria-hidden="true">＋</span><span>Añadir a Deck</span></button>`;
+  if (backlog) return `<button type="button" class="item-detail__quick item-detail__quick--remove item-detail__quick--workspace" data-detail-action="toggle-backlog">${workspaceActionIcon('backlog')}<span>Quitar de Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--move item-detail__quick--workspace" data-detail-action="toggle-deck">${workspaceActionIcon('deck')}<span>Mover a Deck</span></button>`;
+  if (deck) return `<button type="button" class="item-detail__quick item-detail__quick--move item-detail__quick--workspace" data-detail-action="toggle-backlog">${workspaceActionIcon('backlog')}<span>Mover a Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--remove item-detail__quick--workspace" data-detail-action="toggle-deck">${workspaceActionIcon('deck')}<span>Quitar de Deck</span></button>`;
+  return `<button type="button" class="item-detail__quick item-detail__quick--add item-detail__quick--workspace" data-detail-action="toggle-backlog">${workspaceActionIcon('backlog')}<span>Añadir a Backlog</span></button><button type="button" class="item-detail__quick item-detail__quick--add item-detail__quick--workspace" data-detail-action="toggle-deck">${workspaceActionIcon('deck')}<span>Añadir a Deck</span></button>`;
 }
+function grillTurnButtonMarkup(item = {}) { return activityTurnButtonMarkup(item); }
 function detailActionsMarkup(item = {}, context = '') {
   if (context === 'removed') return `<div class="item-detail__actions item-detail__actions--clean" data-detail-actions><span class="settings-help">Este elemento se ha eliminado del contexto actual.</span></div>`;
-  const collectionAction = isInCollection(item, context) ? `<button type="button" class="item-detail__quick" data-detail-action="remove-collection">Quitar de Colecciones</button>` : '';
   return `<div class="item-detail__actions item-detail__actions--clean" data-detail-actions>
-    <div class="item-detail__quick-group">${primaryActionsMarkup(item, context)}${collectionAction}</div>
+    <div class="item-detail__quick-group">${primaryActionsMarkup(item, context)}</div>
     <button type="button" class="item-detail__edit-trigger" data-detail-action="edit" title="Editar item" aria-label="Editar item">✎</button>
   </div>`;
 }
@@ -212,13 +238,13 @@ function journalPreviewMarkup(item = {}) {
   const review = item.review;
   const latest = item.latestJournalEntry;
   if (!review && !latest) return '';
-  const card = (entry, kind) => `<article class="item-detail__note item-detail__note--${kind}"><div class="item-detail__note-head"><strong>${kind === 'review' ? 'Review' : 'Última entrada'}</strong><time>${escapeHtml(formatDate(entry.updatedAt || entry.activityAt || entry.createdAt))}</time></div>${entry.comment ? `<p>${escapeHtml(entry.comment)}</p>` : ''}${entry.image ? `<button type="button" class="item-detail__note-image" data-journal-image="${escapeAttr(entry.image)}"><img src="${escapeAttr(entry.image)}" alt=""></button>` : ''}</article>`;
+  const card = (entry, kind) => `<article class="item-detail__note item-detail__note--${kind} ${kind === 'journal' ? 'item-detail__note--clickable' : ''}" ${kind === 'journal' ? 'data-detail-action="journal" role="button" tabindex="0"' : ''}><div class="item-detail__note-head"><strong>${kind === 'review' ? 'Review' : 'Última entrada'}</strong><time>${escapeHtml(formatDate(entry.updatedAt || entry.activityAt || entry.createdAt))}</time></div>${entry.comment ? `<p>${escapeHtml(entry.comment)}</p>` : ''}${entry.image ? `<button type="button" class="item-detail__note-image" data-journal-image="${escapeAttr(entry.image)}"><img src="${escapeAttr(entry.image)}" alt=""></button>` : ''}</article>`;
   return `<section class="item-detail__notes">${review ? card(review, 'review') : ''}${latest ? card(latest, 'journal') : ''}</section>`;
 }
 function journalButtonMarkup(item = {}) {
   const count = Number(item.journalCount || 0);
   if (!count) return '';
-  return `<button type="button" class="item-detail__journal-link" data-detail-action="journal">Ver diario · ${count}</button>`;
+  return `<button type="button" class="item-detail__journal-link" data-detail-action="journal">Diario · ${count}</button>`;
 }
 function journalComposerMarkup({ comment = '', image = '', detail = '', includeDetail = false } = {}) {
   return `<div class="journal-composer">${includeDetail ? `<label class="ui-field"><span>Detalle / estado</span><input data-journal-detail value="${escapeAttr(detail)}" placeholder="Qué ha ocurrido"></label>` : ''}<label class="ui-field"><span>Comentario <small data-journal-count>${String(comment).length}/140</small></span><textarea maxlength="140" data-journal-comment placeholder="Escribe una nota breve…">${escapeHtml(comment)}</textarea></label><div class="journal-dropzone" data-journal-dropzone tabindex="0"><strong>Pega, arrastra o selecciona una imagen</strong><small>JPEG, PNG o WebP · máximo 5 MB</small><input type="file" accept="image/jpeg,image/png,image/webp" data-journal-file></div><div class="journal-image-preview" data-journal-preview ${image ? '' : 'hidden'}>${image ? `<img src="${escapeAttr(image)}" alt=""><button type="button" data-journal-remove-image>Quitar imagen</button>` : ''}</div></div>`;
@@ -247,14 +273,14 @@ function bodyMarkup(item = {}, context = '', collectionGroups = [], settings = {
   const subtitle = item.detail || item.subtitle || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item, settings));
   const backdrop = effectiveBackdrop(item, settings);
   return `<div class="item-detail ${detailDesignClass(settings)} ${backdrop ? 'item-detail--has-bg' : ''}">
+    ${grillTurnButtonMarkup(item)}
     ${backdrop ? `<div class="item-detail__backdrop" style="background-image:url('${escapeAttr(backdrop)}')"></div>` : ''}
     <div class="item-detail__poster">${posterMarkup(item)}</div>
     <div class="item-detail__info">
       <div class="item-detail__status-row">${statePillsMarkup(item, context, settings)}</div>
       <h3>${escapeHtml(item.title || 'Sin título')}</h3>
-      <div class="item-detail__activity">${subtitle ? `<p class="item-detail__subtitle">${escapeHtml(subtitle)}</p>` : ''}${itemDateLine(item)}</div>
-      <div class="item-detail__rating-block"><div class="item-detail__rating-label"><span>Valoración</span><button type="button" class="item-detail__review-link" data-detail-action="review-edit">${item.review ? 'Editar review' : 'Escribir review'}</button></div>${ratingControlMarkup(item, context)}</div>
-      ${journalButtonMarkup(item)}
+      <div class="item-detail__activity">${subtitle ? `<p class="item-detail__subtitle">${escapeHtml(subtitle)}</p>` : ''}</div>
+      <div class="item-detail__rating-block"><div class="item-detail__rating-label"><span>Valoración y estado</span></div>${ratingControlMarkup(item, context)}</div>
       ${journalPreviewMarkup(item)}
       ${groupsMarkup(item, context, collectionGroups)}
       <dl class="item-detail__meta">${metadataRows(item, settings).map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>
@@ -287,7 +313,14 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   const previousHash = window.location.hash;
   try { if (item.canonicalId) window.history.replaceState(null, '', `#/item/${encodeURIComponent(item.canonicalId)}?from=${encodeURIComponent(context || 'database')}`); } catch {}
   const mergeReturnedItem = payload => { const next = payload?.completed || payload?.deckItem || payload?.backlogItem || payload?.item || payload; if (next && typeof next === 'object') { Object.assign(item, next); onItemUpdated({ ...item }); } };
-  const renderBody = root => { const body = root.querySelector('.ui-modal__body'); if (body) body.innerHTML = bodyMarkup(item, currentContext, collectionGroups, settings); };
+  const syncDetailState = root => {
+    if (!root) return;
+    const hot = Boolean(item.grill?.hot);
+    const charred = Boolean(item.states?.charred || item.grill?.charred);
+    root.classList.toggle('is-hot', hot && !charred);
+    root.classList.toggle('is-charred', charred);
+  };
+  const renderBody = root => { const body = root.querySelector('.ui-modal__body'); if (body) body.innerHTML = bodyMarkup(item, currentContext, collectionGroups, settings); syncDetailState(root); };
   try {
     const journal = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/journal?page=1&limit=1`);
     item.review = journal.review || null;
@@ -312,7 +345,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const result = await ui.open({
       title: 'Editar item',
       className: 'ui-modal-root--wide',
-      body: `<div class="controls-modal">${manualFields}<section class="controls-modal__section"><h3>Estado / detalle</h3><label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Última actividad, plataforma, episodio..."></label><p class="settings-help">Al modificar el detalle se actualiza la fecha de última actividad. Las integraciones podrán volver a actualizarlo.</p></section><section class="controls-modal__section"><h3>Fechas</h3><label class="ui-field"><span>Entrada en base de datos</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label><label class="ui-field"><span>Última actividad</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label><label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label></section><section class="controls-modal__section debug-item-state"><h3>Depuración</h3><label class="ui-check"><input type="checkbox" data-edit-charred ${item.states?.charred || item.grill?.charred ? 'checked' : ''}> Marcar como achicharrado</label><p class="settings-help">Al activarlo sale de Backlog y On Deck, pero permanece en Base de datos.</p></section></div>`,
+      body: `<div class="controls-modal">${manualFields}<section class="controls-modal__section"><h3>Estado / detalle</h3><label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Última actividad, plataforma, episodio..."></label><p class="settings-help">Al modificar el detalle se actualiza la fecha de última actividad. Las integraciones podrán volver a actualizarlo.</p></section><section class="controls-modal__section"><h3>Fechas</h3><label class="ui-field"><span>Entrada en base de datos</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label><label class="ui-field"><span>Última actividad</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label><label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label></section><section class="controls-modal__section debug-item-state"><h3>Depuración</h3><label class="ui-check"><input type="checkbox" data-edit-charred ${item.states?.charred || item.grill?.charred ? 'checked' : ''}> Marcar como achicharrado</label><p class="settings-help">Marca visualmente el item sin cambiar el espacio al que pertenece.</p></section></div>`,
       actions: [
         { label: 'Eliminar', value: '__delete__', variant: 'danger' },
         { label: 'Cancelar', value: null },
@@ -423,10 +456,32 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
       <label class="ui-field"><span>Detalle / estado</span><input data-journal-detail value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Qué ha ocurrido"></label>
       <label class="item-detail-form__toggle"><input type="checkbox" data-activity-note-toggle ${checked}><span><strong>Añadir una anotación</strong><small>Comentario e imagen opcionales para el diario.</small></span></label>
       <div class="item-detail-form__optional" data-activity-note-fields ${checked ? '' : 'hidden'}>${journalComposerMarkup({})}</div>
-      <footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button><button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="activity-save">Guardar actividad</button></footer>
+      <footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button>${(item.grill?.hot || item.grill?.charred || item.states?.charred) ? '<button type="button" class="item-detail-control item-detail-control--danger-quiet" data-detail-action="grill-turn">Dar la vuelta</button>' : ''}<button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="activity-save">Guardar actividad</button></footer>
     </form>`;
     renderInfoSubview(root, subviewMarkup(journalOnly ? 'Nueva entrada' : 'Actualizar actividad', body, { eyebrow: journalOnly ? 'Diario' : item.title || '' }));
     root.__composerGetter = await setupJournalComposer(root.querySelector('[data-activity-form]'));
+  }
+  async function showAssessmentForm(root) {
+    const rating = Math.max(0, Math.min(5, Number(item.rating) || 0));
+    const body = `<form class="item-detail-form item-detail-assessment" data-assessment-form>
+      <section class="assessment-rating"><span>Calificación</span><div class="assessment-stars">${[1,2,3,4,5].map(n => `<label><input type="radio" name="assessment-rating" value="${n}" ${rating === n ? 'checked' : ''}><span>${n <= rating ? '★' : '☆'}</span></label>`).join('')}<button type="button" data-assessment-clear>Sin calificación</button></div></section>
+      <label class="assessment-completed"><input type="checkbox" data-assessment-completed ${isInCollection(item, currentContext) ? 'checked' : ''}><span><strong>Terminado</strong><small>Incluye el item en Colecciones.</small></span></label>
+      <section class="assessment-review"><span>Review opcional</span>${journalComposerMarkup({ comment: item.review?.comment || '', image: item.review?.image || '' })}</section>
+      <footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button><button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="assessment-save">Guardar</button></footer>
+    </form>`;
+    renderInfoSubview(root, subviewMarkup('Valoración', body, { eyebrow: item.title || '' }));
+    root.__composerGetter = await setupJournalComposer(root.querySelector('[data-assessment-form]'));
+    root.querySelector('[data-assessment-clear]')?.addEventListener('click', () => { root.querySelectorAll('input[name="assessment-rating"]').forEach(input => { input.checked = false; }); root.querySelectorAll('.assessment-stars label span').forEach(span => { span.textContent = '☆'; }); });
+    root.querySelectorAll('input[name="assessment-rating"]').forEach(input => input.addEventListener('change', () => { const value=Number(input.value); root.querySelectorAll('.assessment-stars label span').forEach((span,index)=>{span.textContent=index<value?'★':'☆';}); }));
+  }
+  async function saveAssessment(root) {
+    const value = root.__composerGetter?.() || {};
+    const ratingInput = root.querySelector('input[name="assessment-rating"]:checked');
+    const payload = { rating: ratingInput ? Number(ratingInput.value) : null, completed: root.querySelector('[data-assessment-completed]')?.checked === true, reviewComment: value.comment, reviewImageData: value.imageData, reviewRemoveImage: value.removeImage };
+    const response = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/assessment`, { method:'PUT', body:JSON.stringify(payload) });
+    mergeReturnedItem(response);
+    item.review = response.review || null; item.journalCount = response.journalCount ?? item.journalCount; item.latestJournalEntry = response.latestJournalEntry ?? item.latestJournalEntry;
+    onItemUpdated({ ...item }); renderBody(root); toast(payload.completed ? 'Guardado en Colecciones' : 'Valoración actualizada');
   }
   async function showReviewForm(root) {
     const body = `<form class="item-detail-form" data-review-form>${journalComposerMarkup({ comment: item.review?.comment || '', image: item.review?.image || '' })}<footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button>${item.review ? '<button type="button" class="item-detail-control item-detail-control--danger-quiet" data-detail-action="review-delete">Eliminar review</button>' : ''}<button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="review-save">Guardar review</button></footer></form>`;
@@ -438,8 +493,17 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const wantsNote = Boolean(root.querySelector('[data-activity-note-toggle]')?.checked);
     const payload = { detail: root.querySelector('[data-journal-detail]')?.value || item.detail || item.subtitle || '', comment: wantsNote ? value.comment : '', imageData: wantsNote ? value.imageData : '', removeImage: false };
     const response = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/activity`, { method: 'POST', body: JSON.stringify(payload) });
-    mergeReturnedItem(response); Object.assign(item, { journalCount: response.journalCount, latestJournalEntry: response.latestJournalEntry, review: response.review });
-    toast(wantsNote && (payload.comment || payload.imageData) ? 'Actividad y diario actualizados' : 'Actividad actualizada'); onItemUpdated({ ...item }); renderBody(root);
+    mergeReturnedItem(response);
+    Object.assign(item, {
+      journalCount: response.journalCount,
+      latestJournalEntry: response.latestJournalEntry,
+      review: response.review,
+      states: { ...(item.states || {}), charred: false },
+      grill: { ...(item.grill || {}), charred: false, hot: false, overdue: false }
+    });
+    toast(wantsNote && (payload.comment || payload.imageData) ? 'Actividad y diario actualizados' : 'Actividad actualizada');
+    onItemUpdated({ ...item });
+    renderBody(root);
   }
   async function saveReview(root) {
     const value = root.__composerGetter?.() || {};
@@ -455,7 +519,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const timeline = entries.length ? entries.map(entry => { const d = new Date(entry.activityAt || entry.createdAt); return `<article class="journal-entry" data-entry-id="${escapeAttr(entry.id)}"><div class="journal-entry__date"><strong>${String(d.getDate()).padStart(2,'0')}</strong><span>${d.toLocaleDateString('es-ES',{month:'short'})}</span><small>${d.getFullYear()}</small></div><div class="journal-entry__body">${entry.comment ? `<p>${escapeHtml(entry.comment)}</p>` : ''}${entry.image ? `<button class="journal-entry__image" data-journal-image="${escapeAttr(entry.image)}"><img src="${escapeAttr(entry.image)}" alt=""></button>` : ''}<div class="journal-entry__actions"><button data-detail-action="journal-edit" data-entry-id="${escapeAttr(entry.id)}">Editar</button><button class="is-danger" data-detail-action="journal-delete" data-entry-id="${escapeAttr(entry.id)}">Eliminar</button></div></div></article>`; }).join('') : `<div class="journal-empty"><span aria-hidden="true">✎</span><strong>Tu diario está vacío</strong><p>Actualiza la actividad del item y añade una anotación cuando quieras recordar algo.</p><button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="journal-new">Crear primera entrada</button></div>`;
     const pagination = response.pages > 1 ? `<nav class="journal-pagination" aria-label="Paginación del diario"><button data-detail-action="journal-page" data-page="${response.page-1}" ${response.page<=1?'disabled':''} aria-label="Página anterior">‹</button><strong>${response.page} / ${response.pages}</strong><button data-detail-action="journal-page" data-page="${response.page+1}" ${response.page>=response.pages?'disabled':''} aria-label="Página siguiente">›</button></nav>` : '';
     const content = `<div class="journal-view__toolbar"><div><span>${response.total} ${response.total === 1 ? 'entrada' : 'entradas'}</span></div><button type="button" class="item-detail-control item-detail-control--primary item-detail-control--compact" data-detail-action="journal-new">＋ Nueva entrada</button></div><div class="journal-timeline">${timeline}</div>${pagination}`;
-    renderInfoSubview(root, subviewMarkup('Diario', content));
+    renderInfoSubview(root, subviewMarkup('Diario', content, { panelClass: 'item-detail-subview--journal' }));
   }
 
   async function runAction(root, action, trigger = null) {
@@ -473,6 +537,8 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     if (action === 'journal-back') { renderBody(root); return; }
     if (action === 'journal-page') { const page = Number(trigger?.dataset.page || root.__journalPage || 1); await showJournal(root, page); return; }
     if (action === 'journal-new') { await showActivityForm(root, { journalOnly: true }); return; }
+    if (action === 'assessment') { await showAssessmentForm(root); return; }
+    if (action === 'assessment-save') { await saveAssessment(root); return; }
     if (action === 'review-edit') { await showReviewForm(root); return; }
     if (action === 'review-save') { await saveReview(root); return; }
     if (action === 'review-delete') { if (await ui.confirm({ title:'Eliminar review', message:'La calificación no cambiará.', confirmText:'Eliminar', danger:true })) { const response = await api(`/api/items/${encodeURIComponent(item.canonicalId||item.id)}/review`, { method:'DELETE' }); item.review=null; item.journalCount=response.journalCount ?? item.journalCount; item.latestJournalEntry=response.latestJournalEntry ?? item.latestJournalEntry; onItemUpdated({...item}); renderBody(root); toast('Review eliminada'); } return; }
@@ -482,21 +548,22 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     busy = true;
     try {
       const canonical = encodeURIComponent(item.canonicalId || item.id);
+      if (action === 'grill-turn') { const response = await api(`/api/items/${canonical}/grill/turn`, { method: 'POST' }); mergeReturnedItem(response); item.lastActivityAt = response?.item?.lastActivityAt || response?.lastActivityAt || new Date().toISOString(); item.states = { ...(item.states || {}), charred: false }; item.grill = { ...(item.grill || {}), charred: false, hot: false, overdue: false }; onItemUpdated({ ...item }); toast('Se le ha dado la vuelta al item'); renderBody(root); return; }
       if (action === 'toggle-backlog') {
         if (isInBacklog(item, currentContext)) { await api(`/api/items/${canonical}/backlog`, { method: 'DELETE' }); item.states = { ...(item.states || {}), inBacklog: false }; item.status = 'known'; item.lastActivityAt = new Date().toISOString(); onItemUpdated({ ...item }); toast('Quitado del Backlog'); }
-        else { const response = await api(`/api/items/${canonical}/backlog`, { method: 'POST' }); mergeReturnedItem(response); item.states = { ...(item.states || {}), inBacklog: true, inOnDeck: false, completed: false }; item.rating = null; item.completedAt = null; item.status = 'backlog'; onItemUpdated({ ...item }); toast('Movido a Backlog'); }
+        else { const response = await api(`/api/items/${canonical}/backlog`, { method: 'POST' }); mergeReturnedItem(response); item.states = { ...(item.states || {}), inBacklog: true, inOnDeck: false, completed: false }; item.completedAt = null; item.status = 'backlog'; onItemUpdated({ ...item }); toast('Movido a Backlog'); }
         renderBody(root); return;
       }
       if (action === 'toggle-deck') {
         if (isInDeck(item, currentContext)) { await api(`/api/items/${canonical}/deck`, { method: 'DELETE' }); item.states = { ...(item.states || {}), inOnDeck: false }; item.status = 'known'; item.lastActivityAt = new Date().toISOString(); onItemUpdated({ ...item }); toast('Quitado de On Deck'); renderBody(root); return; }
-        const response = await postDeckWithReplacement(`/api/items/${canonical}/deck`); if (!response) return; mergeReturnedItem(response); item.states = { ...(item.states || {}), inOnDeck: true, inBacklog: false, completed: false }; item.rating = null; item.completedAt = null; item.status = 'on-deck'; onItemUpdated({ ...item }); toast('Movido a On Deck'); renderBody(root); return;
+        const response = await postDeckWithReplacement(`/api/items/${canonical}/deck`); if (!response) return; mergeReturnedItem(response); item.states = { ...(item.states || {}), inOnDeck: true, inBacklog: false, completed: false }; item.completedAt = null; item.status = 'on-deck'; onItemUpdated({ ...item }); toast('Movido a On Deck'); renderBody(root); return;
       }
-      if (action === 'remove-collection') { const ok = await ui.confirm({ title: 'Quitar de Colecciones', message: 'Se retirará la calificación/finalización, pero el item seguirá en Base de datos y en otras vistas.', confirmText: 'Quitar' }); if (!ok) return; await api(`/api/items/${canonical}/collection`, { method: 'DELETE' }); item.rating = null; item.completedAt = null; item.states = { ...(item.states || {}), completed: false, inBacklog: false, inOnDeck: false }; item.status = 'known'; item.lastActivityAt = new Date().toISOString(); onItemUpdated({ ...item }); toast('Quitado de Colecciones'); renderBody(root); return; }
+      if (action === 'remove-collection') { const ok = await ui.confirm({ title: 'Quitar de Colecciones', message: 'Se retirará la calificación/finalización, pero el item seguirá en Base de datos.', confirmText: 'Quitar' }); if (!ok) return; const response = await api(`/api/items/${canonical}/collection`, { method: 'DELETE' }); mergeReturnedItem(response); item.rating = null; item.completedAt = null; item.states = { ...(item.states || {}), completed: false, inBacklog: false, inOnDeck: false }; item.status = 'known'; item.lastActivityAt = response?.item?.lastActivityAt || item.lastActivityAt || new Date().toISOString(); if (currentContext === 'collections') currentContext = 'database'; onItemUpdated({ ...item }); toast('Quitado de Colecciones'); renderBody(root); return; }
       if (action === 'delete-permanent') { const ok = await ui.confirm({ title: 'Eliminar definitivamente', message: 'Esto eliminará el item de la base de datos, Backlog, On Deck, Colecciones, grupos y assets locales asociados. ¿Continuar?', confirmText: 'Eliminar definitivamente', danger: true }); if (!ok) return; await api(`/api/items/${canonical}/delete`, { method: 'POST' }); currentContext = 'removed'; toast('Item eliminado definitivamente'); renderBody(root); return; }
     } finally { busy = false; }
   }
   return new Promise(resolve => {
-    ui.open({ title: labels.title || '', className: 'ui-modal-root--item-detail', body: bodyMarkup(item, currentContext, collectionGroups, settings), actions: [] }).then(value => { try { if (window.location.hash.startsWith('#/item/')) window.history.replaceState(null, '', previousHash || '#/database'); } catch {} resolve(value); });
-    requestAnimationFrame(() => { const root = document.querySelector('.ui-modal-root--item-detail'); if (!root) return; if (root.__itemDetailAbort) root.__itemDetailAbort.abort(); root.__itemDetailAbort = new AbortController(); root.addEventListener('click', async event => { const journalImage = event.target.closest('[data-journal-image]'); if (journalImage) { await openImagePopup(journalImage.dataset.journalImage); return; } const rateButton = event.target.closest('[data-item-rate]'); if (rateButton) { if (busy) return; busy = true; try { const rating = Number(rateButton.dataset.itemRate || 0); const result = await applyRating({ ui, api, item, context: currentContext, rating, toast }); if (result) { onItemUpdated({ ...item }); renderBody(root); await showReviewForm(root); } } finally { busy = false; } return; } const noteToggle = event.target.closest('[data-activity-note-toggle]'); if (noteToggle) { const fields=root.querySelector('[data-activity-note-fields]'); if(fields) fields.hidden=!noteToggle.checked; return; } const actionButton = event.target.closest('[data-detail-action]'); if (actionButton) await runAction(root, actionButton.dataset.detailAction, actionButton); }, { signal: root.__itemDetailAbort.signal }); });
+    ui.open({ title: labels.title || '', className: `ui-modal-root--item-detail ${item.states?.charred || item.grill?.charred ? 'is-charred' : item.grill?.hot ? 'is-hot' : ''}`, body: bodyMarkup(item, currentContext, collectionGroups, settings), actions: [] }).then(value => { try { if (window.location.hash.startsWith('#/item/')) window.history.replaceState(null, '', previousHash || '#/database'); } catch {} resolve(value); });
+    requestAnimationFrame(() => { const root = document.querySelector('.ui-modal-root--item-detail'); if (!root) return; if (root.__itemDetailAbort) root.__itemDetailAbort.abort(); root.__itemDetailAbort = new AbortController(); root.addEventListener('click', async event => { if (event.target.closest('.ui-modal__x')) { try { window.history.replaceState(null, '', previousHash && !previousHash.startsWith('#/item/') ? previousHash : '#/database'); } catch {} } const journalImage = event.target.closest('[data-journal-image]'); if (journalImage) { await openImagePopup(journalImage.dataset.journalImage); return; } const rateButton = event.target.closest('[data-item-rate]'); if (rateButton) { if (busy) return; busy = true; try { const rating = Number(rateButton.dataset.itemRate || 0); const result = await applyRating({ ui, api, item, context: currentContext, rating, toast }); if (result) { onItemUpdated({ ...item }); renderBody(root); await showReviewForm(root); } } finally { busy = false; } return; } const noteToggle = event.target.closest('[data-activity-note-toggle]'); if (noteToggle) { const fields=root.querySelector('[data-activity-note-fields]'); if(fields) fields.hidden=!noteToggle.checked; return; } const actionButton = event.target.closest('[data-detail-action]'); if (actionButton) await runAction(root, actionButton.dataset.detailAction, actionButton); }, { signal: root.__itemDetailAbort.signal }); root.addEventListener('keydown', async event => { const activator = event.target.closest('.item-detail__note--clickable[data-detail-action]'); if (!activator) return; if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); await runAction(root, activator.dataset.detailAction, activator); }, { signal: root.__itemDetailAbort.signal }); });
   });
 }

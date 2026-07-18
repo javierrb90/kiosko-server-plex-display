@@ -101,8 +101,16 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
   const meta = publicMeta({ ...(existing.metadata || existing.meta || {}), ...(input.metadata || input.meta || {}) });
   const firstSeenAt = patch.firstSeenAt || input.firstSeenAt || existing.firstSeenAt || input.createdAt || date;
   const lastActivityAt = patch.lastActivityAt || input.lastActivityAt || input.lastSeenAt || existing.lastActivityAt || existing.lastSeenAt || input.updatedAt || date;
-  const completedAt = patch.completedAt ?? input.completedAt ?? existing.completedAt ?? null;
-  const rating = patch.rating ?? input.rating ?? existing.rating ?? null;
+  const completedAt = Object.prototype.hasOwnProperty.call(patch, "completedAt")
+    ? patch.completedAt
+    : Object.prototype.hasOwnProperty.call(input, "completedAt")
+      ? input.completedAt
+      : (existing.completedAt ?? null);
+  const rating = Object.prototype.hasOwnProperty.call(patch, "rating")
+    ? patch.rating
+    : Object.prototype.hasOwnProperty.call(input, "rating")
+      ? input.rating
+      : (existing.rating ?? null);
   const preserveManualDetail = Boolean(patch.preserveManualDetail && source === "kiosko" && (existing.meta?.manualDetail || existing.metadata?.manualDetail) && !patch.forceSubtitle);
   const incomingDetail = clean(input.detail ?? input.subtitle ?? "");
   const existingDetail = clean(existing.detail ?? existing.subtitle ?? "");
@@ -130,7 +138,6 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
   if (patch.turnedAt !== undefined) states.turnedAt = patch.turnedAt || null;
   if (completedAt) states.completed = true;
   if (states.completed) states.charred = false;
-  if (states.charred) { states.inBacklog = false; states.inOnDeck = false; states.completed = false; }
   return {
     ...(existing || {}),
     id: existing.id || input.registryId || input.id || crypto.randomUUID(),
@@ -153,7 +160,7 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
     lastActivityAt,
     completedAt,
     states,
-    status: states.charred ? "charred" : states.completed ? "completed" : states.inOnDeck ? "on-deck" : states.inBacklog ? "backlog" : "known",
+    status: states.completed ? "completed" : states.inOnDeck ? "on-deck" : states.inBacklog ? "backlog" : states.charred ? "charred" : "known",
     latestActivityId: patch.latestActivityId || existing.latestActivityId || null,
     updatedAt: date,
     deletedAt: patch.deletedAt ?? existing.deletedAt ?? null,
@@ -218,7 +225,7 @@ export class ItemRegistryStore {
     let rows = this.list();
     if (view === "backlog") rows = rows.filter(item => item.states?.inBacklog === true);
     else if (view === "on-deck") rows = rows.filter(item => item.states?.inOnDeck === true);
-    else if (view === "collections") rows = rows.filter(item => item.states?.completed === true || item.rating || item.completedAt);
+    else if (view === "collections") rows = rows.filter(item => item.states?.completed === true || Boolean(item.completedAt));
     if (type === "__none__") rows = [];
     else if (typeSet.size) rows = rows.filter(item => typeSet.has(item.collectionType));
     if (source) rows = rows.filter(item => item.source === source);
@@ -303,7 +310,7 @@ export class ItemRegistryStore {
       item.subtitle = item.detail;
       item.meta = { ...(item.meta || {}), manualDetail: true };
       item.metadata = { ...(item.metadata || {}), manualDetail: true };
-      if (item.subtitle !== beforeSubtitle) item.lastActivityAt = now();
+      if (item.subtitle !== beforeSubtitle && patch.lastActivityAt === undefined) item.lastActivityAt = now();
     }
     if (item.completedAt) item.states = { ...(item.states || {}), completed: true };
     else if (patch.completedAt !== undefined) item.states = { ...(item.states || {}), completed: false };
