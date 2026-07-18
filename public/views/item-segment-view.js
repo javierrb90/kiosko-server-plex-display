@@ -247,6 +247,10 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   let activeVisualOverlay = null;
   let activeVisualSourceObserver = null;
   let activeVisualSourceKey = '';
+  const TURN_FEEDBACK_DURATION_MS = 500;
+  const MOVE_FEEDBACK_DURATION_MS = 900;
+  const ROW_FEEDBACK_DURATION_MS = 900;
+  const UPDATE_FEEDBACK_DURATION_MS = 700;
 
   function cleanupVisualOverlay() {
     try { activeVisualAnimation?.cancel(); } catch {}
@@ -357,9 +361,10 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     }
     if (reason === 'moved') {
       return [
-        { opacity: .08, transform: 'translateY(30px) scale(.92)', filter: 'brightness(1.2)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' },
-        { offset: .56, opacity: 1, transform: 'translateY(-5px) scale(1.025)', filter: 'brightness(1.12)', boxShadow: '0 0 0 7px color-mix(in srgb, var(--accent-color, #8fafef) 48%, transparent), 0 24px 60px rgba(0,0,0,.48)' },
-        { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'brightness(1)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' }
+        { offset: 0, opacity: 0, transform: 'translateY(18px) scale(.965)', filter: 'brightness(1.08)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' },
+        { offset: .22, opacity: 1, transform: 'translateY(0) scale(1.012)', filter: 'brightness(1.15)', boxShadow: '0 0 0 7px color-mix(in srgb, var(--accent-color, #8fafef) 50%, transparent), 0 18px 46px rgba(0,0,0,.42)' },
+        { offset: .72, opacity: 1, transform: 'translateY(0) scale(1)', filter: 'brightness(1.1)', boxShadow: '0 0 0 7px color-mix(in srgb, var(--accent-color, #8fafef) 50%, transparent), 0 18px 46px rgba(0,0,0,.42)' },
+        { offset: 1, opacity: 1, transform: 'translateY(0) scale(1)', filter: 'brightness(1)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' }
       ];
     }
     return [
@@ -371,10 +376,53 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
 
   function rowFeedbackKeyframes() {
     return [
-      { backgroundColor: 'color-mix(in srgb, var(--accent-color, #8fafef) 42%, rgba(255,255,255,.06))', boxShadow: 'inset 5px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 92%, white 8%)' },
-      { offset: .55, backgroundColor: 'color-mix(in srgb, var(--accent-color, #8fafef) 25%, transparent)', boxShadow: 'inset 5px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 72%, transparent)' },
-      { backgroundColor: 'transparent', boxShadow: 'inset 0 0 0 transparent' }
+      { offset: 0, backgroundColor: 'transparent', boxShadow: 'inset 0 0 0 transparent', filter: 'brightness(1)' },
+      { offset: .18, backgroundColor: 'color-mix(in srgb, var(--accent-color, #8fafef) 44%, rgba(255,255,255,.1))', boxShadow: 'inset 6px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 96%, white 4%), 0 0 24px color-mix(in srgb, var(--accent-color, #8fafef) 26%, transparent)', filter: 'brightness(1.08)' },
+      { offset: .72, backgroundColor: 'color-mix(in srgb, var(--accent-color, #8fafef) 44%, rgba(255,255,255,.1))', boxShadow: 'inset 6px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 96%, white 4%), 0 0 24px color-mix(in srgb, var(--accent-color, #8fafef) 26%, transparent)', filter: 'brightness(1.08)' },
+      { offset: 1, backgroundColor: 'transparent', boxShadow: 'inset 0 0 0 transparent, 0 0 0 transparent', filter: 'brightness(1)' }
     ];
+  }
+
+  function fireCollectionConfetti(node) {
+    if (!node || typeof window.confetti !== 'function') return;
+    const rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    window.confetti({
+      particleCount: 34,
+      spread: 62,
+      startVelocity: 30,
+      gravity: 1.05,
+      ticks: 150,
+      scalar: .86,
+      origin: {
+        x: Math.min(.98, Math.max(.02, (rect.left + rect.width / 2) / window.innerWidth)),
+        y: Math.min(.98, Math.max(.02, (rect.top + Math.min(rect.height * .35, 90)) / window.innerHeight))
+      },
+      colors: ['#8fafef', '#f7c873', '#ffffff', '#e5846a'],
+      disableForReducedMotion: true,
+      zIndex: 2147483646
+    });
+  }
+
+  function createFeedbackFrame(node, reason, isList) {
+    const rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const frame = document.createElement('div');
+    frame.className = `bbq-feedback-frame bbq-feedback-frame--${isList ? 'row' : reason}`;
+    frame.setAttribute('aria-hidden', 'true');
+    Object.assign(frame.style, {
+      position: 'fixed',
+      left: `${rect.left}px`,
+      top: `${rect.top}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      borderRadius: getComputedStyle(node).borderRadius || (isList ? '10px' : '16px'),
+      pointerEvents: 'none',
+      zIndex: '2147482999',
+      boxSizing: 'border-box'
+    });
+    document.body.appendChild(frame);
+    return frame;
   }
 
   function runPendingVisualFeedback() {
@@ -393,18 +441,51 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
 
     const isList = node.matches('.kiosko-list__row, .item-list-row');
     const target = isList ? node : (request.reason === 'turned' ? (node.querySelector('.media-card__surface') || node) : node);
-    const duration = 300;
+    const duration = isList ? ROW_FEEDBACK_DURATION_MS : (request.reason === 'moved' ? MOVE_FEEDBACK_DURATION_MS : (request.reason === 'turned' ? TURN_FEEDBACK_DURATION_MS : UPDATE_FEEDBACK_DURATION_MS));
     const keyframes = isList ? rowFeedbackKeyframes() : feedbackKeyframes(request.reason);
-    visualLog('feedback-live-node', { key: request.key, reason: request.reason, duration, targetClass: target.className || '' });
-    activeVisualAnimation = target.animate(keyframes, {
-      duration,
-      easing: request.reason === 'turned' ? 'cubic-bezier(.3,.05,.18,1)' : 'cubic-bezier(.18,.78,.2,1)',
-      fill: 'none'
-    });
-    activeVisualAnimation.finished.catch(() => {}).finally(() => {
+    const frame = (isList || request.reason === 'moved') ? createFeedbackFrame(node, request.reason, isList) : null;
+    activeVisualOverlay = frame;
+    visualLog('feedback-live-node', { key: request.key, reason: request.reason, duration, targetClass: target.className || '', resilientFrame: Boolean(frame), celebrate: Boolean(request.celebrate) });
+    if (request.celebrate && request.reason === 'moved' && id === 'collections') {
+      window.setTimeout(() => fireCollectionConfetti(node), Math.round(duration * .28));
+    }
+
+    const animations = [];
+    // A moved card or list row is represented by the resilient frame only.
+    // Animating both the live node and the frame produced two visually distinct
+    // passes: the normal transition followed by a short flash as the frame ended.
+    if (!frame) {
+      try {
+        animations.push(target.animate(keyframes, {
+          duration,
+          easing: request.reason === 'turned' ? 'cubic-bezier(.3,.05,.18,1)' : 'cubic-bezier(.18,.78,.2,1)',
+          fill: 'none'
+        }));
+      } catch {}
+    }
+    if (frame) {
+      const frameKeyframes = isList
+        ? [
+            { offset: 0, opacity: 0, background: 'transparent', boxShadow: 'inset 0 0 0 transparent' },
+            { offset: .16, opacity: 1, background: 'color-mix(in srgb, var(--accent-color, #8fafef) 38%, rgba(255,255,255,.08))', boxShadow: 'inset 5px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 95%, white 5%), 0 0 0 1px color-mix(in srgb, var(--accent-color, #8fafef) 55%, transparent), 0 0 24px color-mix(in srgb, var(--accent-color, #8fafef) 26%, transparent)' },
+            { offset: .76, opacity: 1, background: 'color-mix(in srgb, var(--accent-color, #8fafef) 38%, rgba(255,255,255,.08))', boxShadow: 'inset 5px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 95%, white 5%), 0 0 0 1px color-mix(in srgb, var(--accent-color, #8fafef) 55%, transparent), 0 0 24px color-mix(in srgb, var(--accent-color, #8fafef) 26%, transparent)' },
+            { offset: 1, opacity: 0, background: 'transparent', boxShadow: 'inset 0 0 0 transparent, 0 0 0 transparent' }
+          ]
+        : [
+            { offset: 0, opacity: 0, transform: 'translateY(18px) scale(.96)', boxShadow: '0 0 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 0%, transparent)' },
+            { offset: .22, opacity: 1, transform: 'translateY(0) scale(1.012)', boxShadow: '0 0 0 6px color-mix(in srgb, var(--accent-color, #8fafef) 48%, transparent), 0 18px 44px rgba(0,0,0,.3)' },
+            { offset: .72, opacity: 1, transform: 'translateY(0) scale(1)', boxShadow: '0 0 0 6px color-mix(in srgb, var(--accent-color, #8fafef) 48%, transparent), 0 18px 44px rgba(0,0,0,.3)' },
+            { offset: 1, opacity: 0, transform: 'translateY(0) scale(1)', boxShadow: '0 0 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 0%, transparent)' }
+          ];
+      try { animations.push(frame.animate(frameKeyframes, { duration, easing: 'cubic-bezier(.18,.78,.2,1)', fill: 'none' })); } catch {}
+    }
+    activeVisualAnimation = animations[0] || null;
+    Promise.allSettled(animations.map(animation => animation.finished)).finally(() => {
       if (run === visualFeedbackRun) {
         visualLog('feedback-finished', { key: request.key, reason: request.reason, token: request.token });
         activeVisualAnimation = null;
+        frame?.remove();
+        if (activeVisualOverlay === frame) activeVisualOverlay = null;
       }
     });
   }
@@ -624,7 +705,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       targetClass: target.className || ''
     });
     const animation = target.animate(isList ? rowFeedbackKeyframes() : feedbackKeyframes('turned'), {
-      duration: 300,
+      duration: isList ? ROW_FEEDBACK_DURATION_MS : TURN_FEEDBACK_DURATION_MS,
       easing: isList ? 'cubic-bezier(.18,.78,.2,1)' : 'cubic-bezier(.3,.05,.18,1)',
       fill: 'none'
     });
@@ -691,7 +772,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
         if (!key) return;
         resetTemporaryFiltersForReveal();
         if (detail.item?.collectionType) activeTypes.add(detail.item.collectionType);
-        pendingReveal = { key, reason: detail.reason || 'moved' };
+        pendingReveal = { key, reason: detail.reason || 'moved', celebrate: Boolean(detail.celebrate) };
         page = 1;
         saveSession();
         if (isVisible) { renderControls({ force: true }); load({ resetPage: true }); }

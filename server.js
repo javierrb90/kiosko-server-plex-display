@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { EventStore } from "./src/event-store.js";
 import { RealtimeHub } from "./src/realtime-hub.js";
 import { PlexService } from "./src/services/plex-service.js";
@@ -54,7 +55,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`BBQ v7.0.6 escuchando en ${host}:${port}`);
+  console.log(`BBQ v7.0.22 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -205,7 +206,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "BBQ",
-    version: "v7.0.6",
+    version: "v7.1.1",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -239,6 +240,62 @@ app.get("/api/diagnostics", async (_req, res) => {
 
 app.use(express.urlencoded({ extended: true, limit: `${maxPayloadMb}mb` }));
 app.use("/assets", express.static(path.join(DATA_DIR, "assets"), { maxAge: "7d", immutable: false }));
+
+const nodeRequire = createRequire(import.meta.url);
+
+function resolveConfettiBundle() {
+  const candidates = [];
+  try {
+    const entryPath = nodeRequire.resolve("canvas-confetti");
+    let cursor = path.dirname(entryPath);
+    for (let depth = 0; depth < 6; depth += 1) {
+      const packageJsonPath = path.join(cursor, "package.json");
+      if (fsSync.existsSync(packageJsonPath)) {
+        try {
+          const pkg = JSON.parse(fsSync.readFileSync(packageJsonPath, "utf8"));
+          if (pkg.name === "canvas-confetti") {
+            candidates.push(
+              path.join(cursor, "dist", "confetti.browser.min.js"),
+              path.join(cursor, "dist", "confetti.browser.js"),
+              entryPath
+            );
+            break;
+          }
+        } catch {}
+      }
+      const parent = path.dirname(cursor);
+      if (parent === cursor) break;
+      cursor = parent;
+    }
+    candidates.push(entryPath);
+  } catch {}
+  candidates.push(
+    path.join(__dirname, "node_modules", "canvas-confetti", "dist", "confetti.browser.min.js"),
+    path.join(__dirname, "node_modules", "canvas-confetti", "dist", "confetti.browser.js"),
+    path.join(__dirname, "node_modules", "canvas-confetti", "src", "confetti.js")
+  );
+  return [...new Set(candidates)].find(candidate => candidate && fsSync.existsSync(candidate)) || null;
+}
+
+app.get("/vendor/canvas-confetti.min.js", (req, res) => {
+  const confettiBundlePath = resolveConfettiBundle();
+  if (!confettiBundlePath) {
+    console.warn("[confetti] No se encontró canvas-confetti", {
+      cwd: process.cwd(),
+      project: __dirname,
+      nodeModulesExists: fsSync.existsSync(path.join(__dirname, "node_modules"))
+    });
+    res
+      .status(503)
+      .type("application/javascript")
+      .send('console.warn("[BBQ] canvas-confetti no está disponible; revisa npm ls canvas-confetti");');
+    return;
+  }
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.type("application/javascript; charset=utf-8");
+  res.sendFile(confettiBundlePath);
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
 const store = new EventStore(DATA_DIR);
@@ -373,9 +430,23 @@ async function syncItemRegistryNow(reason = "action") {
   }, reason);
 }
 
+function plexIdentityKey(value = {}) {
+  const canonical = typeof value === "string" ? value : value.canonicalId;
+  const match = /^plex:[^:]+:(.+)$/.exec(String(canonical || ""));
+  return String(
+    (typeof value === "object" && (value.canonicalRatingKey || value.ratingKey || value.meta?.canonicalRatingKey || value.meta?.ratingKey || value.meta?.grandparentRatingKey || value.meta?.parentRatingKey)) ||
+    match?.[1] || ""
+  );
+}
+function sameItemIdentity(item = {}, requestedId = "") {
+  if (item.canonicalId === requestedId || item.id === requestedId) return true;
+  if (item.source !== "plex" || !String(requestedId).startsWith("plex:")) return false;
+  const requestedKey = plexIdentityKey(requestedId);
+  return Boolean(requestedKey && plexIdentityKey(item) === requestedKey);
+}
 function findBacklogItemByCanonicalId(canonicalId = "") {
   const data = backlogStore.list();
-  return Object.values(data || {}).flat().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
+  return Object.values(data || {}).flat().find(item => sameItemIdentity(item, canonicalId));
 }
 function findOnDeckItemByCanonicalId(canonicalId = "") {
   return onDeckStore.list().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
@@ -401,11 +472,48 @@ function traceStep(label, started) {
   if (!TRACE_ITEMS) return;
   console.log(`[trace] ${label} ${Date.now() - started}ms`);
 }
+function itemFromDeltaPayload(payload = {}) {
+  return payload.item || payload.completed || payload.deckItem || payload.backlogItem || payload.removed || null;
+}
+
+async function keepCurrentContentInSync(payload = {}) {
+  const changed = itemFromDeltaPayload(payload);
+  const current = runtime.currentContent || stateStore.get().lastCurrent;
+  if (!changed || !current) return;
+  const sameCanonical = changed.canonicalId && current.canonicalId === changed.canonicalId;
+  const sameExternal = changed.ratingKey && current.ratingKey && String(changed.ratingKey) === String(current.ratingKey);
+  const sameGame = changed.gameId && current.externalId && String(changed.gameId) === String(current.externalId);
+  if (!sameCanonical && !sameExternal && !sameGame) return;
+  const next = {
+    ...current,
+    canonicalId: changed.canonicalId || current.canonicalId,
+    title: changed.title || current.title,
+    subtitle: changed.detail || changed.subtitle || current.subtitle,
+    detail: changed.detail || changed.subtitle || current.detail,
+    type: changed.type || current.type,
+    collectionType: changed.collectionType || current.collectionType,
+    poster: changed.poster || current.poster, cover: changed.poster || current.cover, posterUrl: changed.poster || current.posterUrl,
+    backdrop: changed.backdrop || current.backdrop, background: changed.backdrop || current.background, backdropUrl: changed.backdrop || current.backdropUrl,
+    status: changed.status || current.status, states: changed.states || current.states,
+    rating: changed.rating ?? current.rating, completedAt: changed.completedAt ?? current.completedAt,
+    lastActivityAt: changed.lastActivityAt || current.lastActivityAt, updatedAt: changed.updatedAt || new Date().toISOString()
+  };
+  runtime.currentContent = next;
+  const patch = { lastCurrent: next };
+  if (next.source === 'playnite') { runtime.game = next; patch.lastGame = next; }
+  if (next.source === 'plex') { runtime.plex = next; patch.lastPlex = next; }
+  await stateStore.update(patch);
+  hub.broadcast({ type: 'current:update', payload: next });
+}
+
 function broadcastDelta(type, payload = {}) {
   tracePayload(type, payload);
   const result = hub.broadcast({ type, payload }, { trace: TRACE_ITEMS || process.env.TRACE_WS === "1" });
   pushMetric("broadcasts", { type, clients: result.clients, bytes: result.bytes, ms: result.ms });
-  if (String(type || "").startsWith("item:")) scheduleItemRegistrySync(type);
+  if (String(type || "").startsWith("item:")) {
+    scheduleItemRegistrySync(type);
+    keepCurrentContentInSync(payload).catch(error => console.error('[current] no se pudo sincronizar el último item', error));
+  }
   if (TRACE_ITEMS) console.log(`[delta] ${type} clients=${result.clients} bytes=${result.bytes} ms=${result.ms}`);
 }
 function traceActionStart(name, req) {
@@ -500,7 +608,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.0.6", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.1.1", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -747,25 +855,29 @@ app.post("/api/simulate/:kind", async (req, res) => {
 
 async function cachePlexMetadataAssets(metadata = {}) {
   const normalized = { ...metadata, meta: { ...(metadata.meta || {}) } };
+  const identity = normalized.canonicalRatingKey || normalized.ratingKey || normalized.canonicalId || "unknown";
+  const cachedByUrl = new Map();
+  const fields = [
+    { key: "posterUrl", role: "poster", originalKey: "originalPosterUrl" },
+    { key: "backdropUrl", role: "backdrop", originalKey: "originalBackdropUrl" },
+    { key: "showPosterUrl", role: "show-poster", originalKey: "originalShowPosterUrl" },
+    { key: "showBackdropUrl", role: "show-backdrop", originalKey: "originalShowBackdropUrl" }
+  ];
 
-  if (normalized.posterUrl && /^https?:\/\//i.test(String(normalized.posterUrl))) {
-    const poster = await assetService.cacheRemoteUrl(normalized.posterUrl, {
-      bucket: "plex",
-      title: `${normalized.title || "plex"}-poster`,
-      cacheKey: `plex:poster:${normalized.ratingKey || normalized.canonicalRatingKey || normalized.canonicalId || normalized.posterUrl}:${normalized.posterUrl}`
-    });
-    normalized.meta.originalPosterUrl = normalized.posterUrl;
-    normalized.posterUrl = poster.path;
-  }
-
-  if (normalized.backdropUrl && /^https?:\/\//i.test(String(normalized.backdropUrl))) {
-    const backdrop = await assetService.cacheRemoteUrl(normalized.backdropUrl, {
-      bucket: "plex",
-      title: `${normalized.title || "plex"}-backdrop`,
-      cacheKey: `plex:backdrop:${normalized.ratingKey || normalized.canonicalRatingKey || normalized.canonicalId || normalized.backdropUrl}:${normalized.backdropUrl}`
-    });
-    normalized.meta.originalBackdropUrl = normalized.backdropUrl;
-    normalized.backdropUrl = backdrop.path;
+  for (const { key, role, originalKey } of fields) {
+    const value = normalized[key];
+    if (!value || !/^https?:\/\//i.test(String(value))) continue;
+    let asset = cachedByUrl.get(String(value));
+    if (!asset) {
+      asset = await assetService.cacheRemoteUrl(value, {
+        bucket: "plex",
+        title: `${normalized.showTitle || normalized.title || "plex"}-${role}`,
+        cacheKey: `plex:${role}:${identity}:${value}`
+      });
+      cachedByUrl.set(String(value), asset);
+    }
+    normalized.meta[originalKey] = value;
+    normalized[key] = asset.path;
   }
 
   return normalized;
@@ -1340,11 +1452,11 @@ app.post("/api/items/:canonicalId/backlog", async (req, res) => {
 app.delete("/api/items/:canonicalId/backlog", async (req, res) => {
   const id = decodeURIComponent(req.params.canonicalId);
   const item = itemFromAnyStore(id);
-  const source = item?.source || "plex";
-  const removed = await backlogStore.remove(source, id).catch(async () => {
-    const existing = findBacklogItemByCanonicalId(id);
-    return existing ? backlogStore.remove(existing.source, existing.id) : null;
-  });
+  const existing = findBacklogItemByCanonicalId(id);
+  const source = existing?.source || item?.source || "plex";
+  const removed = existing
+    ? await backlogStore.remove(source, existing.id).catch(() => null)
+    : await backlogStore.remove(source, id).catch(() => null);
   if (!removed) return res.status(404).json({ error: "Item no encontrado en Backlog." });
   const activityAt = new Date().toISOString();
   await itemRegistryStore.upsert({ ...(item || removed), lastActivityAt: activityAt }, { inBacklog: false, turnedAt: null, lastActivityAt: activityAt, activity: { eventType: "manual_unfollow", title: removed.title, subtitle: removed.subtitle, activityAt } });

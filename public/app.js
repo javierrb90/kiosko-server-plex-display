@@ -40,6 +40,7 @@ const state = {
   toastTimer: null,
   latestNotification: null,
   latestToastAction: null,
+  latestToastItem: null,
   notificationsOverlayOpen: false,
   overlayNotifications: [],
   notificationSourceFilter: 'all',
@@ -380,12 +381,13 @@ function playNotificationSound() {
     setTimeout(() => ctx.close().catch(() => {}), 420);
   } catch (error) { debugError('No se pudo reproducir sonido de notificación', error); }
 }
-function showActionToast({ title, subtitle = '', action = null, notification = null, force = false } = {}) {
+function showActionToast({ title, subtitle = '', action = null, notification = null, item = null, force = false } = {}) {
   // Los toasts de actividad solicitados explícitamente por la API no dependen
   // de la preferencia de toasts del centro de notificaciones.
   if (!force && !state.settings?.notifications?.toastEnabled) return;
   state.latestNotification = notification;
   state.latestToastAction = action;
+  if (item) state.latestToastItem = item;
   clearTimeout(state.toastTimer);
   toast.hidden = false;
   toast.classList.remove('event-toast--small', 'event-toast--medium', 'event-toast--large');
@@ -411,11 +413,28 @@ function activityToastLabel(payload = {}) {
   if (eventType === 'added') return 'Contenido añadido';
   return 'Actividad recibida';
 }
+function itemStatusForToast(item = {}) {
+  if (item.states?.completed || item.completedAt || item.status === 'completed') return 'Terminado · Colección';
+  const spaces = [];
+  if (item.states?.inBacklog) spaces.push('Backlog');
+  if (item.states?.inOnDeck) spaces.push('On Deck');
+  return spaces.length ? spaces.join(' · ') : (item.detail || item.subtitle || 'Base de datos');
+}
+function refreshLatestToastItem(item = {}) {
+  const latest = state.latestToastItem;
+  if (!latest?.canonicalId || latest.canonicalId !== item.canonicalId) return;
+  state.latestToastItem = { ...latest, ...item };
+  if (!toast.classList.contains('event-toast--visible') || state.privacyLocked) return;
+  toast.innerHTML = `<strong>${escapeHtml(state.latestToastItem.title || 'Último item')}</strong><span>${escapeHtml(itemStatusForToast(state.latestToastItem))}</span>`;
+  state.latestToastAction = () => openItemFromRoute(state.latestToastItem.canonicalId, views.activeId || 'database').catch(debugError);
+}
+
 function showIngestionActivityToast(payload = {}) {
   const detail = [payload.title, payload.detail].filter(Boolean).join(' · ');
   return showActionToast({
-    title: activityToastLabel(payload),
-    subtitle: detail,
+    title: payload.title || activityToastLabel(payload),
+    subtitle: itemStatusForToast(payload) || detail,
+    item: payload,
     action: payload.canonicalId ? () => openItemFromRoute(payload.canonicalId, views.activeId || 'database').catch(debugError) : null,
     force: true
   });
@@ -644,6 +663,8 @@ function refreshDataViews() {
 }
 function applyItemDelta(message = {}) {
   const payload = message.payload || {};
+  const changedForToast = payload.item || payload.completed || payload.deckItem || payload.backlogItem || payload.removed || null;
+  if (changedForToast) refreshLatestToastItem(changedForToast);
   applyFullStatePayload(payload);
   switch (message.type) {
     case 'item:backlog-upserted':
@@ -779,7 +800,7 @@ const socket = new SocketClient({
       if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy update', force: true });
       return;
     }
-    if (message.type === 'current:update') { views.update('current-content', { currentContent: message.payload }); if (message.payload) showCurrentToast(message.payload); else updateNowPlayingMini(null); return; }
+    if (message.type === 'current:update') { if (message.payload) refreshLatestToastItem(message.payload); views.update('current-content', { currentContent: message.payload }); if (message.payload) showCurrentToast(message.payload); else updateNowPlayingMini(null); return; }
     if (message.type === 'plex:update') { const current = { ...(message.payload || {}), source: 'plex', kind: 'plex' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
     if (message.type === 'game:update') { const current = { ...(message.payload || {}), source: 'playnite', kind: 'game' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
     if (message.type === 'activity:received') {

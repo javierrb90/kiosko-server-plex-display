@@ -1,27 +1,76 @@
-# Persistencia
+# Persistencia y assets
+
+## Directorio `data`
+
+Toda información persistente debe quedar bajo `DATA_DIR`:
+
+```text
+data/
+├── bbqueue.sqlite
+├── assets/
+│   ├── plex/
+│   ├── playnite/
+│   ├── manual/
+│   ├── journals/
+│   └── uploads/
+├── backups/
+├── settings.json
+└── otros JSON auxiliares
+```
+
+En Docker se monta un único bind persistente en `/app/data`. La configuración incluida enlaza `/var/mnt/nas/MHDisk/bbq` del host con `/app/data` del contenedor.
 
 ## SQLite
 
-`data/bbqueue.sqlite` es la fuente de verdad de items, actividad y pertenencia a espacios. Debe guardar únicamente datos estructurados y referencias de assets.
+`bbqueue.sqlite` es la fuente de verdad de la biblioteca. Almacena:
 
-No están permitidos:
+- identidad canónica e interna;
+- metadata estructurada;
+- estado de Backlog, On Deck y Colección;
+- actividad;
+- fechas relevantes;
+- referencias a assets.
 
-- Data URI en `poster` o `backdrop`;
-- imágenes Base64 dentro de `metadata_json`;
-- blobs de imágenes en tablas del dominio.
+Las migraciones de esquema SQLite se conservan para futuras versiones. No existe migración automática desde los JSON internos de v6; el flujo oficial es exportar e importar backups.
+
+## Reglas de identidad
+
+- `canonical_id` identifica la entidad de dominio.
+- `id` es un UUID interno.
+- Un `canonical_id` existente conserva su `id` de SQLite.
+- Un elemento nuevo recibe un UUID nuevo.
+- Los aliases Plex equivalentes deben consolidarse por `ratingKey` cuando representan la misma entidad.
 
 ## Assets
 
-Los binarios viven en `data/assets/<origen>/`:
+Toda imagen entrante, sin importar si procede de películas, series, temporadas, episodios, Playnite, API externa o carga manual, debe pasar por `asset-service`:
 
-- `plex/`
-- `playnite/`
-- `manual/`
-- `journals/`
-- `uploads/`
+1. validar origen y tipo;
+2. descargar o decodificar;
+3. corregir orientación EXIF;
+4. redimensionar sin ampliar;
+5. convertir a WebP cuando sea compatible;
+6. escribir bajo `data/assets/<source>`;
+7. persistir solo la ruta `/assets/...`.
 
-Las imágenes raster compatibles se orientan, redimensionan sin ampliación y convierten a WebP. Los GIF y vídeos se conservan sin recomprimir.
+Límites orientativos actuales:
 
-## Saneamiento
+- poster: hasta 1200 × 1800, WebP de calidad aproximada 82;
+- fondo: hasta 1920 × 1080, WebP de calidad aproximada 78.
 
-BBQ no ejecuta conversiones ni saneamientos automáticos de assets antiguos durante el arranque. Las nuevas entradas deben pasar por la canalización de assets antes de persistirse: SQLite guarda rutas y metadatos, mientras que los binarios se almacenan bajo `data/assets`.
+No se deben guardar imágenes Base64 en columnas ni dentro de `metadata_json`. Tampoco se ejecutan saneamientos automáticos de instalaciones antiguas durante el arranque.
+
+## Volúmenes remotos
+
+El directorio de assets puede residir en un volumen remoto. SQLite requiere un sistema de archivos con bloqueo fiable; evitar montajes NFS/SMB cuya configuración no garantice locks y fsync coherentes.
+
+## Bind incluido
+
+```yaml
+volumes:
+  - type: bind
+    source: /var/mnt/nas/MHDisk/bbq
+    target: /app/data
+```
+
+El hostname de la instancia dentro de la red Docker es `bbq`.

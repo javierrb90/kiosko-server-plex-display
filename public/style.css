@@ -5541,8 +5541,9 @@ button.kiosko-list__row:hover {
 .media-date-heading strong { color: rgba(255,255,255,.46); font-size: .72rem; letter-spacing: .04em; }
 .workspace-date-grouping { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 720px) { .workspace-date-grouping { grid-template-columns: 1fr; } }
-.media-card.is-recently-moved,
-.media-card.is-recently-updated,
-.media-card.is-recently-turned,
-.kiosko-list__row.is-recently-updated,
-.kiosko-list__row.is-recently-turned { animation-duration: 300ms !important; }
+/* v7.0.19 — feedback visual unificado a 500 ms.
+   Las filas y la colocación usan además un marco independiente del nodo renderizado,
+   para que un refresco del grid no corte la confirmación visual. */
+.bbq-feedback-frame{contain:layout paint style;will-change:transform,opacity,box-shadow,background;isolation:isolate}
+.bbq-feedback-frame--row{border:1px solid color-mix(in srgb,var(--accent-color,#8fafef) 48%,transparent)}
+.bbq-feedback-frame--moved{border:1px solid color-mix(in srgb,var(--accent-color,#8fafef) 62%,transparent)}

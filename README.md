@@ -1,59 +1,93 @@
 # BBQ
 
-BBQ es una aplicación local para organizar una biblioteca personal mediante cuatro vistas fijas: **Base de datos**, **Backlog**, **On Deck** y **Colección**. La parrilla utiliza la actividad de cada item para señalar qué necesita atención.
+BBQ es una aplicación local y autocontenida para gestionar una biblioteca personal de películas, series, juegos y otros tipos de contenido. Su idea central no es almacenar una lista pasiva, sino ayudar a decidir **qué consumir ahora**, qué mantener pendiente y qué ya forma parte de la colección.
 
-## Persistencia
+## Espacios de trabajo
 
-Todo el estado persistente debe montarse en un único volumen `data`:
+BBQ usa cuatro espacios fijos:
 
-```text
-data/
-├── bbqueue.sqlite       # items, actividad y pertenencia a espacios
-├── assets/              # carátulas, fondos e imágenes adjuntas comprimidas
-├── backups/
-└── *.json               # configuración y estados auxiliares
-```
+- **Base de datos**: catálogo completo. Todo ítem existe aquí.
+- **Backlog**: contenido pendiente que aún no está en consumo activo.
+- **On Deck**: selección prioritaria o actualmente activa.
+- **Colección**: contenido terminado.
 
-SQLite nunca debe contener imágenes Base64. Las columnas de imagen guardan rutas `/assets/...` o, cuando procede, una URL externa. Toda imagen recibida por Plex, Playnite, la API o una carga manual se normaliza, redimensiona y convierte a WebP antes de escribirse en `data/assets`.
+Los espacios son reglas de dominio, no carpetas independientes. Un ítem conserva una única identidad canónica y su pertenencia se representa mediante estados. Los **grupos** son etiquetas organizativas creadas por el usuario y no deben confundirse con Colección.
+
+## Parrilla
+
+La parrilla utiliza la fecha de actividad para detectar contenido olvidado:
+
+- **Quemándose**: se acerca al límite configurado.
+- **Achicharrado**: ha superado el límite.
+- **Dar la vuelta**: actualiza la actividad a ahora y evita que el ítem se queme.
+
+El botón Dar la vuelta solo aparece en Backlog y On Deck. No aparece en Base de datos ni en Colección.
 
 ## Instalación
+
+Requisitos: Node.js 22.5 o posterior.
 
 ```bash
 npm ci
 npm start
 ```
 
-Node.js 22 o posterior. La configuración opcional se realiza mediante `.env`; consulta `.env.example`.
+La aplicación escucha por defecto en `http://localhost:3000`. Toda la persistencia vive en `/app/data`. El `docker-compose.yml` incluido lo monta mediante un bind hacia `/var/mnt/nas/MHDisk/bbq`.
+
+## Persistencia
+
+```text
+data/
+├── bbqueue.sqlite       # biblioteca, estados y actividad
+├── assets/              # imágenes normalizadas y comprimidas
+├── backups/             # copias generadas por la aplicación
+└── *.json               # configuración y almacenes auxiliares
+```
+
+SQLite guarda datos estructurados y rutas. Las imágenes no deben almacenarse como Base64 ni como BLOB: pasan por `src/asset-service.js`, se convierten normalmente a WebP y se escriben bajo `data/assets`.
 
 ## Integraciones
 
-- **Playnite:** `POST /api/v1/events`
-- **Tautulli/Plex:** `POST /webhook/tautulli`
-- **API genérica:** `POST /api/v1/items/upsert` y `POST /api/v1/events`
-- Esquema de ingestión: `GET /api/v1/ingestion/schema`
+- Playnite: `POST /api/v1/events`
+- Tautulli/Plex: `POST /webhook/tautulli`
+- ARR: `POST /webhook/arr/:source`
+- API genérica: `POST /api/v1/items/upsert` y `POST /api/v1/events`
+- Contrato de ingestión: `GET /api/v1/ingestion/schema`
 
-Las integraciones comparten la misma canalización de ingestión, actividad, assets y eventos WebSocket.
+## Seguridad
 
-## Feedback visual
+La interfaz puede protegerse mediante HTTP Basic:
 
-- **Dar la vuelta:** giro de la tarjeta real antes de enviar la actualización.
-- **Actividad desde la ficha:** giro corto tras cerrar la ficha.
-- **Mover entre espacios:** navegación, limpieza de filtros, visibilidad del tipo y animación de colocación.
-- **Lista:** iluminación temporal de la fila.
+```env
+BBQ_AUTH_USER=admin
+BBQ_AUTH_PASSWORD=una-clave-segura
+```
 
-## Comprobaciones
+La API externa puede protegerse por separado:
+
+```env
+BBQUEUE_API_TOKEN=token-de-integracion
+```
+
+## Desarrollo
 
 ```bash
 npm run check
 ```
 
-Valida sintaxis, rutas duplicadas y estructura básica del proyecto.
+Valida sintaxis, estructura y rutas HTTP duplicadas.
 
 ## Documentación
 
-- `docs/ARCHITECTURE.md`
-- `docs/API.md`
-- `docs/PERSISTENCE.md`
-- `docs/BACKUPS.md`
-- `CHANGELOG.md`
-- `RELEASE-v7.0.18.md`
+Empieza por [`docs/README.md`](docs/README.md). El documento [`docs/HANDOFF.md`](docs/HANDOFF.md) resume el estado técnico y las decisiones necesarias para continuar el proyecto en otro hilo o con otro agente.
+
+## Docker y red
+
+La configuración incluida usa el servicio, contenedor y hostname `bbq`. El almacenamiento persistente se monta como bind:
+
+```text
+host:      /var/mnt/nas/MHDisk/bbq
+container: /app/data
+```
+
+La carpeta del host debe existir y permitir escritura al usuario del contenedor antes del primer arranque.

@@ -63,6 +63,11 @@ export function canonicalKeyForRegistryItem(item = {}) {
   const source = normalizeSource(item.source);
   const plexType = item.meta?.plexType || item.type;
   if (source === "plex") {
+    if (item.collectionType === "movies") {
+      if (item.canonicalId && String(item.canonicalId).startsWith("plex:movies:")) return String(item.canonicalId);
+      const key = item.canonicalRatingKey || item.meta?.canonicalRatingKey || item.ratingKey || item.meta?.ratingKey || item.id || item.title;
+      return `plex:movies:${key ? String(key) : slug(item.title || item.id)}`;
+    }
     if (item.collectionType === "series" || ["episode", "season", "show"].includes(plexType)) {
       const seriesKey = plexSeriesKeyFor(item);
       if (seriesKey) return seriesKey;
@@ -295,6 +300,26 @@ export class ItemRegistryStore {
     return { items: rows.slice(offset, offset + safeLimit), total, page: safePage, limit: safeLimit, pages };
   }
 
+  plexIdentityKeys(value = {}) {
+    return new Set([
+      value.canonicalRatingKey, value.ratingKey, value.grandparentRatingKey, value.parentRatingKey,
+      value.meta?.canonicalRatingKey, value.meta?.ratingKey, value.meta?.grandparentRatingKey, value.meta?.parentRatingKey,
+      value.meta?.originalRatingKey, value.meta?.createdEpisodeRatingKey,
+      /^plex:[^:]+:(.+)$/.exec(String(value.canonicalId || ""))?.[1]
+    ].filter(Boolean).map(String));
+  }
+
+  findEquivalentPlexIndex(input = {}) {
+    if (normalizeSource(input.source) !== "plex") return -1;
+    const incomingKeys = this.plexIdentityKeys(input);
+    if (!incomingKeys.size) return -1;
+    return this.items.findIndex(candidate => {
+      if (candidate.deletedAt || candidate.source !== "plex") return false;
+      const candidateKeys = this.plexIdentityKeys(candidate);
+      return [...incomingKeys].some(key => candidateKeys.has(key));
+    });
+  }
+
   async addActivity(input = {}, item = null, patch = {}) {
     const target = item || await this.upsert(input, {});
     const activity = normalizeActivity(input, target, patch);
@@ -322,23 +347,24 @@ export class ItemRegistryStore {
   async upsert(input = {}, patch = {}) {
     const canonicalId = canonicalKeyForRegistryItem(input);
     let index = this.items.findIndex(item => item.canonicalId === canonicalId);
-    if (index < 0 && normalizeSource(input.source) === "plex" && normalizeCollectionType(input) === "series") {
-      const identityKeys = value => new Set([
-        value.canonicalRatingKey, value.ratingKey, value.grandparentRatingKey, value.parentRatingKey,
-        value.meta?.canonicalRatingKey, value.meta?.ratingKey, value.meta?.grandparentRatingKey, value.meta?.parentRatingKey,
-        value.meta?.originalRatingKey, value.meta?.createdEpisodeRatingKey
-      ].filter(Boolean).map(String));
-      const incomingKeys = identityKeys(input);
-      index = this.items.findIndex(candidate => {
-        if (candidate.deletedAt || candidate.source !== "plex" || candidate.collectionType !== "series") return false;
-        const candidateKeys = identityKeys(candidate);
-        return [...incomingKeys].some(key => candidateKeys.has(key));
-      });
-    }
+    if (index < 0) index = this.findEquivalentPlexIndex(input);
     const existing = index >= 0 ? this.items[index] : {};
-    const item = normalizeItem(input, existing, index >= 0 && existing.canonicalId !== canonicalId ? { ...patch, canonicalIdOverride: existing.canonicalId } : patch);
+    const previousCanonicalId = existing.canonicalId || null;
+    const item = normalizeItem(input, existing, patch);
     if (index >= 0) this.items[index] = item;
     else this.items.unshift(item);
+    if (previousCanonicalId && previousCanonicalId !== item.canonicalId) {
+      for (const entry of this.activity) if (entry.itemCanonicalId === previousCanonicalId) entry.itemCanonicalId = item.canonicalId;
+      for (const entry of this.backlogEntries) if (entry.itemCanonicalId === previousCanonicalId) entry.itemCanonicalId = item.canonicalId;
+    }
+    const equivalentKeys = this.plexIdentityKeys(item);
+    if (item.source === "plex" && equivalentKeys.size) {
+      this.items = this.items.filter(candidate => {
+        if (candidate === item || candidate.source !== "plex") return true;
+        const candidateKeys = this.plexIdentityKeys(candidate);
+        return ![...equivalentKeys].some(key => candidateKeys.has(key));
+      });
+    }
     if (patch.activity || input.meta?.createdFromTautulli || input.meta?.tautulliEvent || input.lastActivityAt) {
       const activity = await this.addActivity(input, item, patch.activity || {});
       item.latestActivityId = activity.id;
@@ -422,7 +448,36 @@ export class ItemRegistryStore {
     return { total: this.count(), ms: Date.now() - started, reason };
   }
 
+  ensureUniqueInternalIds() {
+    const usedIds = new Set();
+    const usedCanonicalIds = new Set();
+    const existingRows = this.sqlite.db.prepare("SELECT id, canonical_id FROM items").all();
+    const existingIdByCanonical = new Map(existingRows.map(row => [String(row.canonical_id), String(row.id)]));
+    const normalized = [];
+    for (const item of this.items) {
+      if (!item?.canonicalId || usedCanonicalIds.has(item.canonicalId)) continue;
+      usedCanonicalIds.add(item.canonicalId);
+
+      // SQLite owns the internal identity. Existing canonical records keep the
+      // id already stored in the database; genuinely new records always get a
+      // fresh UUID. This prevents external/view ids from colliding with rows
+      // that are still present when the synchronization transaction begins.
+      let internalId = existingIdByCanonical.get(String(item.canonicalId)) || null;
+      if (!internalId || usedIds.has(internalId)) {
+        do { internalId = crypto.randomUUID(); } while (usedIds.has(internalId));
+      }
+      usedIds.add(internalId);
+      item.id = internalId;
+      normalized.push(item);
+    }
+    this.items = normalized;
+  }
+
   async persist() {
+    // `id` is an internal SQLite identity. Inputs imported from views and
+    // integrations may carry their own `id`, so repair collisions before the
+    // transaction instead of allowing one malformed legacy row to stop boot.
+    this.ensureUniqueInternalIds();
     const items = this.items;
     const activity = this.activity.slice(0, 1000);
     const backlogEntries = this.backlogEntries.slice(0, 500);
@@ -446,9 +501,20 @@ export class ItemRegistryStore {
           turned_at=excluded.turned_at, latest_activity_id=excluded.latest_activity_id,
           metadata_json=excluded.metadata_json, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at
       `);
-      const seenItems = [];
+      const seenItems = items.map(item => item.canonicalId);
+
+      // Remove dependent snapshots and obsolete item rows before inserting the
+      // current authoritative set. Deleting stale rows first releases any old
+      // primary-key values that could otherwise collide with a new item.
+      db.exec("DELETE FROM activities");
+      db.exec("DELETE FROM backlog_entries");
+      if (seenItems.length === 0) db.exec("DELETE FROM items");
+      else {
+        const placeholders = seenItems.map(() => "?").join(",");
+        db.prepare(`DELETE FROM items WHERE canonical_id NOT IN (${placeholders})`).run(...seenItems);
+      }
+
       for (const item of items) {
-        seenItems.push(item.canonicalId);
         upsertItem.run(
           item.id, item.canonicalId, item.entityId || null, item.parentEntityId || null,
           item.source || "manual", item.type || "item", item.collectionType || "series", item.title || "Sin título",
@@ -462,13 +528,6 @@ export class ItemRegistryStore {
           item.updatedAt || now(), item.deletedAt || null
         );
       }
-      if (seenItems.length === 0) db.exec("DELETE FROM items");
-      else {
-        const placeholders = seenItems.map(() => "?").join(",");
-        db.prepare(`DELETE FROM items WHERE canonical_id NOT IN (${placeholders})`).run(...seenItems);
-      }
-
-      db.exec("DELETE FROM activities");
       const insertActivity = db.prepare(`INSERT OR IGNORE INTO activities
         (id, external_key, item_canonical_id, source, event_type, activity_at, title, subtitle, rating_key, metadata_json, created_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)`);

@@ -1,7 +1,7 @@
 services:
-  kiosko-media-center:
-    container_name: kiosko-media-center
-    hostname: kiosko
+  bbq:
+    container_name: bbq
+    hostname: bbq
     build:
       context: .
       dockerfile: Dockerfile
@@ -12,13 +12,11 @@ services:
       PORT: 3000
       DATA_DIR: /app/data
     volumes:
-      - kiosko_volume:/app/data
+      - type: bind
+        source: /var/mnt/nas/MHDisk/bbq
+        target: /app/data
     networks:
       - arrnet
-
-volumes:
-  kiosko_volume:
-    external: true
 
 networks:
   arrnet:

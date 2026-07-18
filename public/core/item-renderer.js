@@ -48,13 +48,14 @@ export function itemCardMarkup(item = {}, { context = 'database', groups = [], f
   else if (longestDetailWord > 16) detailFit *= .97;
   const defaults = format === 'simple' ? { title:true, detail:true, rating:true, date:false, type:false, groups:false, state:false, journal:true, grill:true } : { title:true, detail:true, rating:true, date:true, type:false, groups:true, state:true, journal:true, grill:true };
   const show = { ...defaults, ...(visibility || {}) };
+  const canQuickTurn = context === 'backlog' || context === 'on-deck';
   
   return `<article style="--title-fit:${titleFit};--detail-fit:${detailFit}" class="media-card media-card--rich item-card source-${escapeAttr(item.source || 'other')}${grillClass}${turnedClass}${formatClass}" data-id="${escapeAttr(key)}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}">
     ${show.grill && (grill.hot || grill.charred) ? `<span class="media-card__heat" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg></span>` : ""}
     ${bg ? `<div class="media-card__bg" style="background-image:url('${escapeAttr(bg)}')"></div>` : ''}
-    ${format === 'standard' ? dateLine(item, { interactive: true }) : ''}
+    ${format === 'standard' && canQuickTurn ? dateLine(item, { interactive: true }) : ''}
     <div class="media-card__surface">
-      <div class="media-card__poster">${format === 'simple' ? dateLine(item, { interactive: true }) : ''}${show.journal && Number(item.journalCount || 0) ? `<span class="media-card__journal-count" title="${Number(item.journalCount)} entradas en el diario">✎ ${Number(item.journalCount)}</span>` : ''}${img ? `<img src="${escapeAttr(img)}" loading="lazy" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
+      <div class="media-card__poster">${format === 'simple' && canQuickTurn ? dateLine(item, { interactive: true }) : ''}${show.journal && Number(item.journalCount || 0) ? `<span class="media-card__journal-count" title="${Number(item.journalCount)} entradas en el diario">✎ ${Number(item.journalCount)}</span>` : ''}${img ? `<img src="${escapeAttr(img)}" loading="lazy" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
       <div class="media-card__meta">
         ${show.title ? `<strong>${escapeHtml(item.title || 'Sin título')}</strong>` : ''}
         ${show.detail && detailFor(item) ? `<span class="media-card__detail">${escapeHtml(detailFor(item))}</span>` : ''}
