@@ -312,7 +312,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const result = await ui.open({
       title: 'Editar item',
       className: 'ui-modal-root--wide',
-      body: `<div class="controls-modal">${manualFields}<section class="controls-modal__section"><h3>Estado / detalle</h3><label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Última actividad, plataforma, episodio..."></label><p class="settings-help">Al modificar el detalle se actualiza la fecha de última actividad. Las integraciones podrán volver a actualizarlo.</p></section><section class="controls-modal__section"><h3>Fechas</h3><label class="ui-field"><span>Entrada en base de datos</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label><label class="ui-field"><span>Última actividad</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label><label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label></section></div>`,
+      body: `<div class="controls-modal">${manualFields}<section class="controls-modal__section"><h3>Estado / detalle</h3><label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Última actividad, plataforma, episodio..."></label><p class="settings-help">Al modificar el detalle se actualiza la fecha de última actividad. Las integraciones podrán volver a actualizarlo.</p></section><section class="controls-modal__section"><h3>Fechas</h3><label class="ui-field"><span>Entrada en base de datos</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label><label class="ui-field"><span>Última actividad</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label><label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label></section><section class="controls-modal__section debug-item-state"><h3>Depuración</h3><label class="ui-check"><input type="checkbox" data-edit-charred ${item.states?.charred || item.grill?.charred ? 'checked' : ''}> Marcar como achicharrado</label><p class="settings-help">Al activarlo sale de Backlog y On Deck, pero permanece en Base de datos.</p></section></div>`,
       actions: [
         { label: 'Eliminar', value: '__delete__', variant: 'danger' },
         { label: 'Cancelar', value: null },
@@ -321,6 +321,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
           firstSeenAt: modal.querySelector('[data-date-first]')?.value || null,
           lastActivityAt: modal.querySelector('[data-date-activity]')?.value || null,
           completedAt: modal.querySelector('[data-date-completed]')?.value || null,
+          charred: modal.querySelector('[data-edit-charred]')?.checked === true,
           manual: manual ? {
             title: modal.querySelector('[data-edit-title]')?.value?.trim() || item.title,
             collectionType: modal.querySelector('[data-edit-type]')?.value || collectionTypeFor(item),
@@ -349,6 +350,11 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const payload = Object.fromEntries(Object.entries({ subtitle: result.subtitle, firstSeenAt: result.firstSeenAt, lastActivityAt: result.lastActivityAt, completedAt: result.completedAt }).map(([key, value]) => [key, key === 'subtitle' ? value : (value ? `${value}T12:00:00.000Z` : null)]));
     const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/dates`, { method: 'PATCH', body: JSON.stringify(payload) });
     mergeReturnedItem(response);
+    const isCharred = Boolean(item.states?.charred || item.grill?.charred);
+    if (result.charred !== isCharred) {
+      const grillResponse = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/grill/char`, { method: result.charred ? 'POST' : 'DELETE' });
+      mergeReturnedItem(grillResponse);
+    }
     toast('Item actualizado');
     onItemUpdated({ ...item });
     renderBody(root);

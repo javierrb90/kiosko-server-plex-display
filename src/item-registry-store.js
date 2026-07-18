@@ -119,12 +119,18 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
     inBacklog: Boolean(existing.states?.inBacklog),
     inOnDeck: Boolean(existing.states?.inOnDeck),
     completed: Boolean(existing.states?.completed),
+    charred: Boolean(existing.states?.charred),
+    turnedAt: existing.states?.turnedAt || null,
     ...(patch.states || {})
   };
   if (patch.inBacklog !== undefined) states.inBacklog = Boolean(patch.inBacklog);
   if (patch.inOnDeck !== undefined) states.inOnDeck = Boolean(patch.inOnDeck);
   if (patch.completed !== undefined) states.completed = Boolean(patch.completed);
+  if (patch.charred !== undefined) states.charred = Boolean(patch.charred);
+  if (patch.turnedAt !== undefined) states.turnedAt = patch.turnedAt || null;
   if (completedAt) states.completed = true;
+  if (states.completed) states.charred = false;
+  if (states.charred) { states.inBacklog = false; states.inOnDeck = false; states.completed = false; }
   return {
     ...(existing || {}),
     id: existing.id || input.registryId || input.id || crypto.randomUUID(),
@@ -147,7 +153,7 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
     lastActivityAt,
     completedAt,
     states,
-    status: states.completed ? "completed" : states.inOnDeck ? "on-deck" : states.inBacklog ? "backlog" : "known",
+    status: states.charred ? "charred" : states.completed ? "completed" : states.inOnDeck ? "on-deck" : states.inBacklog ? "backlog" : "known",
     latestActivityId: patch.latestActivityId || existing.latestActivityId || null,
     updatedAt: date,
     deletedAt: patch.deletedAt ?? existing.deletedAt ?? null,

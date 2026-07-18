@@ -19,21 +19,30 @@ export function groupPillsMarkup(item = {}, groups = []) {
   if (!matched.length) return '';
   return `<div class="item-group-pills">${matched.map(group => `<span>${escapeHtml(group.name)}</span>`).join('')}${groupsForItem(item, groups).length > 4 ? `<span>+${groupsForItem(item, groups).length - 4}</span>` : ''}</div>`;
 }
-export function itemCardMarkup(item = {}, { context = 'database', groups = [] } = {}) {
+export function itemCardMarkup(item = {}, { context = 'database', groups = [], format = 'standard', visibility = {} } = {}) {
   const img = imageFor(item);
   const bg = backdropFor(item);
   const key = stableItemKey(item);
-  return `<article class="media-card media-card--rich item-card source-${escapeAttr(item.source || 'other')}" data-id="${escapeAttr(key)}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}">
+  const grill = item.grill || {};
+  const grillClass = grill.charred ? " is-charred" : grill.hot ? " is-hot" : "";
+  const turnedClass = grill.turned ? " is-turned" : "";
+  const formatClass = ` media-card--${escapeAttr(format)}`;
+  const defaults = format === 'simple' ? { title:true, detail:true, rating:true, date:false, type:false, groups:false, state:false, journal:true, grill:true } : { title:true, detail:true, rating:true, date:true, type:false, groups:true, state:true, journal:true, grill:true };
+  const show = { ...defaults, ...(visibility || {}) };
+  
+  return `<article class="media-card media-card--rich item-card source-${escapeAttr(item.source || 'other')}${grillClass}${turnedClass}${formatClass}" data-id="${escapeAttr(key)}" data-canonical-id="${escapeAttr(item.canonicalId || '')}" data-source="${escapeAttr(item.source || '')}">
+    ${show.grill && (grill.hot || grill.charred) ? `<span class="media-card__heat" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg></span>` : ""}
     ${bg ? `<div class="media-card__bg" style="background-image:url('${escapeAttr(bg)}')"></div>` : ''}
     <div class="media-card__surface">
-      <div class="media-card__poster">${Number(item.journalCount || 0) ? `<span class="media-card__journal-count" title="${Number(item.journalCount)} entradas en el diario">✎ ${Number(item.journalCount)}</span>` : ''}${img ? `<img src="${escapeAttr(img)}" loading="lazy" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
+      <div class="media-card__poster">${show.journal && Number(item.journalCount || 0) ? `<span class="media-card__journal-count" title="${Number(item.journalCount)} entradas en el diario">✎ ${Number(item.journalCount)}</span>` : ''}${img ? `<img src="${escapeAttr(img)}" loading="lazy" alt="">` : `<div class="media-card__fallback">${escapeHtml((item.title || '?').slice(0,1))}</div>`}</div>
       <div class="media-card__meta">
-        <strong>${escapeHtml(item.title || 'Sin título')}</strong>
-        ${detailFor(item) ? `<span class="media-card__detail">${escapeHtml(detailFor(item))}</span>` : ''}
-        ${stars(item.rating)}
-        ${dateLine(item)}
-        ${statePillsMarkup(item, context)}
-        ${groupPillsMarkup(item, groups)}
+        ${show.title ? `<strong>${escapeHtml(item.title || 'Sin título')}</strong>` : ''}
+        ${show.detail && detailFor(item) ? `<span class="media-card__detail">${escapeHtml(detailFor(item))}</span>` : ''}
+        ${show.rating ? stars(item.rating) : ''}
+        ${show.date ? dateLine(item) : ''}
+        ${show.type ? `<span class="media-card__type">${escapeHtml(typeLabel(typeFor(item)))}</span>` : ''}
+        ${show.state ? statePillsMarkup(item, context) : ''}
+        ${show.groups ? groupPillsMarkup(item, groups) : ''}
       </div>
     </div>
   </article>`;

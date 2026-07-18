@@ -1,6 +1,6 @@
 {
-  "name": "kiosko-media-notification-center",
-  "version": "6.11.2",
+  "name": "bbqueue",
+  "version": "6.12.3",
   "type": "module",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js"

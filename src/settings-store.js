@@ -45,13 +45,14 @@ export const DEFAULT_SETTINGS = {
       }
     }
   },
+  grill: { enabled: true, defaults: { backlog: 30, onDeck: 7 }, limits: {} },
   views: {
     notifications: { enabled: true, itemsPerPage: 50 },
     backlog: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
     onDeck: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
     current: { enabled: true },
     collections: { enabled: true, cardSize: "medium", itemsPerPage: 12 },
-    database: { enabled: true, cardSize: "medium", itemsPerPage: 60 }
+    database: { enabled: true, cardSize: "medium", cardFormat: "standard", itemsPerPage: 60, includeCharred: false }
   },
   backlog: {
     sources: {
@@ -158,12 +159,27 @@ function sanitize(settings) {
   if (!isObject(s.views)) s.views = DEFAULT_SETTINGS.views;
   if (!isObject(s.views.notifications)) s.views.notifications = { enabled: true, itemsPerPage: 50 };
   s.views.notifications.itemsPerPage = clampNumber(s.views.notifications.itemsPerPage, 1, 50, 50);
-  s.views.backlog = { enabled: true, ...(isObject(s.views.backlog) ? s.views.backlog : {}), cardSize: cardSize(s.views.backlog?.cardSize), itemsPerPage: clampNumber(s.views.backlog?.itemsPerPage, 1, 250, 12) };
-  s.views.onDeck = { enabled: true, ...(isObject(s.views.onDeck) ? s.views.onDeck : {}), cardSize: cardSize(s.views.onDeck?.cardSize), itemsPerPage: clampNumber(s.views.onDeck?.itemsPerPage, 1, 250, 12) };
+  s.views.backlog = { enabled: true, ...(isObject(s.views.backlog) ? s.views.backlog : {}), cardSize: cardSize(s.views.backlog?.cardSize), cardFormat: ["compact","standard","expanded"].includes(s.views.backlog?.cardFormat) ? s.views.backlog.cardFormat : "standard", itemsPerPage: clampNumber(s.views.backlog?.itemsPerPage, 1, 250, 12) };
+  s.views.onDeck = { enabled: true, ...(isObject(s.views.onDeck) ? s.views.onDeck : {}), cardSize: cardSize(s.views.onDeck?.cardSize), cardFormat: ["compact","standard","expanded"].includes(s.views.onDeck?.cardFormat) ? s.views.onDeck.cardFormat : "standard", itemsPerPage: clampNumber(s.views.onDeck?.itemsPerPage, 1, 250, 12) };
   s.views.current = { enabled: true, ...(isObject(s.views.current) ? s.views.current : {}) };
-  s.views.collections = { enabled: true, ...(isObject(s.views.collections) ? s.views.collections : {}), cardSize: cardSize(s.views.collections?.cardSize), itemsPerPage: clampNumber(s.views.collections?.itemsPerPage, 1, 250, 12) };
-  s.views.database = { enabled: true, ...(isObject(s.views.database) ? s.views.database : {}), cardSize: cardSize(s.views.database?.cardSize), itemsPerPage: clampNumber(s.views.database?.itemsPerPage, 10, 250, 60) };
+  s.views.collections = { enabled: true, ...(isObject(s.views.collections) ? s.views.collections : {}), cardSize: cardSize(s.views.collections?.cardSize), cardFormat: ["compact","standard","expanded"].includes(s.views.collections?.cardFormat) ? s.views.collections.cardFormat : "standard", itemsPerPage: clampNumber(s.views.collections?.itemsPerPage, 1, 250, 12) };
+  s.views.database = { enabled: true, ...(isObject(s.views.database) ? s.views.database : {}), cardSize: cardSize(s.views.database?.cardSize), cardFormat: ["compact","standard","expanded"].includes(s.views.database?.cardFormat) ? s.views.database.cardFormat : "standard", includeCharred: s.views.database?.includeCharred === true, itemsPerPage: clampNumber(s.views.database?.itemsPerPage, 10, 250, 60) };
   delete s.views.dashboard;
+
+  if (!isObject(s.grill)) s.grill = {};
+  s.grill.enabled = s.grill.enabled !== false;
+  if (!isObject(s.grill.defaults)) s.grill.defaults = {};
+  s.grill.defaults.backlog = clampNumber(s.grill.defaults.backlog, 1, 3650, 30);
+  s.grill.defaults.onDeck = clampNumber(s.grill.defaults.onDeck, 1, 3650, 7);
+  if (!isObject(s.grill.limits)) s.grill.limits = {};
+  const grillTypes = ["games","movies","series", ...s.itemTypes.map(type => type.id)];
+  for (const type of grillTypes) {
+    if (!isObject(s.grill.limits[type])) s.grill.limits[type] = {};
+    const backlogValue = s.grill.limits[type].backlog;
+    const deckValue = s.grill.limits[type].onDeck;
+    s.grill.limits[type].backlog = backlogValue === false ? false : clampNumber(backlogValue, 1, 3650, s.grill.defaults.backlog);
+    s.grill.limits[type].onDeck = deckValue === false ? false : clampNumber(deckValue, 1, 3650, s.grill.defaults.onDeck);
+  }
 
   if (!isObject(s.design)) s.design = {};
   s.design.accentColor = color(s.design.accentColor);

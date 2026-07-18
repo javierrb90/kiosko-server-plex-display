@@ -53,6 +53,20 @@ const state = {
 
 
 const LOCAL_VIEW_KEY = 'kiosko:active-view';
+
+async function showGrillReviewOnce() {
+  try {
+    if (sessionStorage.getItem('bbqueue:grill-shown')) return;
+    sessionStorage.setItem('bbqueue:grill-shown', '1');
+    const result = await api('/api/grill/pending');
+    const items = result?.items || []; if (!items.length) return;
+    const body = `<div class="grill-review"><p>Parece que algunos items llevan demasiado tiempo sin actividad. Puedes mantenerlos donde están o retirarlos de las listas activas.</p><div class="grill-review__items">${items.map(item => `<article data-grill-id="${escapeAttr(item.canonicalId || item.id)}"><img src="${escapeAttr(item.poster || item.posterUrl || item.cover || '')}" alt=""><div><strong>${escapeHtml(item.title || 'Sin título')}</strong><small>${item.states?.inOnDeck ? 'On Deck' : 'Backlog'}</small></div><button type="button" data-grill-turn>Dar la vuelta</button><button type="button" class="is-danger" data-grill-char>Dejar que se achicharre</button></article>`).join('')}</div></div>`;
+    const promise = ui.open({ title: 'Algunos items llevan demasiado tiempo en la parrilla', className: 'ui-modal-root--wide', body, actions: [{ label: 'Revisar más tarde', value: null }] });
+    requestAnimationFrame(() => { const root=document.querySelector('.grill-review'); root?.addEventListener('click', async event => { const row=event.target.closest('[data-grill-id]'); if(!row) return; const id=row.dataset.grillId; try { if(event.target.closest('[data-grill-turn]')) { await api(`/api/items/${encodeURIComponent(id)}/grill/turn`, {method:'POST'}); ui.toast('Se le ha dado la vuelta al item'); row.remove(); } else if(event.target.closest('[data-grill-char]')) { await api(`/api/items/${encodeURIComponent(id)}/grill/char`, {method:'POST'}); ui.toast('El item se ha achicharrado'); row.remove(); } } catch(error){ ui.toast(error.message || 'No se pudo actualizar el item'); } }); });
+    await promise;
+  } catch (error) { console.warn('Grill check failed', error); }
+}
+
 const VALID_VIEWS = new Set(['database', 'backlog', 'on-deck', 'current-content', 'collections']);
 
 function routeNameForView(id = 'database') {
@@ -142,6 +156,7 @@ function applyDesign(settings = {}) {
   const itemBg = design.itemBackground || {};
   const cards = design.cards || {};
   const sourceColors = design.sourceColors || {};
+  const grillColors = design.grillColors || {};
   const accent = normalizeHexColor(design.accentColor, '#8fafef');
   const overlayColor = normalizeHexColor(bg.overlayColor, '#05070c');
   const opacity = clamp(Number(bg.opacity), 0, 1, 0.28);
@@ -165,6 +180,11 @@ function applyDesign(settings = {}) {
   document.documentElement.style.setProperty('--source-plex', normalizeHexColor(sourceColors.plex, '#8fafef'));
   document.documentElement.style.setProperty('--source-playnite', normalizeHexColor(sourceColors.playnite, '#8fe1b5'));
   document.documentElement.style.setProperty('--source-other', normalizeHexColor(sourceColors.other, '#d8b4fe'));
+  document.documentElement.style.setProperty('--grill-border-normal', normalizeHexColor(grillColors.normal, '#161a22'));
+  document.documentElement.style.setProperty('--grill-border-hot', normalizeHexColor(grillColors.hot, '#f3b61f'));
+  document.documentElement.style.setProperty('--grill-border-charred', normalizeHexColor(grillColors.charred, '#ef3340'));
+  document.documentElement.style.setProperty('--poster-radius-simple', `${clamp(Number(cards.posterRadiusSimple),0,32,14)}px`);
+  document.documentElement.style.setProperty('--poster-radius-standard', `${clamp(Number(cards.posterRadiusStandard),0,32,12)}px`);
   document.documentElement.style.setProperty('--card-bg-opacity', String(cardBgOpacity));
   document.documentElement.style.setProperty('--card-bg-blur', `${cardBgBlur}px`);
   document.documentElement.style.setProperty('--card-bg-overlay-opacity', String(cardBgOverlay));
@@ -892,6 +912,20 @@ function readCustomTypesFromSettings(root) {
   }).filter(type => type.id && !seen.has(type.id) && !seen.has(type.id) && seen.add(type.id));
 }
 
+function grillSettingsMarkup(settings = {}) {
+  const grill = settings.grill || {};
+  const types = [
+    { id:'games', label:'Juegos' }, { id:'movies', label:'Películas' }, { id:'series', label:'Series' },
+    ...(settings.itemTypes || []).map(type => ({ id:type.id, label:type.plural || type.singular || type.id }))
+  ];
+  const cell = (type, view, fallback) => { const value = grill.limits?.[type]?.[view]; return value === false ? '' : (value || fallback); };
+  return `<div class="settings-fieldset"><h4>Sistema de parrilla</h4><p class="settings-help">BBQueue revisará al cargar la página los items de Backlog y On Deck cuya última actividad supere estos límites.</p><label class="ui-check"><input type="checkbox" data-setting="grillEnabled" ${grill.enabled !== false ? 'checked' : ''}> Activar sistema de parrilla</label><div class="grill-settings-table"><div></div><strong>Backlog</strong><strong>On Deck</strong>${types.map(type => `<span>${escapeHtml(type.label)}</span><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="backlog" value="${escapeAttr(cell(type.id,'backlog',grill.defaults?.backlog || 30))}"><small>días</small></label><label><input type="number" min="1" max="3650" data-grill-type="${escapeAttr(type.id)}" data-grill-view="onDeck" value="${escapeAttr(cell(type.id,'onDeck',grill.defaults?.onDeck || 7))}"><small>días</small></label>`).join('')}</div></div>`;
+}
+function readGrillSettings(root, settings = {}) {
+  const limits = {}; root.querySelectorAll('[data-grill-type]').forEach(input => { const type=input.dataset.grillType; const view=input.dataset.grillView; limits[type] ||= {}; limits[type][view] = Math.max(1, Number(input.value) || (view === 'onDeck' ? 7 : 30)); });
+  return { enabled: root.querySelector('[data-setting="grillEnabled"]')?.checked !== false, defaults: { backlog: Number(settings.grill?.defaults?.backlog || 30), onDeck: Number(settings.grill?.defaults?.onDeck || 7) }, limits };
+}
+
 async function openSettingsModal() {
   const s = state.settings || await api('/api/settings');
   const customCss = await loadCustomCssText('global').catch(() => '');
@@ -904,19 +938,20 @@ async function openSettingsModal() {
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
-        ['general','General'], ['design','Visual'], ['item-detail','Ficha'], ['types','Tipos'], ['notifications','Avisos'], ['plex','Plex'], ['collections','Colecciones'], ['data','Datos'], ['debug','Debug'], ['css','CSS']
+        ['general','General'], ['appearance','Apariencia'], ['content','Contenido'], ['grill','Parrilla'], ['integrations','Integraciones'], ['advanced','Avanzado']
       ].map(([id,label], index) => `<button type="button" data-settings-tab="${id}" class="${index === 0 ? 'is-active' : ''}">${label}</button>`).join('')}
     </nav>
-    <div class="settings-tabs__panels">
+    <div class="settings-tabs__content"><nav class="settings-subnav" data-settings-subnav aria-label="Subsecciones"></nav><div class="settings-tabs__panels">
       <section data-settings-panel="general" class="settings-tab-panel is-active"><h3>General</h3>
         <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="database" ${selected('database', s.display?.defaultView)}>Base de datos</option><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colecciones</option></select></label>
       </section>
-      <section data-settings-panel="design" class="settings-tab-panel"><h3>Visual</h3>
+      <section data-settings-panel="grill" class="settings-tab-panel"><h3>Parrilla</h3>${grillSettingsMarkup(s)}</section>
+      <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Visual</h3>
         <div class="settings-fieldset"><h4>Colores</h4>
           ${colorField('accentColor', 'Color de acento', s.design?.accentColor || '#8fafef')}
-          ${colorField('sourceColorPlex', 'Plex', sourceColors.plex || '#8fafef')}
-          ${colorField('sourceColorPlaynite', 'Playnite', sourceColors.playnite || '#8fe1b5')}
-          ${colorField('sourceColorOther', 'Otros', sourceColors.other || '#d8b4fe')}
+          ${colorField('grillColorNormal', 'Borde normal', s.design?.grillColors?.normal || '#161a22')}
+          ${colorField('grillColorHot', 'Quemándose', s.design?.grillColors?.hot || '#f3b61f')}
+          ${colorField('grillColorCharred', 'Achicharrado', s.design?.grillColors?.charred || '#ef3340')}
         </div>
         <div class="settings-fieldset"><h4>Fondo de vistas</h4>
           <label class="ui-field"><span>Rotación cada segundos</span><input data-setting="bgRotationSeconds" type="range" min="3" max="120" step="1" value="${escapeAttr(bg.rotationSeconds || 12)}"></label>
@@ -927,13 +962,13 @@ async function openSettingsModal() {
           ${colorField('bgOverlayColor', 'Color de capa', bg.overlayColor || '#05070c')}
           <label class="ui-field"><span>Fade entre fondos</span><input data-setting="bgFadeSeconds" type="range" min="0" max="5" step="0.05" value="${escapeAttr(bg.fadeSeconds ?? 1.2)}"></label>
         </div>
-        <div class="settings-fieldset"><h4>Tarjetas</h4>
+        <div class="settings-fieldset"><h4>Contenido de las tarjetas</h4><p class="settings-help">Define qué elementos aparecen en cada diseño de tarjeta.</p>${[['simple','Simple'],['standard','Normal']].map(([format,label]) => `<div class="card-visibility-settings"><h5>${label}</h5><div class="settings-check-grid">${[['title','Título'],['detail','Estado / detalle'],['rating','Calificación'],['date','Fecha'],['type','Tipo'],['groups','Grupos'],['state','Vista activa'],['journal','Diario'],['grill','Parrilla']].map(([key,text]) => { const current=s.design?.gridCards?.[format] || {}; const fallback=format==='simple' ? ['detail','rating','journal','grill'].includes(key) : key!=='type'; return `<label class="ui-check"><input type="checkbox" data-card-default="${format}.${key}" ${(current[key] ?? fallback) ? 'checked' : ''}> ${text}</label>`; }).join('')}</div></div>`).join('')}</div><div class="settings-fieldset"><h4>Tarjetas</h4>
           <label class="ui-check"><input type="checkbox" data-setting="itemBgEnabled" ${checked(itemBg.enabled !== false)}> Usar backdrop dentro de cada item</label>
           <label class="ui-field"><span>Opacidad del backdrop</span><input data-setting="itemBgOpacity" type="range" min="0" max="1" step="0.01" value="${escapeAttr(itemBg.opacity ?? 0.32)}"></label>
           <label class="ui-field"><span>Blur del backdrop</span><input data-setting="itemBgBlur" type="range" min="0" max="36" step="1" value="${escapeAttr(itemBg.blur ?? 12)}"></label>
           <label class="ui-field"><span>Oscurecimiento de tarjeta</span><input data-setting="itemBgOverlayOpacity" type="range" min="0" max="1" step="0.01" value="${escapeAttr(itemBg.overlayOpacity ?? 0.72)}"></label>
           <label class="ui-field"><span>Blanco y negro del backdrop</span><input data-setting="itemBgGrayscale" type="range" min="0" max="100" step="1" value="${escapeAttr(itemBg.grayscale ?? 0)}"></label>
-          <label class="ui-field"><span>Radio de borde</span><input data-setting="cardRadius" type="range" min="0" max="32" step="1" value="${escapeAttr(cards.radius ?? 18)}"></label>
+          <label class="ui-field"><span>Radio de la tarjeta</span><input data-setting="cardRadius" type="range" min="0" max="32" step="1" value="${escapeAttr(cards.radius ?? 18)}"></label><label class="ui-field"><span>Radio de carátula · Simple</span><input data-setting="posterRadiusSimple" type="range" min="0" max="32" step="1" value="${escapeAttr(cards.posterRadiusSimple ?? 14)}"></label><label class="ui-field"><span>Radio de carátula · Normal</span><input data-setting="posterRadiusStandard" type="range" min="0" max="32" step="1" value="${escapeAttr(cards.posterRadiusStandard ?? 12)}"></label>
         </div>
         <div class="settings-fieldset"><h4>Escala</h4>
           <label class="ui-field"><span>Tamaño de fuente</span><select data-setting="fontScale"><option value="small" ${selected('small', s.design?.fontScale)}>Pequeño</option><option value="medium" ${selected('medium', s.design?.fontScale)}>Medio</option><option value="large" ${selected('large', s.design?.fontScale)}>Grande</option></select></label>
@@ -943,7 +978,7 @@ async function openSettingsModal() {
           <label class="ui-field"><span>Tamaño Colecciones</span><select data-setting="collectionsSize"><option value="small" ${selected('small', s.views?.collections?.cardSize)}>Pequeño</option><option value="medium" ${selected('medium', s.views?.collections?.cardSize)}>Medio</option><option value="large" ${selected('large', s.views?.collections?.cardSize)}>Grande</option></select></label>
         </div>
       </section>
-      <section data-settings-panel="item-detail" class="settings-tab-panel"><h3>Ficha del item</h3>
+      <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Ficha del item</h3>
         <div class="settings-fieldset"><h4>Diseño visual</h4>
           <label class="ui-field"><span>Fondo</span><select data-setting="detailBg"><option value="backdrop" ${selected('backdrop', s.design?.itemDetail?.background?.background || 'backdrop')}>Backdrop</option><option value="poster" ${selected('poster', s.design?.itemDetail?.background?.background)}>Poster</option><option value="solid" ${selected('solid', s.design?.itemDetail?.background?.background)}>Sólido</option><option value="none" ${selected('none', s.design?.itemDetail?.background?.background)}>Sin imagen</option></select></label>
           <label class="ui-field"><span>Oscurecimiento</span><select data-setting="detailShade"><option value="low" ${selected('low', s.design?.itemDetail?.background?.shade)}>Bajo</option><option value="medium" ${selected('medium', s.design?.itemDetail?.background?.shade || 'medium')}>Medio</option><option value="high" ${selected('high', s.design?.itemDetail?.background?.shade)}>Alto</option></select></label>
@@ -958,36 +993,36 @@ async function openSettingsModal() {
           <pre class="metadata-keys-cheatsheet" data-metadata-keys hidden></pre>
         </div>
       </section>
-      <section data-settings-panel="types" class="settings-tab-panel"><h3>Tipos</h3>
+      <section data-settings-panel="content" class="settings-tab-panel"><h3>Tipos</h3>
         ${itemTypesSettingsMarkup(s.itemTypes || [])}
       </section>
-      <section data-settings-panel="notifications" class="settings-tab-panel"><h3>Notificaciones</h3>
+      <section data-settings-panel="general" class="settings-tab-panel is-active"><h3>Notificaciones</h3>
         <label class="ui-check"><input type="checkbox" data-setting="toastEnabled" ${checked(s.notifications?.toastEnabled !== false)}> Mostrar toast</label>
         <label class="ui-check"><input type="checkbox" data-setting="soundEnabled" ${checked(s.notifications?.soundEnabled === true)}> Sonido</label>
         <label class="ui-field"><span>Tamaño toast</span><select data-setting="toastSize"><option value="small" ${selected('small', s.notifications?.toastSize)}>Pequeño</option><option value="medium" ${selected('medium', s.notifications?.toastSize)}>Medio</option><option value="large" ${selected('large', s.notifications?.toastSize)}>Grande</option></select></label>
       </section>
-      <section data-settings-panel="plex" class="settings-tab-panel"><h3>Plex</h3>
+      <section data-settings-panel="integrations" class="settings-tab-panel"><h3>Plex</h3>
         <label class="ui-field"><span>URL</span><input data-setting="plexUrl" type="text" value="${escapeAttr(s.plex?.url || '')}" placeholder="http://IP:32400"></label>
         <label class="ui-field"><span>Token</span><input data-setting="plexToken" type="password" value="${escapeAttr(s.plex?.token || '')}"></label>
       </section>
-      <section data-settings-panel="collections" class="settings-tab-panel"><h3>Colecciones</h3>
+      <section data-settings-panel="content" class="settings-tab-panel"><h3>Colecciones</h3>
         ${collectionGroupsSettingsMarkup(state.collectionGroups || [])}
       </section>
-      <section data-settings-panel="data" class="settings-tab-panel"><h3>Datos y mantenimiento</h3>
+      <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Datos y mantenimiento</h3>
         <div class="settings-actions-grid">
           <button type="button" class="ui-action-button" data-export-backup>Exportar backup</button>
           <button type="button" class="ui-action-button" data-refresh-css>Recargar CSS</button>
         </div>
         <p class="settings-help">El backup incluye ajustes, estado, backlog, colecciones, notificaciones y CSS global.</p>
       </section>
-      <section data-settings-panel="debug" class="settings-tab-panel"><h3>Debug</h3>
+      <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Debug</h3>
         <div class="debug-actions"><button type="button" data-debug="notification">Notificación</button><button type="button" data-debug="plex">Plex</button><button type="button" data-debug="game">Playnite</button></div>
         <p class="settings-help">Los botones lanzan eventos de prueba sin cerrar las opciones.</p>
       </section>
-      <section data-settings-panel="css" class="settings-tab-panel"><h3>CSS personalizado</h3>
+      <section data-settings-panel="appearance" class="settings-tab-panel"><h3>CSS personalizado</h3>
         <label class="ui-field"><span>CSS global</span><textarea data-setting="customCss" rows="10" spellcheck="false">${escapeHtml(customCss)}</textarea></label>
       </section>
-    </div>
+    </div></div>
   </div>`;
   const modalPromise = ui.open({
     title: 'Opciones',
@@ -999,15 +1034,14 @@ async function openSettingsModal() {
         const get = name => root.querySelector(`[data-setting="${name}"]`);
         const settingsPayload = {
           display: { defaultView: get('defaultView')?.value || 'backlog' },
+          grill: readGrillSettings(root, s),
           design: {
+            gridCards: Object.fromEntries(['simple','standard'].map(format => [format, Object.fromEntries([...root.querySelectorAll(`[data-card-default^="${format}."]`)].map(input => [input.dataset.cardDefault.split('.')[1], input.checked]))])),
             accentColor: get('accentColor')?.value || '#8fafef',
             fontScale: get('fontScale')?.value || 'medium',
             density: get('density')?.value || 'comfortable',
-            sourceColors: {
-              plex: get('sourceColorPlex')?.value || '#8fafef',
-              playnite: get('sourceColorPlaynite')?.value || '#8fe1b5',
-              other: get('sourceColorOther')?.value || '#d8b4fe'
-            },
+            sourceColors: sourceColors,
+            grillColors: { normal: get('grillColorNormal')?.value || '#161a22', hot: get('grillColorHot')?.value || '#f3b61f', charred: get('grillColorCharred')?.value || '#ef3340' },
             itemBackground: {
               enabled: get('itemBgEnabled')?.checked !== false,
               opacity: Number(get('itemBgOpacity')?.value ?? 0.32),
@@ -1016,7 +1050,9 @@ async function openSettingsModal() {
               grayscale: Number(get('itemBgGrayscale')?.value ?? 0)
             },
             cards: {
-              radius: Number(get('cardRadius')?.value ?? 18)
+              radius: Number(get('cardRadius')?.value ?? 18),
+              posterRadiusSimple: Number(get('posterRadiusSimple')?.value ?? 14),
+              posterRadiusStandard: Number(get('posterRadiusStandard')?.value ?? 12)
             },
             itemDetail: {
               background: { background: get('detailBg')?.value || 'backdrop', shade: get('detailShade')?.value || 'medium', blur: get('detailBlur')?.value || 'soft' },
@@ -1040,7 +1076,7 @@ async function openSettingsModal() {
             backlog: { cardSize: get('backlogSize')?.value || s.views?.backlog?.cardSize || 'medium', itemsPerPage: Number(s.views?.backlog?.itemsPerPage || 12) },
             onDeck: { cardSize: get('onDeckSize')?.value || s.views?.onDeck?.cardSize || 'medium', itemsPerPage: Number(s.views?.onDeck?.itemsPerPage || 12) },
             collections: { cardSize: get('collectionsSize')?.value || s.views?.collections?.cardSize || 'medium', itemsPerPage: Number(s.views?.collections?.itemsPerPage || 12) },
-            database: { cardSize: s.views?.database?.cardSize || 'medium', itemsPerPage: Number(s.views?.database?.itemsPerPage || 60) }
+            database: { cardSize: s.views?.database?.cardSize || 'medium', cardFormat: s.views?.database?.cardFormat || 'standard', includeCharred: s.views?.database?.includeCharred === true, itemsPerPage: Number(s.views?.database?.itemsPerPage || 60) }
           },
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
           itemTypes: readCustomTypesFromSettings(root),
@@ -1054,11 +1090,14 @@ async function openSettingsModal() {
     ]
   });
   setTimeout(() => {
+    const refreshSettingsSubnav = tab => { const nav = modalRoot.querySelector('[data-settings-subnav]'); const panels = [...modalRoot.querySelectorAll(`[data-settings-panel="${tab}"]`)]; if (!nav) return; nav.innerHTML = panels.map((panel,index) => { if (!panel.id) panel.id = `settings-${tab}-${index}`; const label = panel.querySelector('h3')?.textContent || `Sección ${index+1}`; return `<button type="button" data-settings-jump="${panel.id}">${label}</button>`; }).join(''); nav.querySelectorAll('[data-settings-jump]').forEach(button => button.addEventListener('click', () => modalRoot.querySelector(`#${button.dataset.settingsJump}`)?.scrollIntoView({behavior:'smooth',block:'start'}))); };
     modalRoot.querySelectorAll('[data-settings-tab]').forEach(btn => btn.addEventListener('click', () => {
       const tab = btn.dataset.settingsTab;
       modalRoot.querySelectorAll('[data-settings-tab]').forEach(node => node.classList.toggle('is-active', node === btn));
       modalRoot.querySelectorAll('[data-settings-panel]').forEach(panel => panel.classList.toggle('is-active', panel.dataset.settingsPanel === tab));
+      refreshSettingsSubnav(tab);
     }));
+    refreshSettingsSubnav('general');
 
     modalRoot.querySelector('[data-create-group]')?.addEventListener('click', async event => {
       const button = event.currentTarget;
@@ -1142,7 +1181,7 @@ async function openSettingsModal() {
             grayscale: Number(root.querySelector('[data-setting="itemBgGrayscale"]')?.value ?? 0)
           },
           cards: {
-            radius: Number(root.querySelector('[data-setting="cardRadius"]')?.value ?? 18)
+            radius: Number(root.querySelector('[data-setting="cardRadius"], [data-setting="posterRadiusSimple"], [data-setting="posterRadiusStandard"], [data-setting="grillColorNormal"], [data-setting="grillColorHot"], [data-setting="grillColorCharred"]')?.value ?? 18)
           }
         }
       };
@@ -1150,7 +1189,7 @@ async function openSettingsModal() {
         ...patch.design.itemBackground,
         radius: patch.design.cards.radius,
         countItemBgOpacity: root.querySelectorAll('[data-setting="itemBgOpacity"]').length,
-        countCardRadius: root.querySelectorAll('[data-setting="cardRadius"]').length
+        countCardRadius: root.querySelectorAll('[data-setting="cardRadius"], [data-setting="posterRadiusSimple"], [data-setting="posterRadiusStandard"], [data-setting="grillColorNormal"], [data-setting="grillColorHot"], [data-setting="grillColorCharred"]').length
       });
       return patch;
     };
@@ -1169,7 +1208,7 @@ async function openSettingsModal() {
         debugError('No se pudieron guardar opciones de tarjetas', error);
       }
     }, 300);
-    modalRoot.querySelectorAll('[data-setting="bgRotationSeconds"], [data-setting="bgOpacity"], [data-setting="bgBlur"], [data-setting="bgOverlayColor"], [data-setting="bgOverlayOpacity"], [data-setting="bgGrayscale"], [data-setting="bgFadeSeconds"], [data-setting="itemBgEnabled"], [data-setting="itemBgOpacity"], [data-setting="itemBgBlur"], [data-setting="itemBgOverlayOpacity"], [data-setting="itemBgGrayscale"], [data-setting="cardRadius"]').forEach(node => {
+    modalRoot.querySelectorAll('[data-setting="bgRotationSeconds"], [data-setting="bgOpacity"], [data-setting="bgBlur"], [data-setting="bgOverlayColor"], [data-setting="bgOverlayOpacity"], [data-setting="bgGrayscale"], [data-setting="bgFadeSeconds"], [data-setting="itemBgEnabled"], [data-setting="itemBgOpacity"], [data-setting="itemBgBlur"], [data-setting="itemBgOverlayOpacity"], [data-setting="itemBgGrayscale"], [data-setting="cardRadius"], [data-setting="posterRadiusSimple"], [data-setting="posterRadiusStandard"], [data-setting="grillColorNormal"], [data-setting="grillColorHot"], [data-setting="grillColorCharred"]').forEach(node => {
       node.addEventListener('input', () => { readVisualDesignPatch(); persistVisualDesignPatch(); });
       node.addEventListener('change', () => { readVisualDesignPatch(); persistVisualDesignPatch(); });
     });
@@ -1227,7 +1266,7 @@ async function loadInitialSnapshot() {
 }
 
 window.addEventListener('error', event => debugError('Error no controlado', { message: event.message, filename: event.filename, line: event.lineno }));
-loadInitialSnapshot().finally(() => socket.connect());
+loadInitialSnapshot().finally(() => { socket.connect(); showGrillReviewOnce(); });
 
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>\'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }
 function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }
