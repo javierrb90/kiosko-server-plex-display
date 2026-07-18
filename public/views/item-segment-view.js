@@ -54,6 +54,8 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   let cardFormat = 'standard';
   let includeCharred = false;
   let charredOnly = false;
+  const DATABASE_SEGMENTS = ['unorganized', 'backlog', 'on-deck', 'collections'];
+  let activeDatabaseSegments = new Set(DATABASE_SEGMENTS);
   let isVisible = false;
   let controlsMounted = false;
   let collectionGroups = [];
@@ -77,7 +79,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
 
   function sessionKey() { return `kiosko:v6.8:${id}`; }
   function saveSession() {
-    try { localStorage.setItem(sessionKey(), JSON.stringify({ search, activeTypes: [...activeTypes], activeGroupIds: [...activeGroupIds], groupMatch, source, status, sort, direction, viewMode, cardSize, cardFormat, includeCharred, limit })); } catch {}
+    try { localStorage.setItem(sessionKey(), JSON.stringify({ search, activeTypes: [...activeTypes], activeGroupIds: [...activeGroupIds], activeDatabaseSegments: [...activeDatabaseSegments], groupMatch, source, status, sort, direction, viewMode, cardSize, cardFormat, includeCharred, limit })); } catch {}
   }
   function loadSession() {
     try {
@@ -87,6 +89,10 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       if (typeof parsed.search === 'string') search = parsed.search;
       if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(Boolean));
       if (Array.isArray(parsed.activeGroupIds)) activeGroupIds = new Set(parsed.activeGroupIds);
+      if (Array.isArray(parsed.activeDatabaseSegments)) {
+        const valid = parsed.activeDatabaseSegments.filter(segment => DATABASE_SEGMENTS.includes(segment));
+        activeDatabaseSegments = new Set(valid.length ? valid : DATABASE_SEGMENTS);
+      }
       if (['any','all'].includes(parsed.groupMatch)) groupMatch = parsed.groupMatch;
       if (typeof parsed.source === 'string') source = parsed.source;
       if (typeof parsed.status === 'string') status = parsed.status;
@@ -121,6 +127,21 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     const params = new URLSearchParams({ view, page: '1', limit: '5000', sort, direction, sync: '1' });
     return `/api/items?${params.toString()}`;
   }
+  function databaseSegmentForItem(item = {}) {
+    const states = item.states || {};
+    if (states.completed || item.completedAt || item.status === 'completed') return 'collections';
+    if (states.inOnDeck || item.status === 'on-deck') return 'on-deck';
+    if (states.inBacklog || item.status === 'backlog') return 'backlog';
+    return 'unorganized';
+  }
+  function databaseSegmentCounts() {
+    const counts = Object.fromEntries(DATABASE_SEGMENTS.map(segment => [segment, 0]));
+    for (const item of allItems) counts[databaseSegmentForItem(item)] += 1;
+    return counts;
+  }
+  function itemMatchesDatabaseSegments(item) {
+    return id !== 'database' || activeDatabaseSegments.has(databaseSegmentForItem(item));
+  }
   function itemMatchesGroups(item) {
     if (!activeGroupIds.size) return true;
     const selected = collectionGroups.filter(group => activeGroupIds.has(group.id));
@@ -133,6 +154,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     const q = search.trim().toLowerCase();
     let rows = [...allItems]
       .filter(item => activeTypes.has(typeFor(item)))
+      .filter(itemMatchesDatabaseSegments)
       .filter(item => charredOnly ? Boolean(item.grill?.charred || item.states?.charred) : true)
       .filter(item => !source || item.source === source)
       .filter(item => !allowStatus || !status || item.status === status || item.states?.[status] === true)
@@ -233,7 +255,13 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     } catch (error) {
       ui.toast(`No se pudo cargar ${title}`, { detail: error.message || '' });
     } finally {
-      if (seq === loadingSeq) render();
+      if (seq === loadingSeq) {
+        // The segment counters depend on the freshly loaded database items.
+        // Rebuild the contextual toolbar before rendering the view so the
+        // first paint after a refresh never shows provisional zeroes.
+        if (isVisible) renderControls({ force: true });
+        render();
+      }
     }
   }
   function locateRenderedItem(key = '') {
@@ -506,6 +534,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     status = '';
     search = '';
     charredOnly = false;
+    activeDatabaseSegments = new Set(DATABASE_SEGMENTS);
     localStorage.setItem('bbqueue:global-search', '');
     localStorage.setItem('bbqueue:charred-only', '0');
   }
@@ -515,7 +544,13 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     if (!force && controlsMounted) return;
     controlsMounted = true;
     controlsRoot.innerHTML = `<div class="collection-toolbar collection-toolbar--global"><label class="collection-search"><input type="search" data-quick-search value="${escapeAttr(search)}" placeholder="Buscar en todos los espacios" autocomplete="off"></label><button type="button" class="view-actions-button view-filter-button global-charred-filter ${charredOnly?'is-active':''}" data-global-charred title="Mostrar solo achicharrados"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2s.8 3.2-1.8 5.8c-1.8 1.8-3.2 3.6-2.7 6.1.3 1.6 1.5 2.7 3 3.1-1.1-1.4-.7-3.4.5-4.5 1.5-1.4 1.8-2.8 1.7-4.1 2.7 2 4.8 4.7 4.8 8 0 3.1-2.5 5.6-5.7 5.6S7.5 19.5 7.5 16.4C7.5 10.1 13.5 8.2 13.5 2Z"/></svg><strong data-global-charred-count>${allItems.filter(item=>item.grill?.charred || item.states?.charred).length}</strong></button></div>`;
-    if (localRoot) localRoot.innerHTML = `<div class="workspace-toolbar"><button type="button" class="view-actions-button view-filter-button ${activeGroupIds.size ? 'is-active' : ''}" data-open-filters title="Filtrar por grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1V19l-3.6 1v-7.9L4 5Z"/></svg><span class="view-filter-button__label">Filtros</span>${activeGroupIds.size ? `<strong class="workspace-toolbar__badge">${activeGroupIds.size}</strong>` : ''}</button><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span></button></div>`;
+    if (localRoot) {
+      const segmentCounts = databaseSegmentCounts();
+      const segmentLabels = { unorganized: 'Sin organizar', backlog: 'Backlog', 'on-deck': 'On Deck', collections: 'Colección' };
+      const segmentIcons = { unorganized: '○', backlog: 'B', 'on-deck': 'D', collections: '✓' };
+      const segmentToolbar = id === 'database' ? `<div class="database-segment-toolbar" role="group" aria-label="Segmentos visibles en Base de datos">${DATABASE_SEGMENTS.map(segment => `<button type="button" class="database-segment-button ${activeDatabaseSegments.has(segment) ? 'is-active' : ''}" data-database-segment="${segment}" aria-pressed="${activeDatabaseSegments.has(segment)}" title="${segmentLabels[segment]} (${segmentCounts[segment] || 0})"><span aria-hidden="true">${segmentIcons[segment]}</span><small>${segmentLabels[segment]}</small><strong>${segmentCounts[segment] || 0}</strong></button>`).join('')}</div>` : '';
+      localRoot.innerHTML = `<div class="workspace-toolbar">${segmentToolbar}<button type="button" class="view-actions-button view-filter-button ${activeGroupIds.size || (id === 'database' && activeDatabaseSegments.size < DATABASE_SEGMENTS.length) ? 'is-active' : ''}" data-open-filters title="Filtrar por grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1V19l-3.6 1v-7.9L4 5Z"/></svg><span class="view-filter-button__label">Filtros</span>${activeGroupIds.size ? `<strong class="workspace-toolbar__badge">${activeGroupIds.size}</strong>` : ''}</button><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span></button></div>`;
+    }
     controlsRoot.querySelector('[data-quick-search]')?.addEventListener('input', event => {
       search = event.target.value || '';
       localStorage.setItem('bbqueue:global-search', search);
@@ -527,6 +562,19 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       }, 220);
     });
     controlsRoot.querySelector('[data-global-charred]')?.addEventListener('click', () => { charredOnly=!charredOnly; localStorage.setItem('bbqueue:charred-only',charredOnly?'1':'0'); window.dispatchEvent(new CustomEvent('bbqueue:charred-filter',{detail:charredOnly})); renderControls({force:true}); render(); });
+    localRoot?.querySelectorAll('[data-database-segment]').forEach(button => button.addEventListener('click', () => {
+      const segment = button.dataset.databaseSegment;
+      if (!DATABASE_SEGMENTS.includes(segment)) return;
+      if (activeDatabaseSegments.has(segment)) {
+        if (activeDatabaseSegments.size === 1) return;
+        activeDatabaseSegments.delete(segment);
+      } else activeDatabaseSegments.add(segment);
+      page = 1;
+      applyFilters();
+      renderControls({ force: true });
+      render();
+      saveSession();
+    }));
     localRoot?.querySelector('[data-toggle-view]')?.addEventListener('click', () => { viewMode = viewMode === 'grid' ? 'list' : 'grid'; renderControls({ force: true }); render(); saveSession(); });
     localRoot?.querySelector('[data-open-filters]')?.addEventListener('click', openFiltersModal);
     localRoot?.querySelector('[data-open-controls]')?.addEventListener('click', openControlsModal);
@@ -534,7 +582,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   }
   function updateControlsState() {
     const localRoot = el?.querySelector('[data-section-controls]');
-    localRoot?.querySelector('[data-open-filters]')?.classList.toggle('is-active', activeGroupIds.size > 0);
+    localRoot?.querySelector('[data-open-filters]')?.classList.toggle('is-active', activeGroupIds.size > 0 || (id === 'database' && activeDatabaseSegments.size < DATABASE_SEGMENTS.length));
   }
   function bindPanelEditorNavigation() {
     setTimeout(() => {

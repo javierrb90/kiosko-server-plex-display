@@ -4,6 +4,9 @@ BBQ es una aplicación local y autocontenida para gestionar una biblioteca perso
 
 ## Espacios de trabajo
 
+En **Base de datos**, una botonera contextual permite filtrar rápidamente por **Sin organizar**, **Backlog**, **On Deck** y **Colección**. Los botones actúan como segmentos visibles y se combinan con los demás filtros.
+
+
 BBQ usa cuatro espacios fijos:
 
 - **Base de datos**: catálogo completo. Todo ítem existe aquí.

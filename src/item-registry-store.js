@@ -419,13 +419,20 @@ export class ItemRegistryStore {
     const activeBacklog = new Set();
     const activeDeck = new Set();
     const activeCompleted = new Set();
+    const identityToken = item => {
+      if (item?.source === "plex") {
+        const keys = [...this.plexIdentityKeys(item)];
+        if (keys.length) return `plex:${keys.sort()[0]}`;
+      }
+      return String(item?.canonicalId || canonicalKeyForRegistryItem(item));
+    };
     const apply = async (item, patch) => {
       if (!item) return;
-      const canonicalId = canonicalKeyForRegistryItem(item);
-      if (patch.inBacklog) activeBacklog.add(canonicalId);
-      if (patch.inOnDeck) activeDeck.add(canonicalId);
-      if (patch.completed) activeCompleted.add(canonicalId);
       const saved = await this.upsert(item, patch);
+      const token = identityToken(saved);
+      if (patch.inBacklog) activeBacklog.add(token);
+      if (patch.inOnDeck) activeDeck.add(token);
+      if (patch.completed) activeCompleted.add(token);
       if (patch.inBacklog) await this.addBacklogEntry(saved, null, item.meta?.backlogSource || "recent");
     };
     for (const [source, rows] of Object.entries(backlog || {})) {
@@ -438,8 +445,12 @@ export class ItemRegistryStore {
     for (const item of completions || []) await apply(item, { completed: true, preserveManualDetail: item.source === 'kiosko', rating: item.rating ?? null, completedAt: item.completedAt ?? null });
     for (const item of this.items) {
       if (item.deletedAt) continue;
-      item.states = { ...(item.states || {}), inBacklog: activeBacklog.has(item.canonicalId), inOnDeck: activeDeck.has(item.canonicalId), completed: activeCompleted.has(item.canonicalId) || Boolean(item.completedAt) };
-      item.status = item.states.completed ? "completed" : item.states.inOnDeck ? "on-deck" : item.states.inBacklog ? "backlog" : "known";
+      const token = identityToken(item);
+      const completed = activeCompleted.has(token) || Boolean(item.completedAt);
+      const inOnDeck = !completed && activeDeck.has(token);
+      const inBacklog = !completed && !inOnDeck && activeBacklog.has(token);
+      item.states = { ...(item.states || {}), inBacklog, inOnDeck, completed };
+      item.status = completed ? "completed" : inOnDeck ? "on-deck" : inBacklog ? "backlog" : "known";
       item.updatedAt = now();
     }
     this.lastSyncAt = now();

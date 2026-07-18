@@ -206,7 +206,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "BBQ",
-    version: "v7.1.1",
+    version: "v7.1.3",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -449,10 +449,37 @@ function findBacklogItemByCanonicalId(canonicalId = "") {
   return Object.values(data || {}).flat().find(item => sameItemIdentity(item, canonicalId));
 }
 function findOnDeckItemByCanonicalId(canonicalId = "") {
-  return onDeckStore.list().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
+  return onDeckStore.list().find(item => sameItemIdentity(item, canonicalId));
 }
 function findCompletionByCanonicalId(canonicalId = "") {
-  return completionStore.list().find(item => item.canonicalId === canonicalId || item.id === canonicalId);
+  return completionStore.list().find(item => sameItemIdentity(item, canonicalId));
+}
+async function removeAllMatchingFromBacklog(canonicalId = "") {
+  const matches = Object.values(backlogStore.list() || {}).flat().filter(item => sameItemIdentity(item, canonicalId));
+  const removed = [];
+  for (const item of matches) {
+    const result = await backlogStore.remove(item.source || "plex", item.id).catch(() => null);
+    if (result) removed.push(result);
+  }
+  return removed;
+}
+async function removeAllMatchingFromDeck(canonicalId = "") {
+  const matches = onDeckStore.list().filter(item => sameItemIdentity(item, canonicalId));
+  const removed = [];
+  for (const item of matches) {
+    const result = await onDeckStore.remove(item.id).catch(() => null);
+    if (result) removed.push(result);
+  }
+  return removed;
+}
+async function removeAllMatchingCompletions(canonicalId = "") {
+  const matches = completionStore.list().filter(item => sameItemIdentity(item, canonicalId));
+  const removed = [];
+  for (const item of matches) {
+    const result = await completionStore.remove(item.id).catch(() => null);
+    if (result) removed.push(result);
+  }
+  return removed;
 }
 function itemFromAnyStore(canonicalId = "") {
   return itemRegistryStore.get(canonicalId) || findBacklogItemByCanonicalId(canonicalId) || findOnDeckItemByCanonicalId(canonicalId) || findCompletionByCanonicalId(canonicalId);
@@ -608,7 +635,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.1.1", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.1.3", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -1437,9 +1464,8 @@ app.post("/api/items/:canonicalId/backlog", async (req, res) => {
   const item = itemFromAnyStore(id);
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   const followedAt = new Date().toISOString();
-  const deckExisting = findOnDeckItemByCanonicalId(id);
-  if (deckExisting) await onDeckStore.remove(deckExisting.id).catch(() => null);
-  await completionStore.removeByCanonicalId(id).catch(() => null);
+  await removeAllMatchingFromDeck(id);
+  await removeAllMatchingCompletions(id);
   const backlogSource = item.source === "plex" || item.source === "playnite" || item.source === "kiosko" ? item.source : "manual";
   const backlogItem = await backlogStore.upsert(backlogSource, { ...item, source: backlogSource, completedAt: null, states: { ...(item.states || {}), completed: false, inBacklog: true, inOnDeck: false }, lastActivityAt: followedAt, updatedAt: followedAt, meta: { ...(item.meta || {}), followedAt, trackingSource: "manual", originalSource: item.source || null } });
   await removeCompletionForCanonicalId(id);
@@ -1452,11 +1478,8 @@ app.post("/api/items/:canonicalId/backlog", async (req, res) => {
 app.delete("/api/items/:canonicalId/backlog", async (req, res) => {
   const id = decodeURIComponent(req.params.canonicalId);
   const item = itemFromAnyStore(id);
-  const existing = findBacklogItemByCanonicalId(id);
-  const source = existing?.source || item?.source || "plex";
-  const removed = existing
-    ? await backlogStore.remove(source, existing.id).catch(() => null)
-    : await backlogStore.remove(source, id).catch(() => null);
+  const removedItems = await removeAllMatchingFromBacklog(id);
+  const removed = removedItems[0] || null;
   if (!removed) return res.status(404).json({ error: "Item no encontrado en Backlog." });
   const activityAt = new Date().toISOString();
   await itemRegistryStore.upsert({ ...(item || removed), lastActivityAt: activityAt }, { inBacklog: false, turnedAt: null, lastActivityAt: activityAt, activity: { eventType: "manual_unfollow", title: removed.title, subtitle: removed.subtitle, activityAt } });
@@ -1470,9 +1493,8 @@ app.post("/api/items/:canonicalId/deck", async (req, res) => {
   const item = itemFromAnyStore(id);
   if (!item) return res.status(404).json({ error: "Item no encontrado." });
   const activityAt = new Date().toISOString();
-  const backlogExisting = findBacklogItemByCanonicalId(id);
-  if (backlogExisting) await backlogStore.remove(backlogExisting.source, backlogExisting.id).catch(() => null);
-  await completionStore.removeByCanonicalId(id).catch(() => null);
+  await removeAllMatchingFromBacklog(id);
+  await removeAllMatchingCompletions(id);
   const deckItem = normalizeDeckItem({ ...item, completedAt: null, states: { ...(item.states || {}), completed: false, inBacklog: false, inOnDeck: true }, lastActivityAt: activityAt, updatedAt: activityAt });
   const check = await enforceDeckLimitOrReplace(deckItem, req.body?.replaceId || "");
   if (!check.ok) return res.status(409).json({ error: "Límite de On Deck alcanzado.", ...check.payload });
@@ -1486,9 +1508,9 @@ app.post("/api/items/:canonicalId/deck", async (req, res) => {
 });
 app.delete("/api/items/:canonicalId/deck", async (req, res) => {
   const id = decodeURIComponent(req.params.canonicalId);
-  const existing = findOnDeckItemByCanonicalId(id);
-  if (!existing) return res.status(404).json({ error: "Item no encontrado en On Deck." });
-  const removed = await onDeckStore.remove(existing.id);
+  const removedItems = await removeAllMatchingFromDeck(id);
+  const removed = removedItems[0] || null;
+  if (!removed) return res.status(404).json({ error: "Item no encontrado en On Deck." });
   const activityAt = new Date().toISOString();
   await itemRegistryStore.upsert({ ...removed, lastActivityAt: activityAt }, { inOnDeck: false, turnedAt: null, lastActivityAt: activityAt, activity: { eventType: "manual_deck_remove", title: removed.title, subtitle: removed.subtitle, activityAt } });
   await syncItemRegistryNow("remove-deck");

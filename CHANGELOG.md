@@ -1,5 +1,19 @@
 # Changelog
 
+## 7.1.3
+
+- La segmentación rápida de Base de datos se muestra antes del botón de filtros.
+- Botones de segmento más compactos para reducir el ancho de la cabecera.
+- Los contadores se calculan tras la primera carga de datos y ya no aparecen a cero al refrescar.
+
+## 7.1.2
+
+- Añadida segmentación rápida exclusiva de Base de datos: Sin organizar, Backlog, On Deck y Colección.
+- Los segmentos se pueden encender y apagar; siempre queda al menos uno activo.
+- Corregida la identidad equivalente de Plex al retirar elementos de Backlog u On Deck.
+- Backlog y On Deck pasan a ser mutuamente excluyentes también para aliases históricos de Plex.
+- La sincronización del registro resuelve la pertenencia por identidad estable y da prioridad a Colección, después On Deck y después Backlog.
+
 ## 7.1.1
 
 - Corregida la caché de imágenes Plex para series, temporadas y episodios, incluyendo assets de la serie principal.
