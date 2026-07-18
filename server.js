@@ -21,6 +21,7 @@ import { CollectionGroupStore } from "./src/collection-group-store.js";
 import { OnDeckStore } from "./src/on-deck-store.js";
 import { ItemRegistryStore } from "./src/item-registry-store.js";
 import { JournalStore } from "./src/journal-store.js";
+import { createLibraryBackup, createSettingsBackup, applyLibraryBackup, validateSettingsBackup, clearLibrary } from "./src/backup-service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -53,7 +54,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`BBQueue v6.14.2 escuchando en ${host}:${port}`);
+  console.log(`BBQueue v6.15.0 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -159,7 +160,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "BBQueue",
-    version: "v6.14.2",
+    version: "v6.15.0",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -439,7 +440,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQueue", version: "v6.14.2", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQueue", version: "v6.15.0", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -479,8 +480,57 @@ app.get("/api/export", async (_req, res) => {
   const payload = await buildExportPayload();
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename=\"bbqueue-backup-${stamp}.json\"`);
+  res.setHeader("Content-Disposition", `attachment; filename="bbqueue-legacy-backup-${stamp}.json"`);
   res.send(JSON.stringify(payload, null, 2));
+});
+
+function backupFilename(kind) { return `bbqueue-${kind}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`; }
+function requireConfirmation(req, expected) {
+  if (String(req.body?.confirmation || '') !== expected) { const error = new Error(`Escribe ${expected} para confirmar.`); error.status = 400; throw error; }
+}
+app.get('/api/backups/library', async (req, res) => {
+  const payload = await createLibraryBackup({ dataDir: DATA_DIR, itemRegistryStore, backlogStore, onDeckStore, completionStore, collectionGroupStore, journalStore, includeAssets: req.query.assets !== '0' });
+  res.setHeader('Content-Type','application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${backupFilename('library')}"`);
+  res.send(JSON.stringify(payload));
+});
+app.get('/api/backups/settings', async (req, res) => {
+  const payload = await createSettingsBackup({ dataDir: DATA_DIR, settings: publicSettings(), state: stateStore.get(), includeSecrets: req.query.secrets === '1' });
+  res.setHeader('Content-Type','application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${backupFilename('settings')}"`);
+  res.send(JSON.stringify(payload, null, 2));
+});
+app.post('/api/backups/library/import', async (req, res) => {
+  const result = await applyLibraryBackup({ backup: req.body?.backup, mode: req.body?.mode, dataDir: DATA_DIR, itemRegistryStore, backlogStore, onDeckStore, completionStore, collectionGroupStore, journalStore });
+  hub.broadcast({ type:'library:reloaded', payload:{ ok:true, ...result } });
+  res.json({ ok:true, ...result, counts:dataCounts() });
+});
+app.post('/api/backups/settings/import', async (req, res) => {
+  const backup = validateSettingsBackup(req.body?.backup);
+  const next = await settingsStore.replace(backup.settings);
+  if (typeof backup.customCss === 'string') { const dir=path.join(DATA_DIR,'custom-css'); await fs.mkdir(dir,{recursive:true}); await fs.writeFile(path.join(dir,'global.css'),backup.customCss,'utf8'); }
+  if (backup.uiState) await stateStore.update(backup.uiState);
+  plex.setConfig(next.plex || {});
+  hub.broadcast({ type:'settings:update', payload:next });
+  hub.broadcast({ type:'custom-css:update', payload:{name:'global'} });
+  res.json({ ok:true, settings:next });
+});
+app.post('/api/reset/library', async (req, res) => {
+  requireConfirmation(req, 'BORRAR BIBLIOTECA');
+  await clearLibrary({ dataDir:DATA_DIR, itemRegistryStore, backlogStore, onDeckStore, completionStore, collectionGroupStore, journalStore });
+  hub.broadcast({ type:'library:reloaded', payload:{ok:true, reset:true} });
+  res.json({ok:true});
+});
+app.post('/api/reset/settings', async (req, res) => {
+  requireConfirmation(req, 'REINICIAR CONFIGURACION');
+  const next=await settingsStore.reset(); await stateStore.update({activeView:next.display?.defaultView || 'backlog', selectedCollectionId:null, privacyLocked:false});
+  await fs.rm(path.join(DATA_DIR,'custom-css'),{recursive:true,force:true}); plex.setConfig(next.plex || {}); hub.broadcast({type:'settings:update',payload:next}); hub.broadcast({type:'custom-css:update',payload:{name:'global'}}); res.json({ok:true,settings:next});
+});
+app.post('/api/reset/all', async (req, res) => {
+  requireConfirmation(req, 'REINICIAR TODO');
+  await clearLibrary({ dataDir:DATA_DIR, itemRegistryStore, backlogStore, onDeckStore, completionStore, collectionGroupStore, journalStore });
+  await store.clear(); const next=await settingsStore.reset(); await stateStore.update({activeView:next.display?.defaultView || 'backlog', selectedCollectionId:null,lastPlex:null,lastGame:null,lastCurrent:null,lastNotificationsViewedAt:null,privacyLocked:false});
+  await fs.rm(path.join(DATA_DIR,'custom-css'),{recursive:true,force:true}); runtime.activeView=next.display?.defaultView || 'backlog'; runtime.currentContent=null; runtime.game=null; hub.broadcast({type:'state:reload',payload:{ok:true}}); res.json({ok:true});
 });
 
 

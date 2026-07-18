@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.15.0
+
+- Backups separados y versionados para biblioteca y configuración.
+- Exportación e importación de assets con verificación SHA-256.
+- Modos reemplazar y fusionar para la biblioteca.
+- Exportación opcional de credenciales.
+- Acciones seguras para borrar biblioteca, restablecer configuración o reiniciar todo.
+- Documentación del contrato que permitirá migrar a SQLite sin acoplar los backups al almacenamiento.
+
 ## 6.14.4
 
 - La API de ingestión persiste el contenido actual para reproducciones de Playnite y Plex.

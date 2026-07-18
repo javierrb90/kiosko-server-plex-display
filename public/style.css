@@ -5344,3 +5344,5 @@ button.kiosko-list__row:hover {
 .kiosko-list__thumb>span{font-weight:900;color:rgba(255,255,255,.6)}
 .kiosko-list__title{min-width:0}
 @media(max-width:760px){.kiosko-list__row{grid-template-columns:42px minmax(0,1fr)!important}.kiosko-list__row span:nth-child(n+3){display:none!important}.kiosko-list__thumb{display:grid!important}}
+.settings-fieldset--danger{border-color:color-mix(in srgb,var(--danger,#ef5350) 42%,transparent);background:color-mix(in srgb,var(--danger,#ef5350) 7%,transparent)}
+.ui-file-action{cursor:pointer;display:inline-flex;align-items:center;justify-content:center}

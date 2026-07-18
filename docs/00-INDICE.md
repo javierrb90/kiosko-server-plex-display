@@ -12,3 +12,5 @@
 10. [Auditoría técnica](10-AUDITORIA-TECNICA.md)
 11. [Plan de migración a SQLite](11-PLAN-SQLITE.md)
 12. [Objetivos futuros](12-ROADMAP.md)
+
+13. [Backups, importación y reinicio](13-BACKUPS-Y-REINICIO.md)

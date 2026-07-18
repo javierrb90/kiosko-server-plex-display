@@ -26,7 +26,7 @@ Empieza por [`docs/00-INDICE.md`](docs/00-INDICE.md).
 
 ## Estado del proyecto
 
-- Versión actual: **6.14.3**.
+- Versión actual: **6.15.0**.
 - Persistencia actual: JSON.
 - Arquitectura: servidor Express monolítico, almacenes separados, frontend modular sin framework.
 - Próxima prioridad: SQLite, separación de rutas/servicios y pruebas de regresión.

@@ -892,14 +892,14 @@ function bindColorFieldPreviews(root) {
     update();
   });
 }
-async function downloadExport() {
-  const response = await fetch('/api/export');
+async function downloadBackup(endpoint, fallbackName) {
+  const response = await fetch(endpoint);
   if (!response.ok) throw new Error('No se pudo exportar el backup');
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const contentDisposition = response.headers.get('content-disposition') || '';
   const match = contentDisposition.match(/filename="?([^";]+)"?/i);
-  const fileName = match?.[1] || `bbqueue-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  const fileName = match?.[1] || fallbackName || `bbqueue-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName;
@@ -908,7 +908,21 @@ async function downloadExport() {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
-
+async function readJsonFile(file) {
+  if (!file) throw new Error('Selecciona un archivo JSON.');
+  if (file.size > 250 * 1024 * 1024) throw new Error('El backup supera el límite de 250 MB.');
+  try { return JSON.parse(await file.text()); }
+  catch { throw new Error('El archivo no contiene JSON válido.'); }
+}
+async function importBackup(kind, file, mode = 'replace') {
+  const backup = await readJsonFile(file);
+  return api(`/api/backups/${kind}/import`, { method:'POST', body:JSON.stringify({ backup, mode }) });
+}
+async function runDestructiveAction(endpoint, phrase) {
+  const confirmation = window.prompt(`Esta acción no se puede deshacer. Escribe exactamente: ${phrase}`);
+  if (confirmation !== phrase) throw new Error('Confirmación cancelada o incorrecta.');
+  return api(endpoint, { method:'POST', body:JSON.stringify({ confirmation }) });
+}
 
 function renderCollectionGroupRows(groups = []) {
   return groups.length ? groups.map(group => `<article class="collection-group-row" data-group-id="${escapeAttr(group.id)}"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.mode || 'manual')} · ${(group.rules || []).length} regla(s)</small></div><button type="button" class="ui-action-button ui-action-button--danger" data-delete-group="${escapeAttr(group.id)}">Eliminar</button></article>`).join('') : '<p class="settings-help">Todavía no hay grupos creados.</p>';
@@ -1067,11 +1081,20 @@ async function openSettingsModal() {
         ${collectionGroupsSettingsMarkup(state.collectionGroups || [])}
       </section>
       <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Datos y mantenimiento</h3>
-        <div class="settings-actions-grid">
-          <button type="button" class="ui-action-button" data-export-backup>Exportar backup</button>
-          <button type="button" class="ui-action-button" data-refresh-css>Recargar CSS</button>
+        <div class="settings-fieldset"><h4>Biblioteca</h4>
+          <p class="settings-help">Incluye ítems, espacios, grupos, actividad, calificaciones, reseñas, diario y assets locales. Puede generar un archivo grande.</p>
+          <div class="settings-actions-grid"><button type="button" class="ui-action-button" data-export-library>Exportar biblioteca</button><label class="ui-action-button ui-file-action">Importar biblioteca<input type="file" accept="application/json,.json" data-import-library hidden></label></div>
+          <label class="ui-field"><span>Modo de importación</span><select data-library-import-mode><option value="replace">Reemplazar biblioteca actual</option><option value="merge">Fusionar por identificador canónico</option></select></label>
         </div>
-        <p class="settings-help">El backup incluye ajustes, estado, Backlog, Colección, notificaciones y CSS global.</p>
+        <div class="settings-fieldset"><h4>Configuración</h4>
+          <p class="settings-help">Incluye opciones, apariencia, espacios, integraciones y CSS. Las credenciales solo se exportan cuando lo indicas.</p>
+          <label class="ui-check"><input type="checkbox" data-export-secrets> Incluir credenciales y tokens</label>
+          <div class="settings-actions-grid"><button type="button" class="ui-action-button" data-export-settings>Exportar configuración</button><label class="ui-action-button ui-file-action">Importar configuración<input type="file" accept="application/json,.json" data-import-settings hidden></label><button type="button" class="ui-action-button" data-refresh-css>Recargar CSS</button></div>
+        </div>
+        <div class="settings-fieldset settings-fieldset--danger"><h4>Zona de reinicio</h4>
+          <p class="settings-help">Exporta un backup antes de continuar. Las acciones requieren escribir una frase de confirmación.</p>
+          <div class="settings-actions-grid"><button type="button" class="ui-action-button ui-action-button--danger" data-reset-library>Borrar biblioteca</button><button type="button" class="ui-action-button ui-action-button--danger" data-reset-settings>Restablecer configuración</button><button type="button" class="ui-action-button ui-action-button--danger" data-reset-all>Restablecer todo</button></div>
+        </div>
       </section>
       <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Debug</h3>
         <div class="debug-actions"><button type="button" data-debug="notification">Notificación</button><button type="button" data-debug="plex">Plex</button><button type="button" data-debug="game">Playnite</button></div>
@@ -1299,13 +1322,11 @@ async function openSettingsModal() {
       catch (error) { ui.toast('Error en debug', { detail: error.message || String(error) }); }
       finally { btn.disabled = false; }
     }));
-    modalRoot.querySelector('[data-export-backup]')?.addEventListener('click', async event => {
-      const btn = event.currentTarget;
-      btn.disabled = true;
-      try { await downloadExport(); ui.toast('Backup exportado'); }
-      catch (error) { ui.toast('No se pudo exportar', { detail: error.message || String(error) }); }
-      finally { btn.disabled = false; }
-    });
+    modalRoot.querySelector('[data-export-library]')?.addEventListener('click', async event => { const btn=event.currentTarget; btn.disabled=true; try { await downloadBackup('/api/backups/library?assets=1','bbqueue-library.json'); ui.toast('Biblioteca exportada'); } catch(error){ ui.toast('No se pudo exportar',{detail:error.message||String(error)}); } finally{btn.disabled=false;} });
+    modalRoot.querySelector('[data-export-settings]')?.addEventListener('click', async event => { const btn=event.currentTarget; btn.disabled=true; const secrets=modalRoot.querySelector('[data-export-secrets]')?.checked?'1':'0'; try { await downloadBackup(`/api/backups/settings?secrets=${secrets}`,'bbqueue-settings.json'); ui.toast('Configuración exportada'); } catch(error){ ui.toast('No se pudo exportar',{detail:error.message||String(error)}); } finally{btn.disabled=false;} });
+    modalRoot.querySelector('[data-import-library]')?.addEventListener('change', async event => { const input=event.currentTarget; try { const mode=modalRoot.querySelector('[data-library-import-mode]')?.value||'replace'; const result=await importBackup('library',input.files?.[0],mode); ui.toast('Biblioteca importada',{detail:`${result.counts?.itemRegistry?.active || result.summary?.items || 0} ítems`}); setTimeout(()=>location.reload(),700); } catch(error){ ui.toast('No se pudo importar',{detail:error.message||String(error)}); } finally{input.value='';} });
+    modalRoot.querySelector('[data-import-settings]')?.addEventListener('change', async event => { const input=event.currentTarget; try { await importBackup('settings',input.files?.[0]); ui.toast('Configuración importada'); setTimeout(()=>location.reload(),700); } catch(error){ ui.toast('No se pudo importar',{detail:error.message||String(error)}); } finally{input.value='';} });
+    for (const [selector,endpoint,phrase,done] of [['[data-reset-library]','/api/reset/library','BORRAR BIBLIOTECA','Biblioteca eliminada'],['[data-reset-settings]','/api/reset/settings','REINICIAR CONFIGURACION','Configuración restablecida'],['[data-reset-all]','/api/reset/all','REINICIAR TODO','BBQueue restablecido']]) modalRoot.querySelector(selector)?.addEventListener('click',async event=>{ const btn=event.currentTarget; btn.disabled=true; try{await runDestructiveAction(endpoint,phrase); ui.toast(done); setTimeout(()=>location.reload(),700);}catch(error){ui.toast('Acción cancelada',{detail:error.message||String(error)});}finally{btn.disabled=false;} });
     modalRoot.querySelector('[data-refresh-css]')?.addEventListener('click', () => { refreshCustomCss(); ui.toast('CSS recargado'); });
   }, 0);
   const result = await modalPromise;
