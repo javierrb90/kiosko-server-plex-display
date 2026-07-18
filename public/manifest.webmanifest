@@ -1,6 +1,6 @@
 {
-  "name": "BBQueue",
-  "short_name": "BBQueue",
+  "name": "BBQ",
+  "short_name": "BBQ",
   "description": "Biblioteca, Backlog, On Deck y Colección para Plex y Playnite.",
   "start_url": "/",
   "scope": "/",

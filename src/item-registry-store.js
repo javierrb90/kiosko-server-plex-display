@@ -1,8 +1,21 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import { SqliteDatabase } from "./database/sqlite-database.js";
 
 function now() { return new Date().toISOString(); }
+
+function scrubEmbeddedDataUris(value) {
+  if (typeof value === "string") return /^data:(?:image|video)\//i.test(value) ? null : value;
+  if (Array.isArray(value)) return value.map(scrubEmbeddedDataUris).filter(value => value !== null);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, scrubEmbeddedDataUris(entry)]).filter(([, entry]) => entry !== null));
+}
+
+function databaseAssetReference(value) {
+  const text = value == null ? null : String(value);
+  return text && /^data:(?:image|video)\//i.test(text) ? null : text;
+}
+function safeJson(value, fallback = {}) { try { return value ? JSON.parse(value) : fallback; } catch { return fallback; } }
 function clean(value) { return String(value ?? "").trim(); }
 function slug(value) {
   return clean(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item";
@@ -140,7 +153,7 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
   if (states.completed) states.charred = false;
   return {
     ...(existing || {}),
-    id: existing.id || input.registryId || input.id || crypto.randomUUID(),
+    id: existing.id || input.registryId || crypto.randomUUID(),
     canonicalId,
     entityId: entityIdFor(input, canonicalId),
     parentEntityId: plexSeriesKeyFor(input) && plexSeriesKeyFor(input) !== canonicalId ? plexSeriesKeyFor(input) : (existing.parentEntityId || null),
@@ -172,9 +185,7 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
 export class ItemRegistryStore {
   constructor(dataDir) {
     this.dataDir = dataDir;
-    this.itemsPath = path.join(dataDir, "items.json");
-    this.activityPath = path.join(dataDir, "item-activity.json");
-    this.backlogEntriesPath = path.join(dataDir, "backlog-entries.json");
+    this.sqlite = new SqliteDatabase(dataDir);
     this.items = [];
     this.activity = [];
     this.backlogEntries = [];
@@ -186,31 +197,70 @@ export class ItemRegistryStore {
   }
 
   async init() {
-    await fs.mkdir(this.dataDir, { recursive: true });
-    this.items = await this.readItems();
-    this.activity = await this.readArrayFile(this.activityPath, "activity");
-    this.backlogEntries = await this.readArrayFile(this.backlogEntriesPath, "entries");
+    this.sqlite.init();
+    this.loadFromSqlite();
   }
 
-  async readItems() {
-    try {
-      const parsed = JSON.parse(await fs.readFile(this.itemsPath, "utf8"));
-      const rows = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.items) ? parsed.items : []);
-      return rows.map(row => normalizeItem(row, row, { states: row.states || {} }));
-    } catch (error) {
-      if (error.code !== "ENOENT") console.error("No se pudo cargar items.json:", error);
-      return [];
-    }
+  loadFromSqlite() {
+    const db = this.sqlite.db;
+    this.items = db.prepare("SELECT * FROM items ORDER BY COALESCE(last_activity_at, updated_at) DESC").all().map(row => ({
+      id: row.id,
+      canonicalId: row.canonical_id,
+      entityId: row.entity_id,
+      parentEntityId: row.parent_entity_id,
+      source: row.source,
+      type: row.type,
+      collectionType: row.collection_type,
+      title: row.title,
+      detail: row.detail || "",
+      subtitle: row.detail || "",
+      poster: row.poster,
+      backdrop: row.backdrop,
+      year: row.year || "",
+      ratingKey: row.rating_key,
+      gameId: row.game_id,
+      rating: row.rating,
+      firstSeenAt: row.first_seen_at,
+      lastActivityAt: row.last_activity_at,
+      completedAt: row.completed_at,
+      states: {
+        inBacklog: Boolean(row.in_backlog),
+        inOnDeck: Boolean(row.in_on_deck),
+        completed: Boolean(row.completed),
+        charred: Boolean(row.charred),
+        turnedAt: row.turned_at || null
+      },
+      status: row.status,
+      latestActivityId: row.latest_activity_id,
+      updatedAt: row.updated_at,
+      createdAt: row.created_at,
+      deletedAt: row.deleted_at,
+      metadata: safeJson(row.metadata_json),
+      meta: safeJson(row.metadata_json)
+    }));
+    this.activity = db.prepare("SELECT * FROM activities ORDER BY activity_at DESC LIMIT 1000").all().map(row => ({
+      id: row.id,
+      externalKey: row.external_key,
+      itemCanonicalId: row.item_canonical_id,
+      source: row.source,
+      eventType: row.event_type,
+      activityAt: row.activity_at,
+      title: row.title || "",
+      subtitle: row.subtitle || "",
+      ratingKey: row.rating_key,
+      metadata: safeJson(row.metadata_json),
+      createdAt: row.created_at
+    }));
+    this.backlogEntries = db.prepare("SELECT * FROM backlog_entries ORDER BY created_at DESC LIMIT 500").all().map(row => ({
+      id: row.id,
+      itemCanonicalId: row.item_canonical_id,
+      activityId: row.activity_id,
+      reason: row.reason,
+      createdAt: row.created_at,
+      dismissedAt: row.dismissed_at
+    }));
   }
-  async readArrayFile(filePath, key) {
-    try {
-      const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
-      return Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.[key]) ? parsed[key] : []);
-    } catch (error) {
-      if (error.code !== "ENOENT") console.error(`No se pudo cargar ${path.basename(filePath)}:`, error);
-      return [];
-    }
-  }
+
 
   list() { return this.items.filter(item => !item.deletedAt); }
   all() { return this.items; }
@@ -373,21 +423,75 @@ export class ItemRegistryStore {
   }
 
   async persist() {
-    this.pending = {
-      items: { schemaVersion: 2, items: this.items },
-      activity: { schemaVersion: 1, activity: this.activity.slice(0, 1000) },
-      backlogEntries: { schemaVersion: 1, entries: this.backlogEntries.slice(0, 500) }
-    };
-    if (this.writeTimer) return;
-    this.writeTimer = setTimeout(() => {
-      this.writeTimer = null;
-      const snapshot = this.pending;
-      this.writeQueue = this.writeQueue.then(async () => {
-        await fs.writeFile(this.itemsPath, JSON.stringify(snapshot.items), "utf8");
-        await fs.writeFile(this.activityPath, JSON.stringify(snapshot.activity), "utf8");
-        await fs.writeFile(this.backlogEntriesPath, JSON.stringify(snapshot.backlogEntries), "utf8");
-      }).catch(error => console.error("[persist] item database error:", error));
-    }, Number(process.env.PERSIST_DEBOUNCE_MS || 350));
+    const items = this.items;
+    const activity = this.activity.slice(0, 1000);
+    const backlogEntries = this.backlogEntries.slice(0, 500);
+    this.sqlite.transaction(() => {
+      const db = this.sqlite.db;
+      const upsertItem = db.prepare(`
+        INSERT INTO items (
+          id, canonical_id, entity_id, parent_entity_id, source, type, collection_type, title, detail,
+          poster, backdrop, year, rating_key, game_id, rating, first_seen_at, last_activity_at,
+          completed_at, status, in_backlog, in_on_deck, completed, charred, turned_at,
+          latest_activity_id, metadata_json, created_at, updated_at, deleted_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(canonical_id) DO UPDATE SET
+          entity_id=excluded.entity_id, parent_entity_id=excluded.parent_entity_id,
+          source=excluded.source, type=excluded.type, collection_type=excluded.collection_type,
+          title=excluded.title, detail=excluded.detail, poster=excluded.poster, backdrop=excluded.backdrop,
+          year=excluded.year, rating_key=excluded.rating_key, game_id=excluded.game_id, rating=excluded.rating,
+          first_seen_at=excluded.first_seen_at, last_activity_at=excluded.last_activity_at,
+          completed_at=excluded.completed_at, status=excluded.status, in_backlog=excluded.in_backlog,
+          in_on_deck=excluded.in_on_deck, completed=excluded.completed, charred=excluded.charred,
+          turned_at=excluded.turned_at, latest_activity_id=excluded.latest_activity_id,
+          metadata_json=excluded.metadata_json, updated_at=excluded.updated_at, deleted_at=excluded.deleted_at
+      `);
+      const seenItems = [];
+      for (const item of items) {
+        seenItems.push(item.canonicalId);
+        upsertItem.run(
+          item.id, item.canonicalId, item.entityId || null, item.parentEntityId || null,
+          item.source || "manual", item.type || "item", item.collectionType || "series", item.title || "Sin título",
+          item.detail ?? item.subtitle ?? "", databaseAssetReference(item.poster), databaseAssetReference(item.backdrop), String(item.year || ""),
+          item.ratingKey == null ? null : String(item.ratingKey), item.gameId == null ? null : String(item.gameId),
+          item.rating == null ? null : Number(item.rating), item.firstSeenAt || null, item.lastActivityAt || null,
+          item.completedAt || null, item.status || "known", item.states?.inBacklog ? 1 : 0,
+          item.states?.inOnDeck ? 1 : 0, item.states?.completed ? 1 : 0, item.states?.charred ? 1 : 0,
+          item.states?.turnedAt || null, item.latestActivityId || null,
+          JSON.stringify(scrubEmbeddedDataUris(item.metadata || item.meta || {})), item.createdAt || item.firstSeenAt || item.updatedAt || now(),
+          item.updatedAt || now(), item.deletedAt || null
+        );
+      }
+      if (seenItems.length === 0) db.exec("DELETE FROM items");
+      else {
+        const placeholders = seenItems.map(() => "?").join(",");
+        db.prepare(`DELETE FROM items WHERE canonical_id NOT IN (${placeholders})`).run(...seenItems);
+      }
+
+      db.exec("DELETE FROM activities");
+      const insertActivity = db.prepare(`INSERT OR IGNORE INTO activities
+        (id, external_key, item_canonical_id, source, event_type, activity_at, title, subtitle, rating_key, metadata_json, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      for (const entry of activity) {
+        if (!items.some(item => item.canonicalId === entry.itemCanonicalId)) continue;
+        insertActivity.run(entry.id, String(entry.externalKey || entry.id), entry.itemCanonicalId, entry.source || "manual",
+          entry.eventType || "activity", entry.activityAt || entry.createdAt || now(), entry.title || "", entry.subtitle || "",
+          entry.ratingKey == null ? null : String(entry.ratingKey), JSON.stringify(scrubEmbeddedDataUris(entry.metadata || {})), entry.createdAt || now());
+      }
+
+      db.exec("DELETE FROM backlog_entries");
+      const insertEntry = db.prepare(`INSERT OR IGNORE INTO backlog_entries
+        (id, item_canonical_id, activity_id, reason, created_at, dismissed_at) VALUES (?,?,?,?,?,?)`);
+      for (const entry of backlogEntries) {
+        if (!items.some(item => item.canonicalId === entry.itemCanonicalId)) continue;
+        insertEntry.run(entry.id, entry.itemCanonicalId, String(entry.activityId || entry.id), entry.reason || "recent", entry.createdAt || now(), entry.dismissedAt || null);
+      }
+    });
+  }
+
+  close() {
+    try { this.sqlite.db?.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}
+    this.sqlite.close();
   }
 
   diagnostics() {
@@ -401,6 +505,6 @@ export class ItemRegistryStore {
       if (item.states?.completed) counts.completed += 1;
       if (item.status === "known") counts.known += 1;
     }
-    return { schema: "json-database-core-v2", counts, lastSyncAt: this.lastSyncAt, lastSyncReason: this.lastSyncReason };
+    return { schema: "sqlite-core-v1", database: path.basename(this.sqlite.filePath), integrity: this.sqlite.integrityCheck(), counts, lastSyncAt: this.lastSyncAt, lastSyncReason: this.lastSyncReason };
   }
 }

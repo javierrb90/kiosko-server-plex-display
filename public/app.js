@@ -9,7 +9,7 @@ import { createDatabaseView } from "/views/database.js";
 import { openItemDetail } from "/core/item-detail.js";
 
 const debug = () => {};
-const debugError = (...args) => console.error('[BBQueue UI]', ...args);
+const debugError = (...args) => console.error('[BBQ UI]', ...args);
 const settingsTrace = () => {}; // trazas desactivadas en build estable
 
 const appRoot = document.getElementById('app');
@@ -863,6 +863,36 @@ notificationsOverlay.addEventListener('click', event => {
   }
 });
 document.addEventListener('kiosk:open-notifications', () => openNotificationsOverlay().catch(debugError));
+document.addEventListener('bbqueue:follow-item', async event => {
+  const detail = event.detail || {};
+  const destination = detail.id;
+  const item = detail.item || {};
+  if (!destination || !['database','backlog','on-deck','collections'].includes(destination)) return;
+  const workspaceKey = destination === 'on-deck' ? 'onDeck' : destination;
+  const itemType = String(item.collectionType || '').trim();
+  let typeActivated = false;
+  if (itemType) {
+    const currentWorkspace = state.settings?.workspaces?.[workspaceKey] || {};
+    const visibleTypes = Array.isArray(currentWorkspace.visibleTypes) ? [...currentWorkspace.visibleTypes] : [];
+    if (!visibleTypes.includes(itemType)) {
+      visibleTypes.push(itemType);
+      try {
+        state.settings = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ workspaces: { [workspaceKey]: { ...currentWorkspace, visibleTypes } } }) });
+        typeActivated = true;
+        for (const viewId of ['database','backlog','on-deck','collections','current-content']) views.update(viewId, { settings: state.settings });
+      } catch (error) {
+        ui.toast('No se pudo activar el tipo en el espacio', { detail: error.message || '' });
+      }
+    }
+  }
+  localStorage.setItem('bbqueue:global-search', '');
+  localStorage.setItem('bbqueue:charred-only', '0');
+  window.dispatchEvent(new CustomEvent('bbqueue:global-search', { detail: { value: '', source: 'follow-item' } }));
+  window.dispatchEvent(new CustomEvent('bbqueue:charred-filter', { detail: false }));
+  document.dispatchEvent(new CustomEvent('bbqueue:reveal-item', { detail }));
+  navigate(destination, { reason: 'follow item' });
+  if (typeActivated) ui.toast(`${itemType === 'movies' ? 'Películas' : itemType === 'series' ? 'Series' : itemType === 'games' ? 'Juegos' : itemType} se ha activado en este espacio`);
+});
 document.addEventListener('kiosk:navigate', event => {
   const id = event.detail?.id;
   if (id === 'notifications') return openNotificationsOverlay().catch(debugError);
@@ -1019,7 +1049,7 @@ async function openSettingsModal() {
 
       <section data-settings-panel="workspaces" class="settings-tab-panel"><h3>Organización por espacio</h3>
         <p class="settings-help">Los espacios son fijos. Aquí solo defines su presentación y organización predeterminadas.</p>
-        ${[['database','Base de datos','Todos los items'],['backlog','Backlog','Pertenencia manual'],['onDeck','On Deck','Pertenencia manual · límite por tipo'],['collections','Colección','Items marcados como terminados']].map(([key,label,rule]) => { const ws=s.workspaces?.[key]||{}; const visibleTypes=new Set(ws.visibleTypes||['games','movies','series']); return `<article class="workspace-rule-card"><header><div><strong>${label}</strong><small>${rule}</small></div></header><div class="workspace-type-settings"><span>Tipos visibles</span><div class="controls-modal__checks">${[{id:'games',singular:'Juego',plural:'Juegos'},{id:'movies',singular:'Película',plural:'Películas'},{id:'series',singular:'Serie',plural:'Series'},...(s.itemTypes||[])].filter((type,index,rows)=>type?.id&&rows.findIndex(row=>row.id===type.id)===index).map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-visible-type="${key}:${escapeAttr(type.id)}" ${visibleTypes.has(type.id)?'checked':''}><span>${escapeHtml(type.plural||type.singular||type.id)}</span></label>`).join('')}</div></div><div class="workspace-rule-grid"><label class="ui-field"><span>Agrupación</span><select data-workspace-setting="${key}.grouping"><option value="none" ${selected('none',ws.grouping||'none')}>Sin agrupación</option><option value="lastActivity" ${selected('lastActivity',ws.grouping)}>Última actividad</option><option value="completedAt" ${selected('completedAt',ws.grouping)}>Fecha de finalización</option><option value="type" ${selected('type',ws.grouping)}>Tipo</option><option value="group" ${selected('group',ws.grouping)}>Grupo</option></select></label><label class="ui-field"><span>Orden</span><select data-workspace-setting="${key}.sort"><option value="lastActivityAt" ${selected('lastActivityAt',ws.sort||'lastActivityAt')}>Última actividad</option><option value="title" ${selected('title',ws.sort)}>Título</option><option value="rating" ${selected('rating',ws.sort)}>Calificación</option><option value="completedAt" ${selected('completedAt',ws.sort)}>Finalización</option></select></label><label class="ui-field"><span>Diseño</span><select data-workspace-setting="${key}.cardFormat"><option value="simple" ${selected('simple',ws.cardFormat)}>Simple</option><option value="standard" ${selected('standard',ws.cardFormat||'standard')}>Normal</option></select></label><label class="ui-field"><span>Tamaño</span><select data-workspace-setting="${key}.cardSize"><option value="small" ${selected('small',ws.cardSize)}>Pequeño</option><option value="medium" ${selected('medium',ws.cardSize||'medium')}>Mediano</option><option value="large" ${selected('large',ws.cardSize)}>Grande</option></select></label></div></article>`; }).join('')}
+        ${[['database','Base de datos','Todos los items'],['backlog','Backlog','Pertenencia manual'],['onDeck','On Deck','Pertenencia manual · límite por tipo'],['collections','Colección','Items marcados como terminados']].map(([key,label,rule]) => { const ws=s.workspaces?.[key]||{}; const visibleTypes=new Set(ws.visibleTypes||['games','movies','series']); return `<article class="workspace-rule-card"><header><div><strong>${label}</strong><small>${rule}</small></div></header><div class="workspace-type-settings"><span>Tipos visibles</span><div class="controls-modal__checks">${[{id:'games',singular:'Juego',plural:'Juegos'},{id:'movies',singular:'Película',plural:'Películas'},{id:'series',singular:'Serie',plural:'Series'},...(s.itemTypes||[])].filter((type,index,rows)=>type?.id&&rows.findIndex(row=>row.id===type.id)===index).map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-visible-type="${key}:${escapeAttr(type.id)}" ${visibleTypes.has(type.id)?'checked':''}><span>${escapeHtml(type.plural||type.singular||type.id)}</span></label>`).join('')}</div></div><div class="workspace-rule-grid"><label class="ui-field"><span>Agrupación</span><select data-workspace-setting="${key}.grouping"><option value="none" ${selected('none',ws.grouping||'none')}>Sin agrupación</option><option value="date" ${selected('date',['lastActivity','completedAt'].includes(ws.grouping)?'date':ws.grouping)}>Fecha</option><option value="type" ${selected('type',ws.grouping)}>Tipo</option><option value="group" ${selected('group',ws.grouping)}>Grupo</option></select></label><label class="ui-field"><span>Organización de fechas</span><select data-workspace-setting="${key}.dateGrouping"><option value="relative" ${selected('relative',ws.dateGrouping||'relative')}>Periodos recientes</option><option value="month" ${selected('month',ws.dateGrouping)}>Mes y año</option><option value="year" ${selected('year',ws.dateGrouping)}>Año</option></select></label><label class="ui-field"><span>Fecha utilizada</span><select data-workspace-setting="${key}.groupingDateField"><option value="lastActivityAt" ${selected('lastActivityAt',ws.grouping==='completedAt'?'completedAt':(ws.groupingDateField||'lastActivityAt'))}>Última actividad</option><option value="completedAt" ${selected('completedAt',ws.grouping==='completedAt'?'completedAt':ws.groupingDateField)}>Finalización</option></select></label><label class="ui-field"><span>Orden</span><select data-workspace-setting="${key}.sort"><option value="lastActivityAt" ${selected('lastActivityAt',ws.sort||'lastActivityAt')}>Última actividad</option><option value="title" ${selected('title',ws.sort)}>Título</option><option value="rating" ${selected('rating',ws.sort)}>Calificación</option><option value="completedAt" ${selected('completedAt',ws.sort)}>Finalización</option></select></label><label class="ui-field"><span>Diseño</span><select data-workspace-setting="${key}.cardFormat"><option value="simple" ${selected('simple',ws.cardFormat)}>Simple</option><option value="standard" ${selected('standard',ws.cardFormat||'standard')}>Normal</option></select></label><label class="ui-field"><span>Tamaño</span><select data-workspace-setting="${key}.cardSize"><option value="small" ${selected('small',ws.cardSize)}>Pequeño</option><option value="medium" ${selected('medium',ws.cardSize||'medium')}>Mediano</option><option value="large" ${selected('large',ws.cardSize)}>Grande</option></select></label></div></article>`; }).join('')}
       </section>
       <section data-settings-panel="grill" class="settings-tab-panel"><h3>Parrilla</h3>${grillSettingsMarkup(s)}</section>
       <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Tema y fondos</h3>
@@ -1160,7 +1190,7 @@ async function openSettingsModal() {
             database: { cardSize: s.views?.database?.cardSize || 'medium', cardFormat: s.views?.database?.cardFormat || 'standard', includeCharred: s.views?.database?.includeCharred === true, itemsPerPage: Number(s.views?.database?.itemsPerPage || 60) }
           },
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
-          workspaces: Object.fromEntries(['database','backlog','onDeck','collections'].map(key => [key, { ...Object.fromEntries(['grouping','sort','cardFormat','cardSize'].map(field => [field, root.querySelector(`[data-workspace-setting="${key}.${field}"]`)?.value])), visibleTypes: [...root.querySelectorAll(`[data-workspace-visible-type^="${key}:"]:checked`)].map(input => input.dataset.workspaceVisibleType.split(':').slice(1).join(':')) }])),
+          workspaces: Object.fromEntries(['database','backlog','onDeck','collections'].map(key => [key, { ...Object.fromEntries(['grouping','dateGrouping','groupingDateField','sort','cardFormat','cardSize'].map(field => [field, root.querySelector(`[data-workspace-setting="${key}.${field}"]`)?.value])), visibleTypes: [...root.querySelectorAll(`[data-workspace-visible-type^="${key}:"]:checked`)].map(input => input.dataset.workspaceVisibleType.split(':').slice(1).join(':')) }])),
           itemTypes: readCustomTypesFromSettings(root),
           notifications: { toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
           plex: { url: get('plexUrl')?.value || '', token: get('plexToken')?.value || '' },
@@ -1326,7 +1356,7 @@ async function openSettingsModal() {
     modalRoot.querySelector('[data-export-settings]')?.addEventListener('click', async event => { const btn=event.currentTarget; btn.disabled=true; const secrets=modalRoot.querySelector('[data-export-secrets]')?.checked?'1':'0'; try { await downloadBackup(`/api/backups/settings?secrets=${secrets}`,'bbqueue-settings.json'); ui.toast('Configuración exportada'); } catch(error){ ui.toast('No se pudo exportar',{detail:error.message||String(error)}); } finally{btn.disabled=false;} });
     modalRoot.querySelector('[data-import-library]')?.addEventListener('change', async event => { const input=event.currentTarget; try { const mode=modalRoot.querySelector('[data-library-import-mode]')?.value||'replace'; const result=await importBackup('library',input.files?.[0],mode); ui.toast('Biblioteca importada',{detail:`${result.counts?.itemRegistry?.active || result.summary?.items || 0} ítems`}); setTimeout(()=>location.reload(),700); } catch(error){ ui.toast('No se pudo importar',{detail:error.message||String(error)}); } finally{input.value='';} });
     modalRoot.querySelector('[data-import-settings]')?.addEventListener('change', async event => { const input=event.currentTarget; try { await importBackup('settings',input.files?.[0]); ui.toast('Configuración importada'); setTimeout(()=>location.reload(),700); } catch(error){ ui.toast('No se pudo importar',{detail:error.message||String(error)}); } finally{input.value='';} });
-    for (const [selector,endpoint,phrase,done] of [['[data-reset-library]','/api/reset/library','BORRAR BIBLIOTECA','Biblioteca eliminada'],['[data-reset-settings]','/api/reset/settings','REINICIAR CONFIGURACION','Configuración restablecida'],['[data-reset-all]','/api/reset/all','REINICIAR TODO','BBQueue restablecido']]) modalRoot.querySelector(selector)?.addEventListener('click',async event=>{ const btn=event.currentTarget; btn.disabled=true; try{await runDestructiveAction(endpoint,phrase); ui.toast(done); setTimeout(()=>location.reload(),700);}catch(error){ui.toast('Acción cancelada',{detail:error.message||String(error)});}finally{btn.disabled=false;} });
+    for (const [selector,endpoint,phrase,done] of [['[data-reset-library]','/api/reset/library','BORRAR BIBLIOTECA','Biblioteca eliminada'],['[data-reset-settings]','/api/reset/settings','REINICIAR CONFIGURACION','Configuración restablecida'],['[data-reset-all]','/api/reset/all','REINICIAR TODO','BBQ restablecido']]) modalRoot.querySelector(selector)?.addEventListener('click',async event=>{ const btn=event.currentTarget; btn.disabled=true; try{await runDestructiveAction(endpoint,phrase); ui.toast(done); setTimeout(()=>location.reload(),700);}catch(error){ui.toast('Acción cancelada',{detail:error.message||String(error)});}finally{btn.disabled=false;} });
     modalRoot.querySelector('[data-refresh-css]')?.addEventListener('click', () => { refreshCustomCss(); ui.toast('CSS recargado'); });
   }, 0);
   const result = await modalPromise;

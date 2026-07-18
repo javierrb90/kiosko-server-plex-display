@@ -1,16 +1,45 @@
-# BBQueue
+# BBQ
 
-BBQueue es una aplicación web local para organizar películas, series, juegos y otros tipos de contenido. Integra Plex/Tautulli y Playnite, mantiene una biblioteca única y ofrece cuatro espacios fijos: Base de datos, Backlog, On Deck y Colección.
+BBQ es una aplicación local para organizar una biblioteca personal mediante cuatro vistas fijas: **Base de datos**, **Backlog**, **On Deck** y **Colección**. La parrilla utiliza la actividad de cada item para señalar qué necesita atención.
 
-## Inicio rápido
+## Persistencia
+
+Todo el estado persistente debe montarse en un único volumen `data`:
+
+```text
+data/
+├── bbqueue.sqlite       # items, actividad y pertenencia a espacios
+├── assets/              # carátulas, fondos e imágenes adjuntas comprimidas
+├── backups/
+└── *.json               # configuración y estados auxiliares
+```
+
+SQLite nunca debe contener imágenes Base64. Las columnas de imagen guardan rutas `/assets/...` o, cuando procede, una URL externa. Toda imagen recibida por Plex, Playnite, la API o una carga manual se normaliza, redimensiona y convierte a WebP antes de escribirse en `data/assets`.
+
+## Instalación
 
 ```bash
-npm install
-cp .env.example .env
+npm ci
 npm start
 ```
 
-La aplicación usa archivos JSON dentro de `DATA_DIR` como persistencia actual. La próxima fase prevista es migrar esa capa a SQLite sin cambiar los contratos públicos de la API.
+Node.js 22 o posterior. La configuración opcional se realiza mediante `.env`; consulta `.env.example`.
+
+## Integraciones
+
+- **Playnite:** `POST /api/v1/events`
+- **Tautulli/Plex:** `POST /webhook/tautulli`
+- **API genérica:** `POST /api/v1/items/upsert` y `POST /api/v1/events`
+- Esquema de ingestión: `GET /api/v1/ingestion/schema`
+
+Las integraciones comparten la misma canalización de ingestión, actividad, assets y eventos WebSocket.
+
+## Feedback visual
+
+- **Dar la vuelta:** giro de la tarjeta real antes de enviar la actualización.
+- **Actividad desde la ficha:** giro corto tras cerrar la ficha.
+- **Mover entre espacios:** navegación, limpieza de filtros, visibilidad del tipo y animación de colocación.
+- **Lista:** iluminación temporal de la fila.
 
 ## Comprobaciones
 
@@ -18,20 +47,13 @@ La aplicación usa archivos JSON dentro de `DATA_DIR` como persistencia actual. 
 npm run check
 ```
 
-La comprobación valida sintaxis JavaScript, rutas HTTP duplicadas y residuos de documentación histórica.
+Valida sintaxis, rutas duplicadas y estructura básica del proyecto.
 
 ## Documentación
 
-Empieza por [`docs/00-INDICE.md`](docs/00-INDICE.md).
-
-## Estado del proyecto
-
-- Versión actual: **6.15.0**.
-- Persistencia actual: JSON.
-- Arquitectura: servidor Express monolítico, almacenes separados, frontend modular sin framework.
-- Próxima prioridad: SQLite, separación de rutas/servicios y pruebas de regresión.
-
-
-## v6.14.3 — Toasts de actividad
-
-Los eventos con `behavior.showToast: true` muestran un toast aunque los toasts del centro de notificaciones estén desactivados. Esta decisión es explícita por evento y no crea notificaciones persistentes. Los eventos `playnite/started` actualizan además el indicador de contenido actual.
+- `docs/ARCHITECTURE.md`
+- `docs/API.md`
+- `docs/PERSISTENCE.md`
+- `docs/BACKUPS.md`
+- `CHANGELOG.md`
+- `RELEASE-v7.0.18.md`

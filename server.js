@@ -54,7 +54,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`BBQueue v6.15.0 escuchando en ${host}:${port}`);
+  console.log(`BBQ v7.0.6 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -92,12 +92,12 @@ async function dataFileDiagnostics() {
     "on-deck.json",
     "completed-items.json",
     "collection-groups.json",
-    "items.json",
-    "item-activity.json",
     "item-journals.json",
-    "backlog-entries.json",
     "notifications.json",
-    "notification-idempotency.json"
+    "notification-idempotency.json",
+    "bbqueue.sqlite",
+    "bbqueue.sqlite-wal",
+    "bbqueue.sqlite-shm"
   ];
   const entries = {};
   for (const name of files) entries[name] = await fileStatSafe(path.join(DATA_DIR, name));
@@ -134,6 +134,51 @@ function runtimeDiagnosticsSummary() {
   };
 }
 
+
+function parseBasicAuth(header = "") {
+  const match = /^Basic\s+(.+)$/i.exec(String(header));
+  if (!match) return null;
+  try {
+    const decoded = Buffer.from(match[1], "base64").toString("utf8");
+    const index = decoded.indexOf(":");
+    return index >= 0 ? { user: decoded.slice(0, index), password: decoded.slice(index + 1) } : null;
+  } catch { return null; }
+}
+function safeEqual(a = "", b = "") {
+  const aa = Buffer.from(String(a)); const bb = Buffer.from(String(b));
+  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+function loadHtpasswdCredential() {
+  const file = process.env.BBQ_HTPASSWD_FILE;
+  if (!file || !fsSync.existsSync(file)) return null;
+  const row = fsSync.readFileSync(file, "utf8").split(/\r?\n/).map(v=>v.trim()).find(v=>v && !v.startsWith("#"));
+  if (!row) return null;
+  const index=row.indexOf(":"); if(index<1) return null;
+  return { user:row.slice(0,index), secret:row.slice(index+1) };
+}
+function authConfigured() { return Boolean(process.env.BBQ_AUTH_USER && process.env.BBQ_AUTH_PASSWORD) || Boolean(loadHtpasswdCredential()); }
+function verifyBasicCredentials(credentials) {
+  if (!credentials) return false;
+  const fileCred = loadHtpasswdCredential();
+  if (fileCred) {
+    if (!safeEqual(credentials.user, fileCred.user)) return false;
+    if (fileCred.secret.startsWith("{SHA}")) {
+      const digest=crypto.createHash("sha1").update(credentials.password).digest("base64");
+      return safeEqual(digest,fileCred.secret.slice(5));
+    }
+    return safeEqual(credentials.password,fileCred.secret);
+  }
+  return safeEqual(credentials.user,process.env.BBQ_AUTH_USER||"") && safeEqual(credentials.password,process.env.BBQ_AUTH_PASSWORD||"");
+}
+function basicAuthMiddleware(req,res,next) {
+  if (!authConfigured()) return next();
+  if (req.path === "/api/health" || req.path.startsWith("/webhook") || req.path.startsWith("/api/v1/")) return next();
+  if (verifyBasicCredentials(parseBasicAuth(req.headers.authorization))) return next();
+  res.setHeader("WWW-Authenticate", 'Basic realm="BBQ", charset="UTF-8"');
+  return res.status(401).send("Autenticación requerida");
+}
+app.use(basicAuthMiddleware);
+
 app.use(express.json({ limit: `${maxPayloadMb}mb` }));
 
 
@@ -159,8 +204,8 @@ app.get("/api/diagnostics", async (_req, res) => {
   const files = await dataFileDiagnostics();
   res.json({
     ok: true,
-    app: "BBQueue",
-    version: "v6.15.0",
+    app: "BBQ",
+    version: "v7.0.6",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -169,7 +214,7 @@ app.get("/api/diagnostics", async (_req, res) => {
     dataDir: DATA_DIR,
     dockerLikely: isProbablyDocker(),
     interfaces: addresses,
-    suggestedUrls: [`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`, ...addresses.map(entry => `http://${entry.address}:${PORT}`)],
+    suggestedUrls: [`http://127.0.1.1:${PORT}`, `http://localhost:${PORT}`, ...addresses.map(entry => `http://${entry.address}:${PORT}`)],
     runtime: runtimeDiagnosticsSummary(),
     config: {
       debugHttp: process.env.DEBUG_HTTP === "1",
@@ -240,6 +285,21 @@ const server = app.listen(PORT, "0.0.0.0", () => {
 });
 const wss = new WebSocketServer({ server });
 const hub = new RealtimeHub(wss);
+
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal}`);
+  for (const client of wss.clients) {
+    try { client.close(1001, "Servidor detenido"); } catch {}
+  }
+  await new Promise(resolve => server.close(resolve));
+  itemRegistryStore.close();
+  process.exit(0);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 function listNotifications(limit) {
   const configuredLimit = settingsStore.get().views?.notifications?.itemsPerPage || 50;
@@ -440,7 +500,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQueue", version: "v6.15.0", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.0.6", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -1615,8 +1675,31 @@ async function persistIngestedCurrentActivity(envelope = {}, item = {}) {
   return current;
 }
 
+function stripEmbeddedBinary(value) {
+  if (typeof value === "string") return /^data:(?:image|video)\//i.test(value) ? null : value;
+  if (Array.isArray(value)) return value.map(stripEmbeddedBinary).filter(entry => entry !== null);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, stripEmbeddedBinary(entry)]).filter(([, entry]) => entry !== null));
+}
+
+async function externalizeIngestionAsset(value, { source = "external", title = "item", kind = "asset" } = {}) {
+  const text = String(value || "").trim();
+  if (!text || text.startsWith("/assets/")) return text || null;
+  if (/^(?:data:(?:image|video)\/|https?:\/\/)/i.test(text)) {
+    const saved = await assetService.saveImage(text, { bucket: source, title: `${title}-${kind}` });
+    return saved.path;
+  }
+  return text;
+}
+
+async function normalizeIngestionAssets(envelope) {
+  const poster = await externalizeIngestionAsset(envelope.assets.poster, { source: envelope.source, title: envelope.title, kind: "poster" });
+  const backdrop = await externalizeIngestionAsset(envelope.assets.backdrop, { source: envelope.source, title: envelope.title, kind: "backdrop" });
+  return { ...envelope, assets: { poster, backdrop }, metadata: stripEmbeddedBinary(envelope.metadata) };
+}
+
 async function ingestExternalItem(rawPayload = {}, { integration = "external", broadcast = true } = {}) {
-  const envelope = normalizeIngestionPayload(rawPayload);
+  const envelope = await normalizeIngestionAssets(normalizeIngestionPayload(rawPayload));
   const current = itemFromAnyStore(envelope.canonicalId);
   if (!current && !envelope.behavior.createIfMissing) {
     return { ok: true, ignored: true, reason: "item_missing", envelope };
@@ -1925,7 +2008,8 @@ async function handleTautulliWebhook(req, res) {
           updateMetadata: true,
           updateDetail: true,
           updateActivity: true,
-          clearCharred: shouldClearCharred(event.isLibraryAdded ? "plexLibraryAdded" : "plexPlayback")
+          clearCharred: shouldClearCharred(event.isLibraryAdded ? "plexLibraryAdded" : "plexPlayback"),
+          showToast: event.startsPlayback && shouldShowPlexEvent(event.rawEvent)
         }
       }, { integration: "tautulli" });
       trackedItem = ingestion.item;

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import sharp from "sharp";
 
 const MIME_EXT = {
   "image/jpeg": ".jpg",
@@ -11,6 +12,32 @@ const MIME_EXT = {
   "video/mp4": ".mp4",
   "video/webm": ".webm"
 };
+
+
+const IMAGE_MIMES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+
+function imageProfile({ title = "", bucket = "" } = {}) {
+  const key = `${bucket} ${title}`.toLowerCase();
+  if (/(backdrop|background|fanart|fondo)/.test(key)) return { width: 1920, height: 1080, quality: 78 };
+  if (/(poster|cover|caratula|carátula)/.test(key)) return { width: 1200, height: 1800, quality: 82 };
+  return { width: 1600, height: 1600, quality: 80 };
+}
+
+async function optimizeImage(buffer, options = {}) {
+  const mime = String(options.mime || "").split(";")[0].toLowerCase();
+  if (!IMAGE_MIMES.has(mime)) return { buffer, ext: options.ext || extFromMime(mime) || ".jpg", mime: mime || "image/jpeg", optimized: false };
+  const profile = imageProfile(options);
+  try {
+    const output = await sharp(buffer, { failOn: "none" })
+      .rotate()
+      .resize({ width: profile.width, height: profile.height, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: profile.quality, effort: 4, smartSubsample: true })
+      .toBuffer();
+    return { buffer: output, ext: ".webp", mime: "image/webp", optimized: true };
+  } catch {
+    return { buffer, ext: options.ext || extFromMime(mime) || ".jpg", mime: mime || "image/jpeg", optimized: false };
+  }
+}
 
 function safeName(value = "asset") {
   return String(value || "asset").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 52) || "asset";
@@ -98,12 +125,13 @@ export class AssetService {
     const response = await fetch(value);
     if (!response.ok) throw new Error(`No se pudo descargar el asset: HTTP ${response.status}`);
     const contentType = String(response.headers.get("content-type") || "").split(";")[0].toLowerCase();
-    const ext = extFromMime(contentType) || extFromUrl(value) || ".jpg";
-    const filename = `${prefix}${safeName(title)}${ext}`;
+    const sourceExt = extFromMime(contentType) || extFromUrl(value) || ".jpg";
+    const sourceBuffer = Buffer.from(await response.arrayBuffer());
+    const optimized = await optimizeImage(sourceBuffer, { bucket, title, ext: sourceExt, mime: contentType || "image/jpeg" });
+    const filename = `${prefix}${safeName(title)}${optimized.ext}`;
     const absPath = path.join(dir, filename);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    await fs.writeFile(absPath, buffer);
-    return { id: hash, path: this.publicPath(absPath), filePath: absPath, mime: contentType || "image/jpeg", size: buffer.length, originalUrl: value, cached: false };
+    await fs.writeFile(absPath, optimized.buffer);
+    return { id: hash, path: this.publicPath(absPath), filePath: absPath, mime: optimized.mime, size: optimized.buffer.length, originalSize: sourceBuffer.length, optimized: optimized.optimized, originalUrl: value, cached: false };
   }
 
   async saveExistingAsset(publicPath, { bucket = "uploads", title = "asset" } = {}) {
@@ -132,11 +160,12 @@ export class AssetService {
     const safeBucket = safeName(bucket);
     const dir = path.join(this.assetsDir, safeBucket);
     await fs.mkdir(dir, { recursive: true });
+    const optimized = await optimizeImage(buffer, { bucket, title, ext, mime });
     const id = crypto.randomUUID();
-    const filename = `${Date.now()}-${safeName(title)}-${id}${ext}`;
+    const filename = `${Date.now()}-${safeName(title)}-${id}${optimized.ext}`;
     const absPath = path.join(dir, filename);
-    await fs.writeFile(absPath, buffer);
-    return { id, path: this.publicPath(absPath), filePath: absPath, mime, size: buffer.length, originalUrl };
+    await fs.writeFile(absPath, optimized.buffer);
+    return { id, path: this.publicPath(absPath), filePath: absPath, mime: optimized.mime, size: optimized.buffer.length, originalSize: buffer.length, optimized: optimized.optimized, originalUrl };
   }
 
   async removePublicPath(publicPath) {

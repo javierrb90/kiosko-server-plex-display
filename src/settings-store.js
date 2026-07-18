@@ -47,9 +47,9 @@ export const DEFAULT_SETTINGS = {
   },
   grill: { enabled: true, defaults: { backlog: 30, onDeck: 7 }, limits: {}, clearCharredOn: { manual: true, journal: true, playniteStarted: true, plexPlayback: false, plexLibraryAdded: false } },
   workspaces: {
-    database: { membership: "all", visibleTypes: ["games","movies","series"], grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
-    backlog: { membership: "manual", visibleTypes: ["games","movies","series"], grouping: "lastActivity", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
-    onDeck: { membership: "manual", visibleTypes: ["games","movies","series"], grouping: "none", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium", maxPerType: 3 },
+    database: { membership: "all", visibleTypes: ["games","movies","series"], grouping: "none", dateGrouping: "relative", groupingDateField: "lastActivityAt", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
+    backlog: { membership: "manual", visibleTypes: ["games","movies","series"], grouping: "date", dateGrouping: "relative", groupingDateField: "lastActivityAt", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium" },
+    onDeck: { membership: "manual", visibleTypes: ["games","movies","series"], grouping: "none", dateGrouping: "relative", groupingDateField: "lastActivityAt", sort: "lastActivityAt", cardFormat: "standard", cardSize: "medium", maxPerType: 3 },
     collections: { membership: "completed", visibleTypes: ["games","movies","series"], grouping: "none", sort: "completedAt", cardFormat: "standard", cardSize: "medium" }
   },
   views: {
@@ -180,7 +180,17 @@ function sanitize(settings) {
     s.workspaces[key] = { ...base, ...s.workspaces[key] };
     if (!Array.isArray(s.workspaces[key].visibleTypes) || !s.workspaces[key].visibleTypes.length) s.workspaces[key].visibleTypes = [...base.visibleTypes];
     else s.workspaces[key].visibleTypes = [...new Set(s.workspaces[key].visibleTypes.map(value => String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-')).filter(Boolean))];
-    if (!["none","lastActivity","completedAt","type","group"].includes(s.workspaces[key].grouping)) s.workspaces[key].grouping = base.grouping;
+    // Normalize legacy date-grouping values into the explicit date model.
+    if (s.workspaces[key].grouping === "lastActivity") {
+      s.workspaces[key].grouping = "date";
+      s.workspaces[key].groupingDateField = "lastActivityAt";
+    } else if (s.workspaces[key].grouping === "completedAt") {
+      s.workspaces[key].grouping = "date";
+      s.workspaces[key].groupingDateField = "completedAt";
+    }
+    if (!["none","date","type","group"].includes(s.workspaces[key].grouping)) s.workspaces[key].grouping = base.grouping;
+    if (!["relative","month","year"].includes(s.workspaces[key].dateGrouping)) s.workspaces[key].dateGrouping = base.dateGrouping || "relative";
+    if (!["lastActivityAt","completedAt"].includes(s.workspaces[key].groupingDateField)) s.workspaces[key].groupingDateField = base.groupingDateField || "lastActivityAt";
     if (!["lastActivityAt","title","rating","completedAt"].includes(s.workspaces[key].sort)) s.workspaces[key].sort = base.sort;
     if (!["simple","standard"].includes(s.workspaces[key].cardFormat)) s.workspaces[key].cardFormat = base.cardFormat;
     s.workspaces[key].cardSize = cardSize(s.workspaces[key].cardSize);

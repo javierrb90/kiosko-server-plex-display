@@ -1,15 +1,19 @@
 {
   "name": "bbqueue",
-  "version": "6.15.0",
+  "version": "7.0.18",
   "type": "module",
   "scripts": {
-    "start": "node --env-file-if-exists=.env server.js",
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server.js",
     "check": "node scripts/check-project.mjs",
     "check:syntax": "node scripts/check-project.mjs --syntax-only"
   },
   "dependencies": {
     "express": "^4.19.2",
     "fast-xml-parser": "^4.5.0",
+    "sharp": "^0.34.5",
     "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=22.5.0"
   }
 }

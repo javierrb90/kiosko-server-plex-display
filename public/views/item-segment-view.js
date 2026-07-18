@@ -60,6 +60,20 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   let settings = {};
   let loadingSeq = 0;
   let searchDebounce = 0;
+  let pendingReveal = null;
+  let pendingHighlight = null;
+  const localFeedback = new Map();
+  const suppressedFeedback = new Map();
+  let feedbackSequence = 0;
+  const feedbackPriority = { updated: 1, moved: 2, turned: 3 };
+  function visualLog(event, detail = {}) {
+    console.info('[BBQ visual]', event, { view: id, ...detail });
+  }
+  function strongerFeedback(current, incoming) {
+    if (!current) return incoming;
+    if (!incoming) return current;
+    return (feedbackPriority[incoming.reason] || 0) >= (feedbackPriority[current.reason] || 0) ? incoming : current;
+  }
 
   function sessionKey() { return `kiosko:v6.8:${id}`; }
   function saveSession() {
@@ -133,36 +147,80 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     });
     total = rows.length;
     pages = Math.max(1, Math.ceil(total / limit));
+    if (pendingReveal?.key) {
+      const revealIndex = rows.findIndex(item => (item.canonicalId || item.id) === pendingReveal.key || item.id === pendingReveal.key);
+      if (revealIndex >= 0) page = Math.floor(revealIndex / limit) + 1;
+    }
     page = Math.max(1, Math.min(page, pages));
     visibleItems = rows.slice((page - 1) * limit, page * limit);
   }
   function groupRowsMarkup(rows = []) {
-    const grouping = workspaceConfig().grouping || (groupByDate ? 'lastActivity' : 'none');
-    const effectiveGroupByDate = grouping === 'lastActivity' || grouping === 'completedAt';
-    if (!effectiveGroupByDate) return viewMode === 'list' ? itemListMarkup(rows, { context: id, groups: collectionGroups }) : rows.map(item => itemCardMarkup(item, { context: id, groups: collectionGroups, format: cardFormat, visibility: settings?.design?.gridCards?.[cardFormat] || {} })).join('');
-    const today = new Date(); today.setHours(0,0,0,0);
-    const one = 86400000;
-    const labelFor = item => {
-      const raw = grouping === 'completedAt' ? item.completedAt : (item.lastActivityAt || item.updatedAt || item.createdAt);
-      const t = Date.parse(raw || '');
-      if (!Number.isFinite(t)) return 'ANTERIOR';
-      if (t >= today.getTime()) return 'HOY';
-      if (t >= today.getTime() - one) return 'AYER';
-      if (t >= today.getTime() - one * 7) return 'ÚLTIMA SEMANA';
-      return 'ANTERIOR';
+    const ws = workspaceConfig();
+    let grouping = ws.grouping || (groupByDate ? 'date' : 'none');
+    let groupingDateField = ws.groupingDateField || 'lastActivityAt';
+    const dateGrouping = ['relative','month','year'].includes(ws.dateGrouping) ? ws.dateGrouping : 'relative';
+    // Compatibility with settings saved before date grouping was split into mode + field.
+    if (grouping === 'lastActivity') { grouping = 'date'; groupingDateField = 'lastActivityAt'; }
+    if (grouping === 'completedAt') { grouping = 'date'; groupingDateField = 'completedAt'; }
+    const renderItems = items => viewMode === 'list'
+      ? itemListMarkup(items, { context: id, groups: collectionGroups })
+      : items.map(item => itemCardMarkup(item, { context: id, groups: collectionGroups, format: cardFormat, visibility: settings?.design?.gridCards?.[cardFormat] || {} })).join('');
+    if (grouping === 'none') return renderItems(rows);
+
+    const buckets = new Map();
+    const add = (key, label, item, orderValue = 0) => {
+      if (!buckets.has(key)) buckets.set(key, { label, items: [], orderValue });
+      buckets.get(key).items.push(item);
     };
-    const order = ['HOY','AYER','ÚLTIMA SEMANA','ANTERIOR'];
-    const buckets = new Map(order.map(label => [label, []]));
-    for (const item of rows) buckets.get(labelFor(item)).push(item);
-    return order.map(label => {
-      const items = buckets.get(label);
-      if (!items.length) return '';
-      const markup = viewMode === 'list'
-        ? itemListMarkup(items, { context: id, groups: collectionGroups })
-        : items.map(item => itemCardMarkup(item, { context: id, groups: collectionGroups, format: cardFormat, visibility: settings?.design?.gridCards?.[cardFormat] || {} })).join('');
-      return `<div class="media-date-heading">${escapeHtml(label)}</div>${markup}`;
-    }).join('');
+    const capitalized = value => value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+
+    if (grouping === 'date') {
+      const today = new Date(); today.setHours(0,0,0,0);
+      const oneDay = 86400000;
+      for (const item of rows) {
+        const raw = groupingDateField === 'completedAt'
+          ? item.completedAt
+          : (item.lastActivityAt || item.updatedAt || item.createdAt);
+        const timestamp = Date.parse(raw || '');
+        if (!Number.isFinite(timestamp)) { add('missing', 'Sin fecha', item, Number.NEGATIVE_INFINITY); continue; }
+        const date = new Date(timestamp);
+        if (dateGrouping === 'year') {
+          const year = date.getFullYear();
+          add(`year:${year}`, String(year), item, year);
+        } else if (dateGrouping === 'month') {
+          const year = date.getFullYear();
+          const month = date.getMonth();
+          const label = capitalized(new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(date));
+          add(`month:${year}-${String(month + 1).padStart(2, '0')}`, label, item, year * 12 + month);
+        } else {
+          let key = 'previous'; let label = 'Anterior'; let orderValue = 0;
+          if (timestamp >= today.getTime()) { key = 'today'; label = 'Hoy'; orderValue = 4; }
+          else if (timestamp >= today.getTime() - oneDay) { key = 'yesterday'; label = 'Ayer'; orderValue = 3; }
+          else if (timestamp >= today.getTime() - oneDay * 7) { key = 'week'; label = 'Última semana'; orderValue = 2; }
+          else { orderValue = 1; }
+          add(key, label, item, orderValue);
+        }
+      }
+    } else if (grouping === 'type') {
+      for (const item of rows) {
+        const type = typeFor(item);
+        add(`type:${type}`, typePluralLabel(type, settings), item, 0);
+      }
+    } else if (grouping === 'group') {
+      for (const item of rows) {
+        const matched = collectionGroups.find(group => itemMatchesGroup(item, group));
+        add(matched ? `group:${matched.id}` : 'group:none', matched?.name || 'Sin grupo', item, matched ? 1 : 0);
+      }
+    } else {
+      return renderItems(rows);
+    }
+
+    let groups = [...buckets.values()];
+    if (grouping === 'date') groups.sort((a, b) => direction === 'asc' ? a.orderValue - b.orderValue : b.orderValue - a.orderValue);
+    else groups.sort((a, b) => a.label.localeCompare(b.label, 'es', { sensitivity: 'base' }));
+    return groups.map(group => `<section class="media-group"><div class="media-date-heading"><span>${escapeHtml(group.label)}</span><strong>(${group.items.length})</strong></div>${renderItems(group.items)}</section>`).join('');
   }
+
   async function load({ resetPage = false } = {}) {
     const seq = ++loadingSeq;
     if (resetPage) page = 1;
@@ -177,6 +235,198 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     } finally {
       if (seq === loadingSeq) render();
     }
+  }
+  function locateRenderedItem(key = '') {
+    const grid = el?.querySelector('[data-items-grid]');
+    if (!grid || !key) return null;
+    return [...grid.querySelectorAll('[data-id], [data-canonical-id]')].find(node => node.dataset.canonicalId === key || node.dataset.id === key) || null;
+  }
+  let visualFeedbackRun = 0;
+  let visualFeedbackTimer = 0;
+  let activeVisualAnimation = null;
+  let activeVisualOverlay = null;
+  let activeVisualSourceObserver = null;
+  let activeVisualSourceKey = '';
+
+  function cleanupVisualOverlay() {
+    try { activeVisualAnimation?.cancel(); } catch {}
+    activeVisualAnimation = null;
+    activeVisualOverlay?.remove();
+    activeVisualOverlay = null;
+    activeVisualSourceObserver?.disconnect();
+    activeVisualSourceObserver = null;
+    document.querySelectorAll('.bbq-visual-feedback-source-hidden').forEach(node => node.classList.remove('bbq-visual-feedback-source-hidden'));
+    activeVisualSourceKey = '';
+  }
+
+  function copyVisualContext(source, target) {
+    const computed = getComputedStyle(source);
+    for (const property of computed) {
+      if (!property.startsWith('--')) continue;
+      try { target.style.setProperty(property, computed.getPropertyValue(property)); } catch {}
+    }
+  }
+
+  function prepareVisualClone(node, rect) {
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll('[id]').forEach(entry => entry.removeAttribute('id'));
+    clone.querySelectorAll('button, a, input, select, textarea').forEach(entry => entry.tabIndex = -1);
+    clone.classList.remove('is-recently-moved', 'is-recently-updated', 'is-recently-turned', 'bbq-visual-feedback-source-hidden');
+    Object.assign(clone.style, {
+      position: 'absolute', inset: '0', width: `${rect.width}px`, height: `${rect.height}px`,
+      minWidth: '0', maxWidth: 'none', minHeight: '0', maxHeight: 'none',
+      boxSizing: 'border-box', margin: '0', transform: 'none',
+      pointerEvents: 'none', overflow: 'hidden', animation: 'none', transition: 'none'
+    });
+    copyVisualContext(node, clone);
+    return clone;
+  }
+
+  function createStableVisualClone(node, rect) {
+    const clone = prepareVisualClone(node, rect);
+    clone.classList.add('bbq-visual-feedback-clone');
+    // Keep the clone as a single 2D surface. A DOM clone cannot reliably form
+    // two 3D faces once it is detached from the grid's layout context.
+    Object.assign(clone.style, {
+      transformOrigin: '50% 50%',
+      backfaceVisibility: 'visible',
+      WebkitBackfaceVisibility: 'visible'
+    });
+    return clone;
+  }
+
+  function hideVisualFeedbackSource(key) {
+    activeVisualSourceKey = key;
+    const hideMatches = () => {
+      if (!activeVisualSourceKey) return;
+      document.querySelectorAll('[data-id], [data-canonical-id]').forEach(node => {
+        if (node.dataset.canonicalId === activeVisualSourceKey || node.dataset.id === activeVisualSourceKey) {
+          node.classList.add('bbq-visual-feedback-source-hidden');
+        }
+      });
+    };
+    hideMatches();
+    activeVisualSourceObserver?.disconnect();
+    activeVisualSourceObserver = new MutationObserver(hideMatches);
+    activeVisualSourceObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function createVisualOverlay(node, reason = 'updated') {
+    const rect = node.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const shell = document.createElement('div');
+    shell.className = 'bbq-visual-feedback-overlay';
+    shell.setAttribute('aria-hidden', 'true');
+    Object.assign(shell.style, {
+      position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`,
+      width: `${rect.width}px`, height: `${rect.height}px`,
+      zIndex: '2147483000', pointerEvents: 'none', overflow: 'visible',
+      borderRadius: getComputedStyle(node).borderRadius || '16px',
+      background: 'transparent', contain: 'layout paint style', perspective: '1100px'
+    });
+    copyVisualContext(node, shell);
+    const stage = document.createElement('div');
+    stage.className = 'bbq-visual-feedback-stage';
+    Object.assign(stage.style, {
+      position: 'absolute', inset: '0', width: '100%', height: '100%',
+      transformOrigin: '50% 50%', transformStyle: 'preserve-3d',
+      willChange: 'transform, filter, opacity'
+    });
+    const parentGrid = node.closest('.media-grid');
+    stage.appendChild(createStableVisualClone(node, rect));
+    shell.appendChild(stage);
+    document.body.appendChild(shell);
+    activeVisualOverlay = shell;
+    hideVisualFeedbackSource(node.dataset.canonicalId || node.dataset.id || '');
+    visualLog('overlay-created', { key: node.dataset.canonicalId || node.dataset.id, width: rect.width, height: rect.height, nodeClass: node.className, gridClass: parentGrid?.className || '', mode: reason === 'turned' ? 'single-surface-flip' : 'single-surface' });
+    return { shell, stage };
+  }
+
+  function feedbackKeyframes(reason) {
+    if (reason === 'turned') {
+      // A single-surface flip is intentionally used here. It gives a clear
+      // "turn" without relying on detached DOM backfaces, which can disappear
+      // when the cloned card loses its original grid formatting context.
+      return [
+        { transform: 'scaleX(1) scaleY(1)', filter: 'brightness(1)', opacity: 1 },
+        { offset: .42, transform: 'scaleX(.08) scaleY(.985)', filter: 'brightness(1.28)', opacity: .96 },
+        { offset: .50, transform: 'scaleX(.025) scaleY(.98)', filter: 'brightness(1.45)', opacity: .9 },
+        { offset: .58, transform: 'scaleX(.08) scaleY(.985)', filter: 'brightness(1.28)', opacity: .96 },
+        { transform: 'scaleX(1) scaleY(1)', filter: 'brightness(1)', opacity: 1 }
+      ];
+    }
+    if (reason === 'moved') {
+      return [
+        { opacity: .08, transform: 'translateY(30px) scale(.92)', filter: 'brightness(1.2)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' },
+        { offset: .56, opacity: 1, transform: 'translateY(-5px) scale(1.025)', filter: 'brightness(1.12)', boxShadow: '0 0 0 7px color-mix(in srgb, var(--accent-color, #8fafef) 48%, transparent), 0 24px 60px rgba(0,0,0,.48)' },
+        { opacity: 1, transform: 'translateY(0) scale(1)', filter: 'brightness(1)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' }
+      ];
+    }
+    return [
+      { filter: 'brightness(1)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' },
+      { offset: .48, filter: 'brightness(1.22)', boxShadow: '0 0 0 6px color-mix(in srgb, var(--accent-color, #8fafef) 38%, transparent)' },
+      { filter: 'brightness(1)', boxShadow: '0 0 0 0 rgba(143,175,239,0)' }
+    ];
+  }
+
+  function rowFeedbackKeyframes() {
+    return [
+      { backgroundColor: 'color-mix(in srgb, var(--accent-color, #8fafef) 42%, rgba(255,255,255,.06))', boxShadow: 'inset 5px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 92%, white 8%)' },
+      { offset: .55, backgroundColor: 'color-mix(in srgb, var(--accent-color, #8fafef) 25%, transparent)', boxShadow: 'inset 5px 0 0 color-mix(in srgb, var(--accent-color, #8fafef) 72%, transparent)' },
+      { backgroundColor: 'transparent', boxShadow: 'inset 0 0 0 transparent' }
+    ];
+  }
+
+  function runPendingVisualFeedback() {
+    const request = strongerFeedback(pendingReveal, pendingHighlight);
+    if (!request?.key || !isVisible) return;
+    const run = ++visualFeedbackRun;
+    const revealRequested = Boolean(pendingReveal && pendingReveal.key === request.key);
+    visualLog('feedback-start', { key: request.key, reason: request.reason, token: request.token, pendingReveal, pendingHighlight });
+    const node = locateRenderedItem(request.key);
+    if (!node) return;
+
+    pendingReveal = null;
+    pendingHighlight = null;
+    if (revealRequested) node.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+    cleanupVisualOverlay();
+
+    const isList = node.matches('.kiosko-list__row, .item-list-row');
+    const target = isList ? node : (request.reason === 'turned' ? (node.querySelector('.media-card__surface') || node) : node);
+    const duration = 300;
+    const keyframes = isList ? rowFeedbackKeyframes() : feedbackKeyframes(request.reason);
+    visualLog('feedback-live-node', { key: request.key, reason: request.reason, duration, targetClass: target.className || '' });
+    activeVisualAnimation = target.animate(keyframes, {
+      duration,
+      easing: request.reason === 'turned' ? 'cubic-bezier(.3,.05,.18,1)' : 'cubic-bezier(.18,.78,.2,1)',
+      fill: 'none'
+    });
+    activeVisualAnimation.finished.catch(() => {}).finally(() => {
+      if (run === visualFeedbackRun) {
+        visualLog('feedback-finished', { key: request.key, reason: request.reason, token: request.token });
+        activeVisualAnimation = null;
+      }
+    });
+  }
+
+  function applyPendingVisualFeedback() {
+    if (!(pendingReveal || pendingHighlight)) return;
+    clearTimeout(visualFeedbackTimer);
+    // The feedback is rendered in a fixed overlay, so subsequent grid renders
+    // cannot replace or interrupt the animated node. The delay only lets layout settle.
+    visualFeedbackTimer = window.setTimeout(() => {
+      requestAnimationFrame(() => requestAnimationFrame(runPendingVisualFeedback));
+    }, 60);
+  }
+  function resetTemporaryFiltersForReveal() {
+    activeGroupIds = new Set();
+    groupMatch = 'any';
+    source = '';
+    status = '';
+    search = '';
+    charredOnly = false;
+    localStorage.setItem('bbqueue:global-search', '');
+    localStorage.setItem('bbqueue:charred-only', '0');
   }
   function renderControls({ force = false } = {}) {
     if (!controlsRoot || !isVisible) return;
@@ -231,16 +481,20 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   }
   async function openControlsModal() {
     const ws = workspaceConfig();
-    const grouping = ws.grouping || (groupByDate ? 'lastActivity' : 'none');
+    let grouping = ws.grouping || (groupByDate ? 'date' : 'none');
+    let groupingDateField = ws.groupingDateField || 'lastActivityAt';
+    if (grouping === 'lastActivity') { grouping = 'date'; groupingDateField = 'lastActivityAt'; }
+    if (grouping === 'completedAt') { grouping = 'date'; groupingDateField = 'completedAt'; }
+    const dateGrouping = ['relative','month','year'].includes(ws.dateGrouping) ? ws.dateGrouping : 'relative';
     const body = `<div class="panel-editor"><nav class="panel-editor__anchors"><button type="button" class="is-active" data-panel-jump="workspace-presentation">Presentación</button><button type="button" data-panel-jump="workspace-organization">Organización</button></nav><div class="panel-editor__scroll">
       <section id="workspace-presentation" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Presentación</h3><p>Configuración persistente de ${escapeHtml(title)}.</p></header><div class="workspace-visible-types"><h4>Tipos visibles</h4><p class="settings-help">Define qué tipos forman parte de este espacio de trabajo.</p><div class="controls-modal__checks">${availableTypes().map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-type="${escapeAttr(type)}" ${activeTypes.has(type) ? 'checked' : ''}><span>${escapeHtml(typePluralLabel(type, settings))}</span></label>`).join('')}</div></div><div class="setting-choice-grid"><label><input type="radio" name="view-mode" value="grid" ${viewMode==='grid'?'checked':''}><span><strong>Grid</strong><small>Tarjetas visuales</small></span></label><label><input type="radio" name="view-mode" value="list" ${viewMode==='list'?'checked':''}><span><strong>Lista</strong><small>Filas compactas</small></span></label></div><div class="setting-choice-grid setting-choice-grid--three">${[['small','Pequeño'],['medium','Mediano'],['large','Grande']].map(([value,label])=>`<label><input type="radio" name="size" value="${value}" ${currentSize()===value?'checked':''}><span><strong>${label}</strong><small>Tamaño de tarjeta</small></span></label>`).join('')}</div><div class="setting-choice-grid"><label><input type="radio" name="card-format" value="simple" ${cardFormat==='simple'?'checked':''}><span><strong>Simple</strong><small>Carátula protagonista</small></span></label><label><input type="radio" name="card-format" value="standard" ${cardFormat==='standard'?'checked':''}><span><strong>Normal</strong><small>Carátula e información</small></span></label></div><label class="ui-field"><span>Items por página</span><input data-items-per-page type="number" min="6" max="500" value="${escapeAttr(limit)}"></label></section>
-      <section id="workspace-organization" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Organización</h3></header><label class="ui-field"><span>Agrupar por</span><select data-control-grouping><option value="none" ${grouping==='none'?'selected':''}>Sin agrupación</option><option value="lastActivity" ${grouping==='lastActivity'?'selected':''}>Última actividad</option><option value="completedAt" ${grouping==='completedAt'?'selected':''}>Fecha de finalización</option><option value="type" ${grouping==='type'?'selected':''}>Tipo</option><option value="group" ${grouping==='group'?'selected':''}>Grupo</option></select></label><label class="ui-field"><span>Ordenar por</span><select data-control-sort>${[['lastActivityAt','Última actividad'],['firstSeenAt','Entrada en base de datos'],['updatedAt','Actualización'],['title','Título'],['rating','Calificación'],['completedAt','Finalización']].map(([value,label])=>`<option value="${value}" ${sort===value?'selected':''}>${label}</option>`).join('')}</select></label><div class="segmented-control"><label><input type="radio" name="direction" value="desc" ${direction==='desc'?'checked':''}><span>Descendente</span></label><label><input type="radio" name="direction" value="asc" ${direction==='asc'?'checked':''}><span>Ascendente</span></label></div></section>
+      <section id="workspace-organization" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Organización</h3><p>Las agrupaciones por fecha pueden usar la última actividad o la fecha de finalización.</p></header><label class="ui-field"><span>Agrupar por</span><select data-control-grouping><option value="none" ${grouping==='none'?'selected':''}>Sin agrupación</option><option value="date" ${grouping==='date'?'selected':''}>Fecha</option><option value="type" ${grouping==='type'?'selected':''}>Tipo</option><option value="group" ${grouping==='group'?'selected':''}>Grupo</option></select></label><div class="workspace-date-grouping"><label class="ui-field"><span>Organización de fechas</span><select data-control-date-grouping><option value="relative" ${dateGrouping==='relative'?'selected':''}>Periodos recientes</option><option value="month" ${dateGrouping==='month'?'selected':''}>Mes y año</option><option value="year" ${dateGrouping==='year'?'selected':''}>Año</option></select></label><label class="ui-field"><span>Fecha utilizada</span><select data-control-grouping-date-field><option value="lastActivityAt" ${groupingDateField==='lastActivityAt'?'selected':''}>Última actividad</option><option value="completedAt" ${groupingDateField==='completedAt'?'selected':''}>Finalización</option></select></label></div><label class="ui-field"><span>Ordenar por</span><select data-control-sort>${[['lastActivityAt','Última actividad'],['firstSeenAt','Entrada en base de datos'],['updatedAt','Actualización'],['title','Título'],['rating','Calificación'],['completedAt','Finalización']].map(([value,label])=>`<option value="${value}" ${sort===value?'selected':''}>${label}</option>`).join('')}</select></label><div class="segmented-control"><label><input type="radio" name="direction" value="desc" ${direction==='desc'?'checked':''}><span>Descendente</span></label><label><input type="radio" name="direction" value="asc" ${direction==='asc'?'checked':''}><span>Ascendente</span></label></div></section>
     </div></div>`;
-    const modalPromise = ui.open({ title: `${title} · configuración`, className: 'ui-modal-root--workspace', body, actions: [{ label:'Cancelar',value:null },{ label:'Guardar',variant:'primary',onClick:root=>({ visibleTypes:[...root.querySelectorAll('[data-workspace-type]:checked')].map(input=>input.dataset.workspaceType), viewMode:root.querySelector('input[name="view-mode"]:checked')?.value||viewMode, cardSize:root.querySelector('input[name="size"]:checked')?.value||cardSize, cardFormat:root.querySelector('input[name="card-format"]:checked')?.value||cardFormat, limit:clamp(root.querySelector('[data-items-per-page]')?.value,6,500,limit), grouping:root.querySelector('[data-control-grouping]')?.value||grouping, sort:root.querySelector('[data-control-sort]')?.value||sort, direction:root.querySelector('input[name="direction"]:checked')?.value||direction }) }] });
+    const modalPromise = ui.open({ title: `${title} · configuración`, className: 'ui-modal-root--workspace', body, actions: [{ label:'Cancelar',value:null },{ label:'Guardar',variant:'primary',onClick:root=>({ visibleTypes:[...root.querySelectorAll('[data-workspace-type]:checked')].map(input=>input.dataset.workspaceType), viewMode:root.querySelector('input[name="view-mode"]:checked')?.value||viewMode, cardSize:root.querySelector('input[name="size"]:checked')?.value||cardSize, cardFormat:root.querySelector('input[name="card-format"]:checked')?.value||cardFormat, limit:clamp(root.querySelector('[data-items-per-page]')?.value,6,500,limit), grouping:root.querySelector('[data-control-grouping]')?.value||grouping, dateGrouping:root.querySelector('[data-control-date-grouping]')?.value||dateGrouping, groupingDateField:root.querySelector('[data-control-grouping-date-field]')?.value||groupingDateField, sort:root.querySelector('[data-control-sort]')?.value||sort, direction:root.querySelector('input[name="direction"]:checked')?.value||direction }) }] });
     bindPanelEditorNavigation();
     const result = await modalPromise;
     if(!result)return; activeTypes=new Set(result.visibleTypes?.length ? result.visibleTypes : availableTypes()); viewMode=result.viewMode; cardSize=result.cardSize; cardFormat=result.cardFormat; limit=result.limit; sort=result.sort; direction=result.direction; page=1; applyFilters(); renderControls({force:true}); render(); saveSession();
-    const key=workspaceKey(); const existing=settings?.workspaces?.[key]||{}; const workspacePatch={...existing,visibleTypes:[...activeTypes],grouping:result.grouping,sort,direction,cardSize,cardFormat,viewMode,itemsPerPage:limit};
+    const key=workspaceKey(); const existing=settings?.workspaces?.[key]||{}; const workspacePatch={...existing,visibleTypes:[...activeTypes],grouping:result.grouping,dateGrouping:result.dateGrouping,groupingDateField:result.groupingDateField,sort,direction,cardSize,cardFormat,viewMode,itemsPerPage:limit};
     try { settings=await api('/api/settings',{method:'PUT',body:JSON.stringify({workspaces:{[key]:workspacePatch},views:{[id]:{...(settings?.views?.[id]||{}),cardSize,cardFormat,itemsPerPage:limit}}})}); } catch(error){ ui.toast('No se pudo guardar el espacio de trabajo',{detail:error.message||''}); }
   }
   async function openCreateManualItem() {
@@ -252,7 +506,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
         <div class="manual-item-preview">
           <div class="manual-item-preview__backdrop"></div>
           <div class="manual-item-preview__poster"><span>+</span></div>
-          <div><strong>Nuevo item</strong><small>Creado manualmente en BBQueue</small></div>
+          <div><strong>Nuevo item</strong><small>Creado manualmente en BBQ</small></div>
         </div>
         <label class="ui-field"><span>Título</span><input data-manual-title placeholder="Título" required></label>
         <label class="ui-field"><span>Estado / detalle</span><input data-manual-detail placeholder="Detalle visible, estado, nota..."></label>
@@ -319,6 +573,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     const bgImage = bg?.querySelector('.section-bg__image');
     const bgItem = visibleItems.find(backdropFor);
     if (bgImage) bgImage.style.backgroundImage = bgItem ? `url('${escapeAttr(backdropFor(bgItem))}')` : '';
+    requestAnimationFrame(applyPendingVisualFeedback);
   }
   function itemBelongsToCurrentView(item = {}) {
     if (view === 'database') return true;
@@ -327,9 +582,19 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     if (view === 'collections') return item.status === 'completed' || item.states?.completed === true || Boolean(item.completedAt);
     return true;
   }
-  function applyItemUpdate(item = {}) {
+  function applyItemUpdate(item = {}, reason = 'updated', token = '') {
     const key = item.canonicalId || item.id;
     if (!key) return;
+    const suppressedUntil = suppressedFeedback.get(key) || 0;
+    const feedbackSuppressed = suppressedUntil > Date.now();
+    if (!feedbackSuppressed && suppressedUntil) suppressedFeedback.delete(key);
+    const local = localFeedback.get(key);
+    if (!feedbackSuppressed && local && local.until > Date.now() && (feedbackPriority[local.reason] || 0) > (feedbackPriority[reason] || 0)) {
+      reason = local.reason;
+      token = local.token;
+    } else if (local && local.until <= Date.now()) {
+      localFeedback.delete(key);
+    }
     const matches = entry => (entry.canonicalId || entry.id) === key;
     const index = allItems.findIndex(matches);
     const belongs = itemBelongsToCurrentView(item);
@@ -337,10 +602,63 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     else if (index >= 0) allItems.splice(index, 1);
     else if (belongs) allItems.unshift(item);
     applyFilters();
+    if (isVisible && belongs && !feedbackSuppressed) {
+      const incoming = { key, reason, token: token || `${reason}:${Date.now()}` };
+      pendingHighlight = strongerFeedback(pendingHighlight, incoming);
+      visualLog('feedback-queued', { key, reason, token: incoming.token, source: token ? 'local' : 'update' });
+    }
     if (isVisible) render();
   }
+
+  async function animateQuickTurnInPlace(key, token) {
+    const node = locateRenderedItem(key);
+    if (!node) return;
+    const isList = node.matches('.kiosko-list__row, .item-list-row');
+    const target = isList ? node : (node.querySelector('.media-card__surface') || node);
+    const button = node.querySelector('[data-quick-turn]');
+    if (button) button.disabled = true;
+    visualLog('quick-turn-local-animation-start', {
+      key,
+      token,
+      mode: isList ? 'row-highlight' : 'in-place-flip',
+      targetClass: target.className || ''
+    });
+    const animation = target.animate(isList ? rowFeedbackKeyframes() : feedbackKeyframes('turned'), {
+      duration: 300,
+      easing: isList ? 'cubic-bezier(.18,.78,.2,1)' : 'cubic-bezier(.3,.05,.18,1)',
+      fill: 'none'
+    });
+    try { await animation.finished; } catch {}
+    if (button) button.disabled = false;
+    visualLog('quick-turn-local-animation-finished', { key, token });
+  }
+
+  async function quickTurnItem(item) {
+    if (!item) return;
+    const key = item.canonicalId || item.id;
+    const token = `turn:${++feedbackSequence}:${Date.now()}`;
+    visualLog('quick-turn-request', { key, token });
+    try {
+      // Animate the live card before the request. No HTTP response or WebSocket
+      // render can replace the node while this animation is running.
+      await animateQuickTurnInPlace(key, token);
+      suppressedFeedback.set(key, Date.now() + 3000);
+      const response = await api(`/api/items/${encodeURIComponent(key)}/activity`, {
+        method: 'POST',
+        body: JSON.stringify({ detail: item.detail || item.subtitle || '', comment: '', quickTurn: true })
+      });
+      const updated = response?.item || response;
+      ui.toast('Item volteado', { detail: 'Actividad actualizada a ahora' });
+      applyItemUpdate({ ...item, ...updated }, 'updated', token);
+    } catch (error) {
+      suppressedFeedback.delete(key);
+      visualLog('quick-turn-error', { key, token, message: error?.message || String(error) });
+      ui.toast('No se pudo dar la vuelta', { detail: error.message || '' });
+    }
+  }
+
   async function openItem(item) {
-    await openItemDetail({ ui, api, item, context: id, toast: message => ui.toast(message), collectionGroups, settings, onItemUpdated: applyItemUpdate });
+    await openItemDetail({ ui, api, item, context: id, toast: message => ui.toast(message), collectionGroups, settings, onItemUpdated: updated => applyItemUpdate(updated, 'updated') });
     load();
   }
   function findItemFromEvent(event) {
@@ -366,6 +684,18 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
         if (isVisible) { renderControls({ force: true }); render(); }
       });
       window.addEventListener('bbqueue:charred-filter', event => { charredOnly=Boolean(event.detail); page=1; if(isVisible){renderControls({force:true});render();} });
+      document.addEventListener('bbqueue:reveal-item', event => {
+        const detail = event.detail || {};
+        if (detail.id !== id) return;
+        const key = detail.item?.canonicalId || detail.item?.id;
+        if (!key) return;
+        resetTemporaryFiltersForReveal();
+        if (detail.item?.collectionType) activeTypes.add(detail.item.collectionType);
+        pendingReveal = { key, reason: detail.reason || 'moved' };
+        page = 1;
+        saveSession();
+        if (isVisible) { renderControls({ force: true }); load({ resetPage: true }); }
+      });
       el.addEventListener('click', event => {
         if (event.target.closest('[data-page-prev]')) { page = Math.max(1, page - 1); render(); saveSession(); return; }
         if (event.target.closest('[data-page-next]')) { page = Math.min(pages, page + 1); render(); saveSession(); return; }
@@ -374,6 +704,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
         if (removeGroup) { activeGroupIds.delete(removeGroup.dataset.removeGroupFilter); page=1; applyFilters(); renderControls({force:true}); render(); saveSession(); return; }
         
         const item = findItemFromEvent(event);
+        if (item && event.target.closest('[data-quick-turn]')) { event.preventDefault(); event.stopPropagation(); quickTurnItem(item); return; }
         if (item) openItem(item);
       });
     },
@@ -382,7 +713,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     update(payload = {}) {
       if (payload.collectionGroups) collectionGroups = payload.collectionGroups;
       if (payload.settings) { settings = payload.settings; const ws=workspaceConfig(); if(ws.sort) sort=ws.sort; if(ws.cardSize) cardSize=ws.cardSize; if(ws.cardFormat) cardFormat=ws.cardFormat; applyWorkspaceTypes(); }
-      if (payload.item) applyItemUpdate(payload.item);
+      if (payload.item) applyItemUpdate(payload.item, payload.highlightReason || 'updated');
       if (payload.refresh && isVisible) load();
       else if (isVisible && !payload.item) render();
     },
