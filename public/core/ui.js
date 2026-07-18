@@ -90,7 +90,7 @@ export function createUi({ modalRoot, toastRoot } = {}) {
     const inputId = `ui-new-${Date.now()}`;
     const buttons = collections.length
       ? collections.map(c => `<button type="button" data-collection-choice="${escapeAttr(c.id)}">${escapeHtml(c.name)}</button>`).join('')
-      : '<p>No hay colecciones todavía. Crea una nueva.</p>';
+      : '<p>No hay grupos todavía. Crea uno nuevo.</p>';
 
     return new Promise(resolve => {
       lastFocused = document.activeElement;

@@ -12,6 +12,7 @@ import { PlexService } from "./src/services/plex-service.js";
 import { normalizeTautulliEvent } from "./src/adapters/tautulli.js";
 import { normalizeArrEvent } from "./src/adapters/arr.js";
 import { normalizePlayniteEvent } from "./src/adapters/playnite.js";
+import { normalizeIngestionPayload, ingestionExample } from "./src/services/ingestion-contract.js";
 import { SettingsStore } from "./src/settings-store.js";
 import { StateStore } from "./src/state-store.js";
 import { AssetService } from "./src/asset-service.js";
@@ -52,7 +53,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`Kiosko Media Center v6.11 escuchando en ${host}:${port}`);
+  console.log(`BBQueue v6.14.2 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -149,18 +150,6 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/api/health", (_req, res) => {
-  res.json({
-    ok: true,
-    app: "Kiosko Media Center",
-    pid: process.pid,
-    uptimeSeconds: Math.round(process.uptime()),
-    dataDir: DATA_DIR,
-    port: PORT,
-    time: new Date().toISOString()
-  });
-});
-
 app.get("/api/diagnostics", async (_req, res) => {
   const addresses = getLocalAddresses();
   const snapshotStarted = Date.now();
@@ -169,8 +158,8 @@ app.get("/api/diagnostics", async (_req, res) => {
   const files = await dataFileDiagnostics();
   res.json({
     ok: true,
-    app: "Kiosko Media Center",
-    version: "v6.11",
+    app: "BBQueue",
+    version: "v6.14.2",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -245,10 +234,8 @@ function configStatus() {
 
 const server = app.listen(PORT, "0.0.0.0", () => {
   const status = configStatus();
-  console.log(`Kiosko Media Center v6.11 escuchando en puerto ${PORT}`);
-  console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
-  console.log(`Datos persistentes: ${status.dataDir}`);
   printStartupDiagnostics(PORT, "0.0.0.0");
+  console.log(`Plex configurado: ${status.plexConfigured ? "sí" : "NO"} (URL: ${status.plexUrlConfigured ? "sí" : "no"}, token: ${status.plexTokenConfigured ? "sí" : "no"})`);
 });
 const wss = new WebSocketServer({ server });
 const hub = new RealtimeHub(wss);
@@ -452,7 +439,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length, onDeck: onDeckStore.list().length, completions: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQueue", version: "v6.14.2", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -492,7 +479,7 @@ app.get("/api/export", async (_req, res) => {
   const payload = await buildExportPayload();
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   res.setHeader("Content-Type", "application/json; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename=\"kiosko-backup-${stamp}.json\"`);
+  res.setHeader("Content-Disposition", `attachment; filename=\"bbqueue-backup-${stamp}.json\"`);
   res.send(JSON.stringify(payload, null, 2));
 });
 
@@ -806,7 +793,7 @@ function canonicalizePlexSeriesItem(item = {}) {
     canonicalId,
     ratingKey: canonicalRatingKey || item.ratingKey,
     title: showTitle,
-    subtitle: item.subtitle || item.meta?.originalSubtitle || item.meta?.createdEpisodeCode || "Serie",
+    subtitle: item.detail || item.subtitle || item.meta?.originalSubtitle || item.meta?.createdEpisodeCode || "Serie",
     poster: item.meta?.showPoster || item.poster,
     backdrop: item.meta?.showBackdrop || item.backdrop,
     meta: {
@@ -1058,7 +1045,7 @@ app.get("/api/items/export.csv", async (req, res) => {
   const query = { ...(req.query || {}), page: 1, limit: 10000 };
   const result = itemRegistryStore.query(query);
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="kiosko-items-${new Date().toISOString().slice(0,10)}.csv"`);
+  res.setHeader("Content-Disposition", `attachment; filename="bbqueue-items-${new Date().toISOString().slice(0,10)}.csv"`);
   res.send(itemsToCsv(result.items));
 });
 
@@ -1173,7 +1160,7 @@ app.patch("/api/items/:canonicalId", async (req, res) => {
     const id = decodeURIComponent(req.params.canonicalId);
     const existing = itemRegistryStore.get(id);
     if (!existing) return res.status(404).json({ error: "Item no encontrado." });
-    if (!isManualEditableItem(existing)) return res.status(403).json({ error: "Sólo se pueden editar datos principales de items creados en Kiosko." });
+    if (!isManualEditableItem(existing)) return res.status(403).json({ error: "Sólo se pueden editar datos principales de items creados manualmente en BBQueue." });
     const payload = await prepareManualItemPayload({ ...(req.body || {}), canonicalId: existing.canonicalId }, existing);
     let item = await itemRegistryStore.upsert(payload, { forceSubtitle: true, activity: { eventType: "manual_item_edit", title: payload.title, subtitle: payload.subtitle, activityAt: payload.lastActivityAt } });
     await updateManualItemInLegacyStores(item);
@@ -1200,7 +1187,7 @@ app.patch("/api/items/:canonicalId/dates", async (req, res) => {
 
   // La fecha editada debe ser autoritativa también en las vistas históricas.
   // De lo contrario, la siguiente sincronización vuelve a importar la fecha antigua
-  // desde Backlog, On Deck o Colecciones y hace imposible depurar la parrilla.
+  // desde Backlog, On Deck o Colección y hace imposible depurar la parrilla.
   await updateManualItemInLegacyStores(item);
   await syncItemRegistryNow("manual-dates-edit");
   item = itemRegistryStore.get(id) || item;
@@ -1520,6 +1507,171 @@ async function completeItem(input, rating = 0) {
   return completed;
 }
 
+function collectionTypeFromEntityType(entityType = "item") {
+  const type = String(entityType || "item").toLowerCase();
+  if (["game", "games", "juego", "juegos"].includes(type)) return "games";
+  if (["movie", "movies", "pelicula", "películas"].includes(type)) return "movies";
+  if (["series", "serie", "show", "episode", "season"].includes(type)) return "series";
+  return type || "item";
+}
+
+function ingestionRepresentsCurrentActivity(envelope = {}) {
+  const source = String(envelope.source || "").toLowerCase();
+  const eventType = String(envelope.eventType || "").toLowerCase();
+  if (source === "playnite") return ["started", "played"].includes(eventType);
+  if (source === "plex") return ["play", "played", "start", "started", "playback_start"].includes(eventType);
+  return false;
+}
+
+async function persistIngestedCurrentActivity(envelope = {}, item = {}) {
+  if (!ingestionRepresentsCurrentActivity(envelope)) return null;
+
+  const source = String(envelope.source || item.source || "external").toLowerCase();
+  const isPlaynite = source === "playnite";
+  const detail = item.detail || item.subtitle || envelope.detail || "";
+  const current = {
+    source,
+    kind: isPlaynite ? "game" : source,
+    event: isPlaynite ? "game_started" : envelope.eventType,
+    eventType: envelope.eventType,
+    canonicalId: item.canonicalId || envelope.canonicalId,
+    externalId: envelope.externalId || null,
+    title: item.title || envelope.title,
+    subtitle: detail,
+    detail,
+    type: item.type || envelope.entityType,
+    collectionType: item.collectionType || collectionTypeFromEntityType(envelope.entityType),
+    cover: item.poster || null,
+    poster: item.poster || null,
+    posterUrl: item.poster || null,
+    background: item.backdrop || null,
+    backdrop: item.backdrop || null,
+    backdropUrl: item.backdrop || null,
+    platforms: Array.isArray(envelope.metadata?.platforms) ? envelope.metadata.platforms : [],
+    occurredAt: envelope.occurredAt,
+    lastActivityAt: envelope.occurredAt
+  };
+
+  runtime.currentContent = current;
+  const statePatch = { lastCurrent: current };
+  if (isPlaynite) {
+    runtime.game = current;
+    statePatch.lastGame = current;
+  } else if (source === "plex") {
+    runtime.plex = current;
+    statePatch.lastPlex = current;
+  }
+  await stateStore.update(statePatch);
+  return current;
+}
+
+async function ingestExternalItem(rawPayload = {}, { integration = "external", broadcast = true } = {}) {
+  const envelope = normalizeIngestionPayload(rawPayload);
+  const current = itemFromAnyStore(envelope.canonicalId);
+  if (!current && !envelope.behavior.createIfMissing) {
+    return { ok: true, ignored: true, reason: "item_missing", envelope };
+  }
+
+  let incoming = {
+    ...(current || {}),
+    source: envelope.source,
+    canonicalId: envelope.canonicalId,
+    type: envelope.entityType,
+    collectionType: collectionTypeFromEntityType(envelope.entityType),
+    title: envelope.title,
+    detail: envelope.behavior.updateDetail ? envelope.detail : (current?.detail || current?.subtitle || ""),
+    subtitle: envelope.behavior.updateDetail ? envelope.detail : (current?.detail || current?.subtitle || ""),
+    poster: envelope.assets.poster || current?.poster || null,
+    backdrop: envelope.assets.backdrop || current?.backdrop || null,
+    lastActivityAt: envelope.behavior.updateActivity ? envelope.occurredAt : (current?.lastActivityAt || envelope.occurredAt),
+    meta: envelope.behavior.updateMetadata ? { ...(current?.meta || {}), ...envelope.metadata, integration, externalId: envelope.externalId } : (current?.meta || {})
+  };
+  if (incoming.source === "plex") incoming = canonicalizePlexSeriesItem(incoming);
+
+  const patch = {
+    forceSubtitle: envelope.behavior.updateDetail,
+    lastActivityAt: incoming.lastActivityAt,
+    charred: envelope.behavior.clearCharred ? false : undefined,
+    activity: envelope.behavior.updateActivity ? {
+      eventType: `${envelope.source}_${envelope.eventType}`,
+      title: incoming.title,
+      subtitle: incoming.subtitle,
+      activityAt: envelope.occurredAt,
+      externalKey: `${envelope.source}:${envelope.externalId}:${envelope.eventType}:${envelope.occurredAt}`
+    } : undefined
+  };
+  const updated = await itemRegistryStore.upsert(incoming, patch);
+
+  const backlogItem = findBacklogItemByCanonicalId(updated.canonicalId);
+  let savedBacklogItem = null;
+  if (backlogItem) {
+    savedBacklogItem = await backlogStore.upsert(backlogItem.source || updated.source, {
+      ...backlogItem,
+      ...updated,
+      id: backlogItem.id,
+      subtitle: updated.subtitle,
+      detail: updated.detail,
+      lastActivityAt: updated.lastActivityAt
+    });
+  }
+  const deckItem = findOnDeckItemByCanonicalId(updated.canonicalId);
+  let savedDeckItem = null;
+  if (deckItem) {
+    savedDeckItem = await onDeckStore.upsert({
+      ...deckItem,
+      ...updated,
+      id: deckItem.id,
+      subtitle: updated.subtitle,
+      detail: updated.detail,
+      addedToDeckAt: deckItem.addedToDeckAt,
+      lastActivityAt: updated.lastActivityAt
+    });
+  }
+
+  await syncItemRegistryNow(`ingest:${integration}`);
+  const finalItem = publicGrillItem(itemRegistryStore.get(updated.canonicalId) || updated);
+  const currentActivity = await persistIngestedCurrentActivity(envelope, finalItem);
+  const payload = fullStatePayload({ item: finalItem, backlogItem: savedBacklogItem ? publicItem(savedBacklogItem) : null, deckItem: savedDeckItem ? publicItem(savedDeckItem) : null, currentContent: currentActivity });
+  if (broadcast) {
+    broadcastDelta(savedBacklogItem ? "item:backlog-upserted" : savedDeckItem ? "item:deck-upserted" : "item:database-updated", payload);
+    if (currentActivity) hub.broadcast({ type: "current:update", payload: currentActivity });
+    if (envelope.behavior.showToast) {
+      hub.broadcast({
+        type: "activity:received",
+        payload: {
+          source: envelope.source,
+          eventType: envelope.eventType,
+          title: finalItem.title,
+          detail: finalItem.detail || finalItem.subtitle || "",
+          poster: finalItem.poster || null,
+          backdrop: finalItem.backdrop || null,
+          canonicalId: finalItem.canonicalId,
+          occurredAt: envelope.occurredAt
+        }
+      });
+    }
+  }
+  return { ok: true, created: !current, item: finalItem, backlogItem: savedBacklogItem ? publicItem(savedBacklogItem) : null, deckItem: savedDeckItem ? publicItem(savedDeckItem) : null, currentContent: currentActivity, toastEmitted: Boolean(broadcast && envelope.behavior.showToast), envelope };
+}
+
+function requireExternalApiToken(req, res, next) {
+  const expected = String(process.env.BBQUEUE_API_TOKEN || "").trim();
+  if (!expected) return next();
+  const supplied = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim() || String(req.headers["x-api-key"] || "").trim();
+  if (supplied !== expected) return res.status(401).json({ error: "Token de API inválido." });
+  next();
+}
+
+app.get("/api/v1/ingestion/schema", (_req, res) => res.json({ apiVersion: "1", endpoint: "/api/v1/items/upsert", example: ingestionExample() }));
+app.post("/api/v1/items/upsert", requireExternalApiToken, async (req, res) => {
+  try { const result = await ingestExternalItem(req.body, { integration: req.body?.source || "external" }); res.status(result.created ? 201 : 200).json(result); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
+app.post("/api/v1/events", requireExternalApiToken, async (req, res) => {
+  try { const result = await ingestExternalItem(req.body, { integration: req.body?.source || "external" }); res.status(result.created ? 201 : 200).json(result); }
+  catch (error) { res.status(400).json({ error: error.message }); }
+});
+
 app.delete("/api/backlog/:source/:id", async (req, res) => {
   const started = traceActionStart("backlog.delete", req);
   try {
@@ -1707,19 +1859,28 @@ async function handleTautulliWebhook(req, res) {
       trackedItem.detail = trackedItem.subtitle;
       trackedItem.meta = { ...(trackedItem.meta || {}), activityKind: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : event.startsPlayback ? "played" : "activity" };
       trackedItem = canonicalizePlexSeriesItem(trackedItem);
-      await updateOnDeckActivityFromItem(trackedItem);
-      await itemRegistryStore.upsert(trackedItem, { forceSubtitle: true, charred: shouldClearCharred(event.isLibraryAdded ? "plexLibraryAdded" : "plexPlayback") ? false : undefined, activity: { eventType: trackedItem.meta?.backlogSource || event.rawEvent || "plex_activity", title: trackedItem.title, subtitle: trackedItem.subtitle, activityAt: trackedItem.lastActivityAt } });
-
-      const followed = findBacklogItemByCanonicalId(trackedItem.canonicalId);
-      if (followed) {
-        savedBacklogItem = await backlogStore.upsert("plex", { ...followed, ...trackedItem, id: followed.id, lastActivityAt: trackedItem.lastActivityAt });
-        console.log("[tautulli] followed backlog updated", { rawEvent: event.rawEvent, canonicalId: trackedItem.canonicalId, title: trackedItem.title });
-      } else {
-        console.log("[tautulli] database updated only", { rawEvent: event.rawEvent, canonicalId: trackedItem.canonicalId, title: trackedItem.title });
-      }
-      await syncItemRegistryNow("tautulli-webhook");
-      const payload = fullStatePayload({ item: publicItem(itemRegistryStore.get(trackedItem.canonicalId) || trackedItem), backlogItem: savedBacklogItem ? publicItem(savedBacklogItem) : null });
-      broadcastDelta(savedBacklogItem ? "item:backlog-upserted" : "item:database-updated", payload);
+      const ingestion = await ingestExternalItem({
+        source: "plex",
+        canonicalId: trackedItem.canonicalId,
+        externalId: String(metadata.ratingKey || trackedItem.ratingKey || trackedItem.canonicalId),
+        entityType: trackedItem.collectionType || trackedItem.type,
+        title: trackedItem.title,
+        detail: trackedItem.subtitle,
+        eventType: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : "played",
+        occurredAt: trackedItem.lastActivityAt,
+        assets: { poster: trackedItem.poster, backdrop: trackedItem.backdrop },
+        metadata: trackedItem.meta,
+        behavior: {
+          createIfMissing: true,
+          updateMetadata: true,
+          updateDetail: true,
+          updateActivity: true,
+          clearCharred: shouldClearCharred(event.isLibraryAdded ? "plexLibraryAdded" : "plexPlayback")
+        }
+      }, { integration: "tautulli" });
+      trackedItem = ingestion.item;
+      savedBacklogItem = ingestion.backlogItem || null;
+      console.log("[tautulli] item ingested", { rawEvent: event.rawEvent, canonicalId: trackedItem.canonicalId, title: trackedItem.title });
     }
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
 
@@ -1805,16 +1966,22 @@ async function handlePlayniteWebhook(req, res) {
     await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
     const playniteItem = { ...normalizePlayniteBacklogItem(game), lastActivityAt: new Date().toISOString() };
 
-    await itemRegistryStore.upsert(playniteItem, { charred: shouldClearCharred("playniteStarted") ? false : undefined, activity: { eventType: "playnite_played", title: playniteItem.title, subtitle: playniteItem.subtitle, activityAt: playniteItem.lastActivityAt } });
-    const deckUpdated = await updateOnDeckActivityFromItem({ ...game, source: "playnite", lastActivityAt: playniteItem.lastActivityAt });
-    const followed = findBacklogItemByCanonicalId(playniteItem.canonicalId);
-    if (followed) await backlogStore.upsert("playnite", { ...followed, ...playniteItem, id: followed.id, lastActivityAt: playniteItem.lastActivityAt });
-    await syncItemRegistryNow("playnite-webhook");
+    const ingestion = await ingestExternalItem({
+      source: "playnite",
+      canonicalId: playniteItem.canonicalId,
+      externalId: String(playniteItem.gameId || game.gameId || playniteItem.canonicalId),
+      entityType: "games",
+      title: playniteItem.title,
+      detail: playniteItem.subtitle,
+      eventType: "started",
+      occurredAt: playniteItem.lastActivityAt,
+      assets: { poster: playniteItem.poster, backdrop: playniteItem.backdrop },
+      metadata: playniteItem.meta,
+      behavior: { createIfMissing: true, updateMetadata: true, updateDetail: true, updateActivity: true, clearCharred: shouldClearCharred("playniteStarted") }
+    }, { integration: "playnite" });
 
     console.log("Webhook Playnite recibido", { title: game.title, platforms: game.platforms, hasCover: Boolean(game.cover), hasBackground: Boolean(game.background), payloadBytes: Number(req.headers["content-length"] || 0), persistedAssets: true });
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
-    const payload = fullStatePayload({ item: publicItem(itemRegistryStore.get(playniteItem.canonicalId) || playniteItem), backlogItem: followed ? publicItem(findBacklogItemByCanonicalId(playniteItem.canonicalId)) : null, deckUpdated });
-    broadcastDelta(followed ? "item:backlog-upserted" : "item:database-updated", payload);
     return res.status(200).json({ ok: true, event: game.event, title: game.title });
   } catch (error) {
     console.error("Error en webhook Playnite:", error);

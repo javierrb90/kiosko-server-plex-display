@@ -19,7 +19,7 @@ function canonicalizePlexSeriesInput(input = {}) {
     canonicalId: input.canonicalId || (canonicalRatingKey ? `plex:series:${canonicalRatingKey}` : input.canonicalId),
     ratingKey: canonicalRatingKey || input.ratingKey,
     title: input.meta?.grandparentTitle || input.meta?.showTitle || input.meta?.seriesTitle || input.title,
-    subtitle: "Serie",
+    subtitle: input.subtitle || input.detail || input.meta?.originalSubtitle || input.meta?.createdEpisodeCode || "Serie",
     meta: {
       ...(input.meta || {}),
       plexType,

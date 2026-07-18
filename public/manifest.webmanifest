@@ -1,7 +1,7 @@
 {
-  "name": "Kiosko Media Center",
-  "short_name": "Kiosko",
-  "description": "Backlog y colecciones multimedia para Plex y Playnite.",
+  "name": "BBQueue",
+  "short_name": "BBQueue",
+  "description": "Biblioteca, Backlog, On Deck y Colección para Plex y Playnite.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

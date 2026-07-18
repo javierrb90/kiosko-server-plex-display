@@ -63,7 +63,7 @@ export class CollectionGroupStore {
         this.groups.push(group);
       }
     } catch (error) {
-      if (error.code !== "ENOENT") console.error("No se pudieron cargar grupos de colecciones:", error);
+      if (error.code !== "ENOENT") console.error("No se pudieron cargar los grupos:", error);
     }
   }
 

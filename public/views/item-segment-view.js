@@ -252,7 +252,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
         <div class="manual-item-preview">
           <div class="manual-item-preview__backdrop"></div>
           <div class="manual-item-preview__poster"><span>+</span></div>
-          <div><strong>Nuevo item</strong><small>Creado en Kiosko</small></div>
+          <div><strong>Nuevo item</strong><small>Creado manualmente en BBQueue</small></div>
         </div>
         <label class="ui-field"><span>Título</span><input data-manual-title placeholder="Título" required></label>
         <label class="ui-field"><span>Estado / detalle</span><input data-manual-detail placeholder="Detalle visible, estado, nota..."></label>

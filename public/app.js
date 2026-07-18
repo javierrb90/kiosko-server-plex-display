@@ -9,7 +9,7 @@ import { createDatabaseView } from "/views/database.js";
 import { openItemDetail } from "/core/item-detail.js";
 
 const debug = () => {};
-const debugError = (...args) => console.error('[Kiosko UI]', ...args);
+const debugError = (...args) => console.error('[BBQueue UI]', ...args);
 const settingsTrace = () => {}; // trazas desactivadas en build estable
 
 const appRoot = document.getElementById('app');
@@ -380,8 +380,10 @@ function playNotificationSound() {
     setTimeout(() => ctx.close().catch(() => {}), 420);
   } catch (error) { debugError('No se pudo reproducir sonido de notificación', error); }
 }
-function showActionToast({ title, subtitle = '', action = null, notification = null } = {}) {
-  if (!state.settings?.notifications?.toastEnabled) return;
+function showActionToast({ title, subtitle = '', action = null, notification = null, force = false } = {}) {
+  // Los toasts de actividad solicitados explícitamente por la API no dependen
+  // de la preferencia de toasts del centro de notificaciones.
+  if (!force && !state.settings?.notifications?.toastEnabled) return;
   state.latestNotification = notification;
   state.latestToastAction = action;
   clearTimeout(state.toastTimer);
@@ -397,6 +399,26 @@ function showActionToast({ title, subtitle = '', action = null, notification = n
 }
 function showNotificationToast(notification) {
   return showActionToast({ title: notification.title || 'Nueva notificación', subtitle: notification.subtitle || notification.source || '', notification, action: () => openNotificationsOverlay().catch(debugError) });
+}
+function activityToastLabel(payload = {}) {
+  const source = String(payload.source || '').toLowerCase();
+  const eventType = String(payload.eventType || '').toLowerCase();
+  if (source === 'playnite' && ['started', 'played'].includes(eventType)) return 'Juego iniciado';
+  if (source === 'plex' && ['played', 'started'].includes(eventType)) return 'Reproducción iniciada';
+  if (source === 'plex' && ['watched', 'completed'].includes(eventType)) return 'Contenido visto';
+  if (source === 'plex' && eventType === 'added') return 'Contenido añadido';
+  if (eventType === 'watched' || eventType === 'completed') return 'Contenido completado';
+  if (eventType === 'added') return 'Contenido añadido';
+  return 'Actividad recibida';
+}
+function showIngestionActivityToast(payload = {}) {
+  const detail = [payload.title, payload.detail].filter(Boolean).join(' · ');
+  return showActionToast({
+    title: activityToastLabel(payload),
+    subtitle: detail,
+    action: payload.canonicalId ? () => openItemFromRoute(payload.canonicalId, views.activeId || 'database').catch(debugError) : null,
+    force: true
+  });
 }
 
 function currentPoster(content = {}) {
@@ -529,7 +551,7 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
   }
   views.show(id, { reason });
   try { if (persist) window.history.replaceState(null, '', hashForView(id)); } catch {}
-  document.querySelectorAll('[data-nav]').forEach(btn => btn.classList.toggle('dock__item--active', btn.dataset.nav === id));
+  document.querySelectorAll('[data-nav]').forEach(btn => { const active = btn.dataset.nav === id; btn.classList.toggle('dock__item--active', active); if (active) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current'); });
   if (persist) api('/api/state', { method: 'PUT', body: JSON.stringify({ activeView: id }) }).catch(debugError);
 }
 
@@ -760,6 +782,27 @@ const socket = new SocketClient({
     if (message.type === 'current:update') { views.update('current-content', { currentContent: message.payload }); if (message.payload) showCurrentToast(message.payload); else updateNowPlayingMini(null); return; }
     if (message.type === 'plex:update') { const current = { ...(message.payload || {}), source: 'plex', kind: 'plex' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
     if (message.type === 'game:update') { const current = { ...(message.payload || {}), source: 'playnite', kind: 'game' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
+    if (message.type === 'activity:received') {
+      const activity = message.payload || {};
+      // Un inicio desde Playnite también representa el contenido actual. Así se
+      // conserva el comportamiento visual del antiguo webhook sin convertirlo
+      // de nuevo en una notificación persistente.
+      if (String(activity.source || '').toLowerCase() === 'playnite' && ['started', 'played'].includes(String(activity.eventType || '').toLowerCase())) {
+        const current = {
+          ...activity,
+          source: 'playnite',
+          kind: 'game',
+          event: 'game_started',
+          cover: activity.poster || '',
+          background: activity.backdrop || '',
+          subtitle: activity.detail || ''
+        };
+        state.nowPlayingDismissed = false;
+        updateNowPlayingMini(current, { highlight: true, forceOpen: true });
+      }
+      showIngestionActivityToast(activity);
+      return;
+    }
     if (message.type === 'notifications:cleared') {
       state.overlayNotifications = [];
       state.unreadCount = 0;
@@ -856,7 +899,7 @@ async function downloadExport() {
   const url = URL.createObjectURL(blob);
   const contentDisposition = response.headers.get('content-disposition') || '';
   const match = contentDisposition.match(/filename="?([^";]+)"?/i);
-  const fileName = match?.[1] || `kiosko-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  const fileName = match?.[1] || `bbqueue-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   const link = document.createElement('a');
   link.href = url;
   link.download = fileName;

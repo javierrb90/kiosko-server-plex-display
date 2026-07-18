@@ -18,7 +18,7 @@ export class SocketClient {
       try {
         this.onMessage(JSON.parse(data));
       } catch (error) {
-        console.error("[Kiosko UI] No se ha podido parsear mensaje WebSocket", { data, error });
+        console.error("[BBQueue UI] No se ha podido parsear mensaje WebSocket", { data, error });
       }
     };
     this.ws.onopen = () => {

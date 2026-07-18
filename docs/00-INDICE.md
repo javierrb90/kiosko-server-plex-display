@@ -1,58 +1,14 @@
-# Índice de documentación · Kiosko Media Center v6.0
+# Documentación de BBQueue
 
-## Para entender la aplicación
-
-1. [Visión general](01-VISION-GENERAL.md)
-2. [Terminología](02-TERMINOLOGIA.md)
-3. [Vistas e interfaz](03-VISTAS-E-INTERFAZ.md)
-4. [Flujos de uso](04-FLUJOS-DE-USO.md)
-
-## Para usar y configurar
-
-5. [Integraciones](05-INTEGRACIONES.md)
-6. [Grupos y filtros](06-GRUPOS-Y-FILTROS.md)
-7. [Datos y persistencia](07-DATOS-PERSISTENCIA.md)
-8. [API y webhooks](08-API-Y-WEBHOOKS.md)
-
-## Para mantener o desarrollar
-
-9. [Arquitectura técnica](09-ARQUITECTURA-TECNICA.md)
-10. [Despliegue en producción](10-DESPLIEGUE-PRODUCCION.md)
-11. [Diagnóstico y logs](11-DIAGNOSTICO-Y-LOGS.md)
-12. [Guía para agentes IA](12-GUIA-PARA-AGENTES-IA.md)
-13. [Roadmap sin backups](13-ROADMAP-SIN-BACKUPS.md)
-
-## Release
-
-- [Release notes v6.0](RELEASE-NOTES-V6-0.md)
-
-- [Referencia rápida](14-REFERENCIA-RAPIDA.md)
-
-- [Item Registry](15-ITEM-REGISTRY.md)
-- [Release notes v6.1](RELEASE-NOTES-V6-1.md)
-
-- [Release notes v6.5 Phase 2](RELEASE-NOTES-V6-5-PHASE-2.md)
-
-- [Release notes v6.5.1 Hotfix](RELEASE-NOTES-V6-5-1-HOTFIX.md)
-
-- [Release notes v6.5.2 Refactor hotfix](RELEASE-NOTES-V6-5-2-REFACTOR-HOTFIX.md)
-
-- [Release notes v6.5.3 List hotfix](RELEASE-NOTES-V6-5-3-LIST-HOTFIX.md)
-
-- [Release notes v6.5.4 Database visibility](RELEASE-NOTES-V6-5-4-DATABASE-VISIBILITY.md)
-- [Release notes v6.6 JSON Database Core](RELEASE-NOTES-V6-6-JSON-DATABASE-CORE.md)
-
-- [Release notes v6.6.1 Hotfix](RELEASE-NOTES-V6-6-1-HOTFIX.md)
-
-- [Release notes v6.7 Item Detail & Tracking](RELEASE-NOTES-V6-7-ITEM-DETAIL-TRACKING.md)
-
-- [Release notes v6.7.1 Detail State Cleanup](RELEASE-NOTES-V6-7-1-DETAIL-STATE-CLEANUP.md)
-- [Release notes v6.8 Unified Views](RELEASE-NOTES-V6-8-UNIFIED-VIEWS.md)
-
-- [Release notes v6.8.2 Item Card Polish](RELEASE-NOTES-V6-8-2-ITEM-CARD-POLISH.md)
-
-- [Release notes v6.9 Manual Items + Plex Watched](RELEASE-NOTES-V6-9-MANUAL-ITEMS-PLEX-WATCHED.md)
-
-- [Release notes v6.9.1 Manual Source Hotfix](RELEASE-NOTES-V6-9-1-MANUAL-SOURCE-HOTFIX.md)
-
-- [Release notes v6.10 Custom Types + Manual Edit](RELEASE-NOTES-V6-10-CUSTOM-TYPES-MANUAL-EDIT.md)
+1. [Visión y terminología](01-VISION-Y-TERMINOLOGIA.md)
+2. [Arquitectura](02-ARQUITECTURA.md)
+3. [Modelo de dominio](03-MODELO-DE-DOMINIO.md)
+4. [Persistencia actual](04-PERSISTENCIA-JSON.md)
+5. [API y tiempo real](05-API-Y-TIEMPO-REAL.md)
+6. [Integraciones](06-INTEGRACIONES.md)
+7. [Frontend e interfaz](07-FRONTEND-E-INTERFAZ.md)
+8. [Configuración y despliegue](08-CONFIGURACION-Y-DESPLIEGUE.md)
+9. [Diagnóstico y desarrollo](09-DESARROLLO-Y-DIAGNOSTICO.md)
+10. [Auditoría técnica](10-AUDITORIA-TECNICA.md)
+11. [Plan de migración a SQLite](11-PLAN-SQLITE.md)
+12. [Objetivos futuros](12-ROADMAP.md)

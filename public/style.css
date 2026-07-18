@@ -5333,3 +5333,14 @@ button.kiosko-list__row:hover {
   .section-title__row{align-items:flex-start;flex-direction:column}.section-title__controls{width:100%;justify-content:flex-end}
   .workspace-toolbar .view-filter-button__label{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 }
+
+
+/* v6.14.1 database navigation and list thumbnails */
+.primary-navigation>.topbar-button.dock__item--active{background:color-mix(in srgb,var(--accent-color) 28%,rgba(255,255,255,.06))!important;border-color:color-mix(in srgb,var(--accent-color) 58%,transparent)!important;color:#fff!important;box-shadow:0 8px 22px color-mix(in srgb,var(--accent-color) 16%,transparent)!important}
+.kiosko-list__row{grid-template-columns:48px minmax(220px,1.8fr) .7fr .7fr .7fr .8fr .9fr!important;align-items:start!important}
+.kiosko-list__row--head{align-items:center!important}
+.kiosko-list__thumb{width:42px;height:42px;border-radius:10px;overflow:hidden;background:rgba(255,255,255,.08);display:grid!important;place-items:center!important;align-self:start}
+.kiosko-list__thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.kiosko-list__thumb>span{font-weight:900;color:rgba(255,255,255,.6)}
+.kiosko-list__title{min-width:0}
+@media(max-width:760px){.kiosko-list__row{grid-template-columns:42px minmax(0,1fr)!important}.kiosko-list__row span:nth-child(n+3){display:none!important}.kiosko-list__thumb{display:grid!important}}
