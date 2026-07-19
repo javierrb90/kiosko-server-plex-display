@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.1.4
+
+- Tautulli usa el tipo resuelto por Plex como fuente de verdad para distinguir películas, series, temporadas y episodios.
+- Los episodios recién añadidos actualizan la entidad de su serie, su actividad y su detalle visible.
+- Las opciones de notificación, toast y retirada de Achicharrado permanecen desacopladas de la ingestión.
+- La ficha del item incorpora una vista de depuración con el JSON completo y opción de copia.
+- Se añaden trazas compactas de resolución Tautulli/Plex para diagnóstico.
+
 ## 7.1.3
 
 - La segmentación rápida de Base de datos se muestra antes del botón de filtros.

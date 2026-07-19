@@ -206,7 +206,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "BBQ",
-    version: "v7.1.3",
+    version: "v7.1.4",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -635,7 +635,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.1.3", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.1.4", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -1014,17 +1014,25 @@ function normalizePlexBacklogItem(metadata = {}) {
 
 function canonicalizePlexSeriesItem(item = {}) {
   if (item.source !== "plex") return item;
-  const plexType = item.meta?.plexType || item.type;
-  const isSeriesItem = item.collectionType === "series" || ["episode", "season", "show"].includes(plexType);
-  if (!isSeriesItem || item.collectionType === "movies") return item;
+  const plexType = String(item.meta?.plexType || item.type || "unknown").toLowerCase();
+  const canonicalRatingKey = item.meta?.canonicalRatingKey || item.meta?.grandparentRatingKey || item.grandparentRatingKey || item.meta?.parentRatingKey || item.parentRatingKey || item.ratingKey;
 
-  const canonicalRatingKey =
-    item.meta?.canonicalRatingKey ||
-    item.meta?.grandparentRatingKey ||
-    item.grandparentRatingKey ||
-    item.meta?.parentRatingKey ||
-    item.parentRatingKey ||
-    item.ratingKey;
+  // Plex es la fuente de verdad. Una película nunca puede convertirse en serie por
+  // aliases históricos, campos opcionales de Tautulli o metadata previamente guardada.
+  if (plexType === "movie") {
+    const movieKey = item.meta?.canonicalRatingKey || item.ratingKey || canonicalRatingKey;
+    return {
+      ...item,
+      type: "movie",
+      collectionType: "movies",
+      canonicalId: movieKey ? `plex:movies:${movieKey}` : item.canonicalId,
+      ratingKey: item.ratingKey || movieKey,
+      meta: { ...(item.meta || {}), plexType: "movie", canonicalRatingKey: movieKey || null }
+    };
+  }
+
+  const isSeriesItem = ["episode", "season", "show"].includes(plexType) || item.collectionType === "series";
+  if (!isSeriesItem) return item;
 
   const canonicalId = item.canonicalId || (canonicalRatingKey ? `plex:series:${canonicalRatingKey}` : undefined);
   const showTitle =
@@ -2101,6 +2109,11 @@ async function handleTautulliWebhook(req, res) {
     const ratingKey = req.body.ratingKey || req.body.rating_key;
     if (!ratingKey) return res.status(400).json({ error: "Falta ratingKey.", receivedKeys: Object.keys(req.body || {}) });
     let metadata = await plex.getMetadata(ratingKey);
+    const payloadMediaType = String(req.body?.mediaType || req.body?.media_type || "").toLowerCase().trim();
+    const plexMediaType = String(metadata.type || "unknown").toLowerCase();
+    if (payloadMediaType && payloadMediaType !== plexMediaType) {
+      console.warn("[tautulli] media type mismatch", { ratingKey: String(ratingKey), payloadMediaType, plexMediaType });
+    }
     metadata = await cachePlexMetadataAssets(metadata);
     const event = normalizeTautulliEvent(req.body, metadata);
     runtime.plex = event.plex;
@@ -2121,10 +2134,18 @@ async function handleTautulliWebhook(req, res) {
               tautulliEvent: event.rawEvent
             }
           });
-      trackedItem.lastActivityAt = new Date().toISOString();
+      const payloadTimestamp = req.body?.timestamp;
+      const parsedTimestamp = payloadTimestamp ? new Date(payloadTimestamp) : null;
+      trackedItem.lastActivityAt = parsedTimestamp && !Number.isNaN(parsedTimestamp.getTime()) ? parsedTimestamp.toISOString() : new Date().toISOString();
       trackedItem.subtitle = plexActivityDetail(metadata, event) || trackedItem.subtitle;
       trackedItem.detail = trackedItem.subtitle;
-      trackedItem.meta = { ...(trackedItem.meta || {}), activityKind: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : event.startsPlayback ? "played" : "activity" };
+      trackedItem.meta = {
+        ...(trackedItem.meta || {}),
+        activityKind: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : event.startsPlayback ? "played" : "activity",
+        tautulliPayloadType: payloadMediaType || null,
+        plexResolvedType: plexMediaType,
+        tautulliPayload: { event: event.rawEvent, ratingKey: String(ratingKey), mediaType: payloadMediaType || null, title: req.body?.title || null, seasonNumber: req.body?.seasonNumber || req.body?.season_num || null, episodeNumber: req.body?.episodeNumber || req.body?.episode_num || null, timestamp: payloadTimestamp || null }
+      };
       trackedItem = canonicalizePlexSeriesItem(trackedItem);
       const ingestion = await ingestExternalItem({
         source: "plex",
@@ -2148,7 +2169,18 @@ async function handleTautulliWebhook(req, res) {
       }, { integration: "tautulli" });
       trackedItem = ingestion.item;
       savedBacklogItem = ingestion.backlogItem || null;
-      console.log("[tautulli] item ingested", { rawEvent: event.rawEvent, canonicalId: trackedItem.canonicalId, title: trackedItem.title });
+      console.log("[tautulli] item ingested", {
+        rawEvent: event.rawEvent,
+        normalizedEvent: event.event,
+        payloadType: payloadMediaType || null,
+        plexType: plexMediaType,
+        ratingKey: String(metadata.ratingKey || ratingKey),
+        entityKey: String(metadata.canonicalRatingKey || metadata.grandparentRatingKey || metadata.parentRatingKey || metadata.ratingKey || ratingKey),
+        canonicalId: trackedItem.canonicalId,
+        operation: ingestion.created ? "create" : "update",
+        clearCharred: shouldClearCharred(event.isLibraryAdded ? "plexLibraryAdded" : "plexPlayback"),
+        title: trackedItem.title
+      });
     }
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
 

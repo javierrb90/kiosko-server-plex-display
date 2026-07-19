@@ -5587,3 +5587,10 @@ button.kiosko-list__row:hover {
 @media(max-width:900px){
   .database-segment-button{width:32px;min-height:32px;padding:0}
 }
+
+/* Item JSON debug view */
+.item-detail__utility-actions{display:flex;align-items:center;gap:.45rem}
+.item-debug{display:grid;gap:.85rem;min-width:0}
+.item-debug__toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.item-debug__toolbar p{margin:0;color:var(--muted,#aeb4c2)}
+.item-debug pre{margin:0;max-height:min(62vh,680px);overflow:auto;padding:1rem;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#070a10;color:#dbe7ff;font:500 .82rem/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word}

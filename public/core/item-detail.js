@@ -230,7 +230,10 @@ function detailActionsMarkup(item = {}, context = '') {
   if (context === 'removed') return `<div class="item-detail__actions item-detail__actions--clean" data-detail-actions><span class="settings-help">Este elemento se ha eliminado del contexto actual.</span></div>`;
   return `<div class="item-detail__actions item-detail__actions--clean" data-detail-actions>
     <div class="item-detail__quick-group">${primaryActionsMarkup(item, context)}</div>
-    <button type="button" class="item-detail__edit-trigger" data-detail-action="edit" title="Editar item" aria-label="Editar item">✎</button>
+    <div class="item-detail__utility-actions">
+      <button type="button" class="item-detail__edit-trigger" data-detail-action="debug" title="Ver JSON de depuración" aria-label="Ver JSON de depuración">{ }</button>
+      <button type="button" class="item-detail__edit-trigger" data-detail-action="edit" title="Editar item" aria-label="Editar item">✎</button>
+    </div>
   </div>`;
 }
 
@@ -530,6 +533,17 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     renderInfoSubview(root, subviewMarkup('Diario', content, { panelClass: 'item-detail-subview--journal' }));
   }
 
+
+  async function showDebug(root) {
+    const canonical = encodeURIComponent(item.canonicalId || item.id);
+    const fresh = await api(`/api/items/${canonical}`).catch(() => ({ item }));
+    const raw = fresh?.item || fresh || item;
+    const json = JSON.stringify(raw, null, 2);
+    const content = `<div class="item-debug"><div class="item-debug__toolbar"><p>Estado completo del item tal y como lo expone la API.</p><button type="button" class="item-detail-control item-detail-control--primary item-detail-control--compact" data-detail-action="debug-copy">Copiar JSON</button></div><pre data-item-debug-json>${escapeHtml(json)}</pre></div>`;
+    root.__debugJson = json;
+    renderInfoSubview(root, subviewMarkup('Depuración JSON', content, { eyebrow: item.canonicalId || item.id || 'item' }));
+  }
+
   async function runAction(root, action, trigger = null) {
     if (!action || busy) return;
     if (action === 'groups') { await refreshGroups(); renderInlineGroupPicker(root); return; }
@@ -537,6 +551,8 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     if (action === 'groups-save') { await saveInlineGroups(root); return; }
     if (action === 'menu') { const menu = root.querySelector('[data-detail-more-menu]'); if (menu) menu.hidden = !menu.hidden; return; }
     if (action === 'edit') { await editItem(root); return; }
+    if (action === 'debug') { await showDebug(root); return; }
+    if (action === 'debug-copy') { try { await navigator.clipboard.writeText(root.__debugJson || root.querySelector('[data-item-debug-json]')?.textContent || ''); toast('JSON copiado'); } catch { toast('No se pudo copiar el JSON'); } return; }
     if (action === 'edit-manual-data') { await editManualData(root); return; }
     if (action === 'activity') { await showActivityForm(root); return; }
     if (action === 'activity-save') { await saveActivity(root); return; }
