@@ -4,3 +4,4 @@ data/*.json
 data/assets/
 data/custom-css/
 package-lock.json
+data/
