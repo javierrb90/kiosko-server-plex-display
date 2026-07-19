@@ -23,7 +23,7 @@
         <span class="notifications-trigger__badge" data-notifications-badge hidden>0</span>
       </button>
       <div class="primary-navigation" aria-label="Navegación principal">
-        <button data-nav="database" class="topbar-button primary-navigation__database" type="button" aria-label="Base de datos"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5c0-1.7 3.6-3 8-3s8 1.3 8 3v14c0 1.7-3.6 3-8 3s-8-1.3-8-3V5Zm8 1.6c3.5 0 6-.8 6-1.6s-2.5-1.6-6-1.6-6 .8-6 1.6 2.5 1.6 6 1.6Zm6 3.1c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V12c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6V9.7Zm0 5c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V19c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6v-4.3Z"/></svg></span></button>
+        <button data-nav="database" class="topbar-button primary-navigation__database" type="button" aria-label="Actividades"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5c0-1.7 3.6-3 8-3s8 1.3 8 3v14c0 1.7-3.6 3-8 3s-8-1.3-8-3V5Zm8 1.6c3.5 0 6-.8 6-1.6s-2.5-1.6-6-1.6-6 .8-6 1.6 2.5 1.6 6 1.6Zm6 3.1c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V12c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6V9.7Zm0 5c-1.4.8-3.6 1.3-6 1.3s-4.6-.5-6-1.3V19c0 .8 2.5 1.6 6 1.6s6-.8 6-1.6v-4.3Z"/></svg></span></button>
         <nav id="dock" class="dock dock--flat dock--workspaces" aria-label="Espacios de trabajo">
           <button data-nav="backlog" class="dock__item--active topbar-button" type="button" aria-label="Backlog"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 5h16v3H4v-3Zm0 5h10v3H4v-3Zm13 .5 2 2 3-4 1.6 1.2-4.4 5.8-3.6-3.6L17 15.5Z"/></svg></span></button>
           <button data-nav="on-deck" class="topbar-button" type="button" aria-label="On Deck"><span class="dock-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v3H5V4Zm0 5h10v3H5V9Zm0 5h8v3H5v-3Zm11.2 1.2V11l4.8 3-4.8 3Z"/></svg></span></button>
@@ -45,7 +45,7 @@
     <section class="view" data-view="collections" aria-hidden="true"></section>
   </main>
 
-  <button id="toast" class="event-toast" type="button" hidden></button>
+  <aside id="toast" class="event-toast" hidden aria-live="polite"></aside>
   <aside id="notifications-overlay" class="notifications-overlay" aria-hidden="true" hidden>
     <button class="notifications-overlay__scrim" type="button" data-close-notifications aria-label="Cerrar notificaciones"></button>
     <section class="notifications-panel" role="dialog" aria-modal="false" aria-label="Centro de notificaciones rápido">
@@ -56,7 +56,6 @@
         </div>
         <button class="notifications-panel__close" type="button" data-close-notifications aria-label="Cerrar">×</button>
       </header>
-      <div class="notifications-panel__filters" data-notifications-overlay-filters></div>
       <div class="notifications-panel__list notifications-panel__list--scroll" data-notifications-overlay-list></div>
       <footer class="notifications-panel__footer">
         <span data-notifications-overlay-count>Últimas notificaciones</span>

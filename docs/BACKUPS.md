@@ -8,11 +8,11 @@ BBQ exporta dos conjuntos independientes:
 
 Incluye:
 
-- ítems e identidad canónica;
+- actividads e identidad canónica;
 - estados de espacios;
 - actividad y fechas;
 - rating, review y diario;
-- grupos y relaciones;
+- listas y relaciones;
 - referencias y binarios de assets.
 
 ### Configuración
@@ -22,7 +22,7 @@ Incluye:
 - opciones generales;
 - apariencia y CSS personalizado;
 - configuración de espacios;
-- tipos y grupos;
+- tipos y listas;
 - parrilla;
 - integraciones;
 - credenciales solo cuando el usuario lo solicita.

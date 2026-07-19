@@ -1,4 +1,4 @@
-const CACHE = 'bbq-v7-1-5';
+const CACHE = 'bbq-v7-3-1';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/core/socket-client.js'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

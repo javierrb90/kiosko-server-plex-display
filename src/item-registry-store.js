@@ -130,12 +130,17 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
       ? input.rating
       : (existing.rating ?? null);
   const preserveManualDetail = Boolean(patch.preserveManualDetail && source === "kiosko" && (existing.meta?.manualDetail || existing.metadata?.manualDetail) && !patch.forceSubtitle);
+  const hasDetail = Object.prototype.hasOwnProperty.call(input, "detail") || Object.prototype.hasOwnProperty.call(input, "subtitle");
+  const hasContext = Object.prototype.hasOwnProperty.call(input, "context");
+  const hasSubtype = Object.prototype.hasOwnProperty.call(input, "subtype");
   const incomingDetail = clean(input.detail ?? input.subtitle ?? "");
   const existingDetail = clean(existing.detail ?? existing.subtitle ?? "");
+  const context = hasContext ? clean(input.context) : clean(existing.context);
+  const subtype = hasSubtype ? clean(input.subtype) : clean(existing.subtype);
   const incomingActivityTime = Date.parse(input.lastActivityAt || input.lastSeenAt || input.updatedAt || input.createdAt || 0) || 0;
   const existingActivityTime = Date.parse(existing.lastActivityAt || existing.lastSeenAt || existing.updatedAt || existing.createdAt || 0) || 0;
   const effectiveDetail = patch.forceSubtitle
-    ? (incomingDetail || existingDetail)
+    ? (hasDetail ? incomingDetail : existingDetail)
     : preserveManualDetail
       ? existingDetail
       : incomingDetail && incomingActivityTime >= existingActivityTime
@@ -177,7 +182,9 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
     type: resolvedType,
     collectionType,
     title: clean(input.meta?.grandparentTitle || input.showTitle || input.title || existing.title || "Sin título") || "Sin título",
-    detail: effectiveDetail,
+    subtype: subtype || null,
+    context: context || null,
+    detail: hasDetail ? effectiveDetail : existingDetail,
     subtitle: effectiveDetail,
     poster: input.poster ?? input.posterUrl ?? input.cover ?? existing.poster ?? null,
     backdrop: input.backdrop ?? input.backdropUrl ?? input.background ?? existing.backdrop ?? null,
@@ -228,6 +235,8 @@ export class ItemRegistryStore {
       type: row.type,
       collectionType: row.collection_type,
       title: row.title,
+      subtype: row.subtype || null,
+      context: row.context || null,
       detail: row.detail || "",
       subtitle: row.detail || "",
       poster: row.poster,
@@ -296,8 +305,8 @@ export class ItemRegistryStore {
     else if (typeSet.size) rows = rows.filter(item => typeSet.has(item.collectionType));
     if (source) rows = rows.filter(item => item.source === source);
     if (status) rows = rows.filter(item => item.status === status || item.states?.[status] === true);
-    if (q) rows = rows.filter(item => [item.title, item.subtitle, item.source, item.type, item.collectionType, item.year].some(value => clean(value).toLowerCase().includes(q)));
-    const sortKey = ["title", "source", "type", "collectionType", "rating", "completedAt", "firstSeenAt", "lastActivityAt", "updatedAt"].includes(sort) ? sort : "lastActivityAt";
+    if (q) rows = rows.filter(item => [item.title, item.subtitle, item.subtype, item.context, item.source, item.type, item.collectionType, item.year].some(value => clean(value).toLowerCase().includes(q)));
+    const sortKey = ["title", "source", "type", "collectionType", "subtype", "context", "rating", "completedAt", "firstSeenAt", "lastActivityAt", "updatedAt"].includes(sort) ? sort : "lastActivityAt";
     const dir = direction === "asc" ? 1 : -1;
     rows = [...rows].sort((a, b) => {
       const av = a[sortKey] ?? "";
@@ -392,6 +401,8 @@ export class ItemRegistryStore {
     for (const key of ["firstSeenAt", "lastActivityAt", "completedAt"]) {
       if (patch[key] !== undefined) item[key] = patch[key] || null;
     }
+    if (patch.subtype !== undefined) item.subtype = clean(patch.subtype) || null;
+    if (patch.context !== undefined) item.context = clean(patch.context) || null;
     if (patch.subtitle !== undefined) {
       item.detail = clean(patch.subtitle);
       item.subtitle = item.detail;
@@ -403,7 +414,9 @@ export class ItemRegistryStore {
     else if (patch.completedAt !== undefined) item.states = { ...(item.states || {}), completed: false };
     item.status = item.states?.completed ? "completed" : item.states?.inOnDeck ? "on-deck" : item.states?.inBacklog ? "backlog" : "known";
     item.updatedAt = now();
-    await this.addActivity({ ...item, eventType: patch.subtitle !== undefined ? "manual_detail_edit" : "manual_dates_edit" }, item, { eventType: patch.subtitle !== undefined ? "manual_detail_edit" : "manual_dates_edit", title: patch.subtitle !== undefined ? "Detalle editado" : "Fechas editadas", subtitle: item.subtitle, activityAt: item.lastActivityAt || now() });
+    const classificationChanged = patch.subtype !== undefined || patch.context !== undefined;
+    const eventType = patch.subtitle !== undefined ? "manual_detail_edit" : classificationChanged ? "manual_classification_edit" : "manual_dates_edit";
+    await this.addActivity({ ...item, eventType }, item, { eventType, title: patch.subtitle !== undefined ? "Detalle editado" : classificationChanged ? "Clasificación editada" : "Fechas editadas", subtitle: item.subtitle, activityAt: item.lastActivityAt || now() });
     await this.persist();
     return item;
   }
@@ -507,15 +520,15 @@ export class ItemRegistryStore {
       const db = this.sqlite.db;
       const upsertItem = db.prepare(`
         INSERT INTO items (
-          id, canonical_id, entity_id, parent_entity_id, source, type, collection_type, title, detail,
+          id, canonical_id, entity_id, parent_entity_id, source, type, collection_type, title, subtype, context, detail,
           poster, backdrop, year, rating_key, game_id, rating, first_seen_at, last_activity_at,
           completed_at, status, in_backlog, in_on_deck, completed, charred, turned_at,
           latest_activity_id, metadata_json, created_at, updated_at, deleted_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(canonical_id) DO UPDATE SET
           entity_id=excluded.entity_id, parent_entity_id=excluded.parent_entity_id,
           source=excluded.source, type=excluded.type, collection_type=excluded.collection_type,
-          title=excluded.title, detail=excluded.detail, poster=excluded.poster, backdrop=excluded.backdrop,
+          title=excluded.title, subtype=excluded.subtype, context=excluded.context, detail=excluded.detail, poster=excluded.poster, backdrop=excluded.backdrop,
           year=excluded.year, rating_key=excluded.rating_key, game_id=excluded.game_id, rating=excluded.rating,
           first_seen_at=excluded.first_seen_at, last_activity_at=excluded.last_activity_at,
           completed_at=excluded.completed_at, status=excluded.status, in_backlog=excluded.in_backlog,
@@ -540,7 +553,7 @@ export class ItemRegistryStore {
         upsertItem.run(
           item.id, item.canonicalId, item.entityId || null, item.parentEntityId || null,
           item.source || "manual", item.type || "item", item.collectionType || "series", item.title || "Sin título",
-          item.detail ?? item.subtitle ?? "", databaseAssetReference(item.poster), databaseAssetReference(item.backdrop), String(item.year || ""),
+          item.subtype || null, item.context || null, item.detail ?? item.subtitle ?? "", databaseAssetReference(item.poster), databaseAssetReference(item.backdrop), String(item.year || ""),
           item.ratingKey == null ? null : String(item.ratingKey), item.gameId == null ? null : String(item.gameId),
           item.rating == null ? null : Number(item.rating), item.firstSeenAt || null, item.lastActivityAt || null,
           item.completedAt || null, item.status || "known", item.states?.inBacklog ? 1 : 0,

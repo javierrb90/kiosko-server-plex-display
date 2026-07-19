@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export class SqliteDatabase {
   constructor(dataDir) {
@@ -103,6 +103,15 @@ export class SqliteDatabase {
           CREATE INDEX IF NOT EXISTS idx_backlog_entries_active ON backlog_entries(dismissed_at, created_at DESC);
         `);
         this.db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, new Date().toISOString());
+      });
+    }
+    if (current < 2) {
+      this.transaction(() => {
+        const columns = new Set(this.db.prepare("PRAGMA table_info(items)").all().map(row => row.name));
+        if (!columns.has("subtype")) this.db.exec("ALTER TABLE items ADD COLUMN subtype TEXT");
+        if (!columns.has("context")) this.db.exec("ALTER TABLE items ADD COLUMN context TEXT");
+        this.db.exec("CREATE INDEX IF NOT EXISTS idx_items_subtype ON items(subtype)");
+        this.db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, new Date().toISOString());
       });
     }
     if (current > SCHEMA_VERSION) throw new Error(`La base de datos usa un esquema más reciente (${current}) que esta aplicación (${SCHEMA_VERSION}).`);

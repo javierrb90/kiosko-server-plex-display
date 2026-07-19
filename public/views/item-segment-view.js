@@ -43,6 +43,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   let total = 0;
   let search = localStorage.getItem('bbqueue:global-search') || '';
   let activeTypes = new Set(['games','movies','series']);
+  let sessionLoadedTypes = false;
   let activeGroupIds = new Set();
   let groupMatch = 'any';
   let source = '';
@@ -87,7 +88,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       const parsed = JSON.parse(localStorage.getItem(sessionKey()) || 'null');
       if (!parsed) { if (incomingSearch) search = incomingSearch; return; }
       if (typeof parsed.search === 'string') search = parsed.search;
-      if (Array.isArray(parsed.activeTypes)) activeTypes = new Set(parsed.activeTypes.filter(Boolean));
+      if (Array.isArray(parsed.activeTypes)) { activeTypes = new Set(parsed.activeTypes.filter(Boolean)); sessionLoadedTypes = true; }
       if (Array.isArray(parsed.activeGroupIds)) activeGroupIds = new Set(parsed.activeGroupIds);
       if (Array.isArray(parsed.activeDatabaseSegments)) {
         const valid = parsed.activeDatabaseSegments.filter(segment => DATABASE_SEGMENTS.includes(segment));
@@ -137,6 +138,14 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   function databaseSegmentCounts() {
     const counts = Object.fromEntries(DATABASE_SEGMENTS.map(segment => [segment, 0]));
     for (const item of allItems) counts[databaseSegmentForItem(item)] += 1;
+    return counts;
+  }
+  function workspaceTypeCounts() {
+    const counts = Object.fromEntries(availableTypes().map(type => [type, 0]));
+    for (const item of allItems) {
+      const type = typeFor(item);
+      counts[type] = (counts[type] || 0) + 1;
+    }
     return counts;
   }
   function itemMatchesDatabaseSegments(item) {
@@ -231,7 +240,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     } else if (grouping === 'group') {
       for (const item of rows) {
         const matched = collectionGroups.find(group => itemMatchesGroup(item, group));
-        add(matched ? `group:${matched.id}` : 'group:none', matched?.name || 'Sin grupo', item, matched ? 1 : 0);
+        add(matched ? `group:${matched.id}` : 'group:none', matched?.name || 'Sin lista', item, matched ? 1 : 0);
       }
     } else {
       return renderItems(rows);
@@ -364,13 +373,13 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       transformOrigin: '50% 50%', transformStyle: 'preserve-3d',
       willChange: 'transform, filter, opacity'
     });
-    const parentGrid = node.closest('.media-grid');
+    const parentCuadrícula = node.closest('.media-grid');
     stage.appendChild(createStableVisualClone(node, rect));
     shell.appendChild(stage);
     document.body.appendChild(shell);
     activeVisualOverlay = shell;
     hideVisualFeedbackSource(node.dataset.canonicalId || node.dataset.id || '');
-    visualLog('overlay-created', { key: node.dataset.canonicalId || node.dataset.id, width: rect.width, height: rect.height, nodeClass: node.className, gridClass: parentGrid?.className || '', mode: reason === 'turned' ? 'single-surface-flip' : 'single-surface' });
+    visualLog('overlay-created', { key: node.dataset.canonicalId || node.dataset.id, width: rect.width, height: rect.height, nodeClass: node.className, gridClass: parentCuadrícula?.className || '', mode: reason === 'turned' ? 'single-surface-flip' : 'single-surface' });
     return { shell, stage };
   }
 
@@ -548,8 +557,11 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       const segmentCounts = databaseSegmentCounts();
       const segmentLabels = { unorganized: 'Sin organizar', backlog: 'Backlog', 'on-deck': 'On Deck', collections: 'Colección' };
       const segmentIcons = { unorganized: '○', backlog: 'B', 'on-deck': 'D', collections: '✓' };
-      const segmentToolbar = id === 'database' ? `<div class="database-segment-toolbar" role="group" aria-label="Segmentos visibles en Base de datos">${DATABASE_SEGMENTS.map(segment => `<button type="button" class="database-segment-button ${activeDatabaseSegments.has(segment) ? 'is-active' : ''}" data-database-segment="${segment}" aria-pressed="${activeDatabaseSegments.has(segment)}" title="${segmentLabels[segment]} (${segmentCounts[segment] || 0})"><span aria-hidden="true">${segmentIcons[segment]}</span><small>${segmentLabels[segment]}</small><strong>${segmentCounts[segment] || 0}</strong></button>`).join('')}</div>` : '';
-      localRoot.innerHTML = `<div class="workspace-toolbar">${segmentToolbar}<button type="button" class="view-actions-button view-filter-button ${activeGroupIds.size || (id === 'database' && activeDatabaseSegments.size < DATABASE_SEGMENTS.length) ? 'is-active' : ''}" data-open-filters title="Filtrar por grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1V19l-3.6 1v-7.9L4 5Z"/></svg><span class="view-filter-button__label">Filtros</span>${activeGroupIds.size ? `<strong class="workspace-toolbar__badge">${activeGroupIds.size}</strong>` : ''}</button><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span></button></div>`;
+      const segmentToolbar = id === 'database' ? `<div class="database-segment-toolbar" role="group" aria-label="Segmentos visibles en Actividades">${DATABASE_SEGMENTS.map(segment => `<button type="button" class="database-segment-button ${activeDatabaseSegments.has(segment) ? 'is-active' : ''}" data-database-segment="${segment}" aria-pressed="${activeDatabaseSegments.has(segment)}" title="${segmentLabels[segment]} (${segmentCounts[segment] || 0})"><span aria-hidden="true">${segmentIcons[segment]}</span><small>${segmentLabels[segment]}</small><strong>${segmentCounts[segment] || 0}</strong></button>`).join('')}</div>` : '';
+      const typeCounts = workspaceTypeCounts();
+      const typeToolbar = `<div class="database-segment-toolbar workspace-type-toolbar" role="group" aria-label="Tipos visibles en ${escapeAttr(title)}">${availableTypes().map(type => `<button type="button" class="database-segment-button ${activeTypes.has(type) ? 'is-active' : ''}" data-workspace-type="${escapeAttr(type)}" aria-pressed="${activeTypes.has(type)}" title="${escapeAttr(typePluralLabel(type, settings))} (${typeCounts[type] || 0})"><small>${escapeHtml(typePluralLabel(type, settings))}</small><strong>${typeCounts[type] || 0}</strong></button>`).join('')}</div>`;
+      const hasQuickFilters = activeGroupIds.size || (id === 'database' && activeDatabaseSegments.size < DATABASE_SEGMENTS.length) || activeTypes.size < availableTypes().length;
+      localRoot.innerHTML = `<div class="workspace-toolbar">${segmentToolbar}${typeToolbar}<button type="button" class="view-actions-button view-filter-button ${hasQuickFilters ? 'is-active' : ''}" data-open-filters title="Filtrar por grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1V19l-3.6 1v-7.9L4 5Z"/></svg><span class="view-filter-button__label">Filtros</span>${activeGroupIds.size ? `<strong class="workspace-toolbar__badge">${activeGroupIds.size}</strong>` : ''}</button><button type="button" class="view-actions-button view-filter-button view-mode-icon" data-toggle-view title="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}" aria-label="${viewMode === 'grid' ? 'Ver como lista' : 'Ver como cuadrícula'}">${viewMode === 'grid' ? '<svg viewBox="0 0 24 24"><path d="M4 5h16v2H4zm0 6h16v2H4zm0 6h16v2H4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></svg>'}</button><button type="button" class="view-actions-button view-filter-button" data-open-controls title="Configurar espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.25V20h2.75L17.81 8.94l-2.75-2.75L4 17.25Zm15.71-10.04a1.003 1.003 0 0 0 0-1.42l-1.5-1.5a1.003 1.003 0 0 0-1.42 0l-1.17 1.17 2.75 2.75 1.34-1Z"/></svg><span class="view-filter-button__label">Configurar</span></button></div>`;
     }
     controlsRoot.querySelector('[data-quick-search]')?.addEventListener('input', event => {
       search = event.target.value || '';
@@ -575,6 +587,19 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       render();
       saveSession();
     }));
+    localRoot?.querySelectorAll('[data-workspace-type]').forEach(button => button.addEventListener('click', () => {
+      const type = button.dataset.workspaceType;
+      if (!availableTypes().includes(type)) return;
+      if (activeTypes.has(type)) {
+        if (activeTypes.size === 1) return;
+        activeTypes.delete(type);
+      } else activeTypes.add(type);
+      page = 1;
+      applyFilters();
+      renderControls({ force: true });
+      render();
+      saveSession();
+    }));
     localRoot?.querySelector('[data-toggle-view]')?.addEventListener('click', () => { viewMode = viewMode === 'grid' ? 'list' : 'grid'; renderControls({ force: true }); render(); saveSession(); });
     localRoot?.querySelector('[data-open-filters]')?.addEventListener('click', openFiltersModal);
     localRoot?.querySelector('[data-open-controls]')?.addEventListener('click', openControlsModal);
@@ -582,7 +607,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   }
   function updateControlsState() {
     const localRoot = el?.querySelector('[data-section-controls]');
-    localRoot?.querySelector('[data-open-filters]')?.classList.toggle('is-active', activeGroupIds.size > 0 || (id === 'database' && activeDatabaseSegments.size < DATABASE_SEGMENTS.length));
+    localRoot?.querySelector('[data-open-filters]')?.classList.toggle('is-active', activeGroupIds.size > 0 || (id === 'database' && activeDatabaseSegments.size < DATABASE_SEGMENTS.length) || activeTypes.size < availableTypes().length);
   }
   function bindPanelEditorNavigation() {
     setTimeout(() => {
@@ -597,8 +622,8 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     },0);
   }
   async function openFiltersModal() {
-    const body = `<div class="panel-editor panel-editor--filters"><nav class="panel-editor__anchors"><button type="button" class="is-active" data-panel-jump="filter-groups">Grupos</button></nav><div class="panel-editor__scroll">
-      <section id="filter-groups" class="panel-editor__section"><header><span>Filtros temporales</span><h3>Grupos</h3><p>Los grupos son etiquetas transversales; no son la Colección.</p></header><div class="segmented-control"><label><input type="radio" name="group-match" value="any" ${groupMatch === 'any' ? 'checked' : ''}><span>Cualquiera</span></label><label><input type="radio" name="group-match" value="all" ${groupMatch === 'all' ? 'checked' : ''}><span>Todos</span></label></div><div class="controls-modal__checks">${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">No hay grupos creados.</p>'}</div></section>
+    const body = `<div class="panel-editor panel-editor--filters"><nav class="panel-editor__anchors"><button type="button" class="is-active" data-panel-jump="filter-groups">Listas</button></nav><div class="panel-editor__scroll">
+      <section id="filter-groups" class="panel-editor__section"><header><span>Filtros temporales</span><h3>Listas</h3><p>Los grupos son etiquetas transversales; no son la Colección.</p></header><div class="segmented-control"><label><input type="radio" name="group-match" value="any" ${groupMatch === 'any' ? 'checked' : ''}><span>Cualquiera</span></label><label><input type="radio" name="group-match" value="all" ${groupMatch === 'all' ? 'checked' : ''}><span>Todos</span></label></div><div class="controls-modal__checks">${collectionGroups.length ? collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-filter-group="${escapeAttr(group.id)}" ${activeGroupIds.has(group.id) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('') : '<p class="settings-help">No hay grupos creados.</p>'}</div></section>
     </div></div>`;
     const modalPromise = ui.open({ title: `${title} · filtros`, className: 'ui-modal-root--workspace ui-modal-root--filters', body, actions: [{ label: 'Limpiar', value: '__clear__' }, { label: 'Cerrar', variant: 'primary', onClick: root => ({ activeGroupIds:[...root.querySelectorAll('[data-filter-group]:checked')].map(input=>input.dataset.filterGroup), groupMatch:root.querySelector('input[name="group-match"]:checked')?.value||'any' }) }] });
     bindPanelEditorNavigation();
@@ -616,8 +641,8 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     if (grouping === 'completedAt') { grouping = 'date'; groupingDateField = 'completedAt'; }
     const dateGrouping = ['relative','month','year'].includes(ws.dateGrouping) ? ws.dateGrouping : 'relative';
     const body = `<div class="panel-editor"><nav class="panel-editor__anchors"><button type="button" class="is-active" data-panel-jump="workspace-presentation">Presentación</button><button type="button" data-panel-jump="workspace-organization">Organización</button></nav><div class="panel-editor__scroll">
-      <section id="workspace-presentation" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Presentación</h3><p>Configuración persistente de ${escapeHtml(title)}.</p></header><div class="workspace-visible-types"><h4>Tipos visibles</h4><p class="settings-help">Define qué tipos forman parte de este espacio de trabajo.</p><div class="controls-modal__checks">${availableTypes().map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-type="${escapeAttr(type)}" ${activeTypes.has(type) ? 'checked' : ''}><span>${escapeHtml(typePluralLabel(type, settings))}</span></label>`).join('')}</div></div><div class="setting-choice-grid"><label><input type="radio" name="view-mode" value="grid" ${viewMode==='grid'?'checked':''}><span><strong>Grid</strong><small>Tarjetas visuales</small></span></label><label><input type="radio" name="view-mode" value="list" ${viewMode==='list'?'checked':''}><span><strong>Lista</strong><small>Filas compactas</small></span></label></div><div class="setting-choice-grid setting-choice-grid--three">${[['small','Pequeño'],['medium','Mediano'],['large','Grande']].map(([value,label])=>`<label><input type="radio" name="size" value="${value}" ${currentSize()===value?'checked':''}><span><strong>${label}</strong><small>Tamaño de tarjeta</small></span></label>`).join('')}</div><div class="setting-choice-grid"><label><input type="radio" name="card-format" value="simple" ${cardFormat==='simple'?'checked':''}><span><strong>Simple</strong><small>Carátula protagonista</small></span></label><label><input type="radio" name="card-format" value="standard" ${cardFormat==='standard'?'checked':''}><span><strong>Normal</strong><small>Carátula e información</small></span></label></div><label class="ui-field"><span>Items por página</span><input data-items-per-page type="number" min="6" max="500" value="${escapeAttr(limit)}"></label></section>
-      <section id="workspace-organization" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Organización</h3><p>Las agrupaciones por fecha pueden usar la última actividad o la fecha de finalización.</p></header><label class="ui-field"><span>Agrupar por</span><select data-control-grouping><option value="none" ${grouping==='none'?'selected':''}>Sin agrupación</option><option value="date" ${grouping==='date'?'selected':''}>Fecha</option><option value="type" ${grouping==='type'?'selected':''}>Tipo</option><option value="group" ${grouping==='group'?'selected':''}>Grupo</option></select></label><div class="workspace-date-grouping"><label class="ui-field"><span>Organización de fechas</span><select data-control-date-grouping><option value="relative" ${dateGrouping==='relative'?'selected':''}>Periodos recientes</option><option value="month" ${dateGrouping==='month'?'selected':''}>Mes y año</option><option value="year" ${dateGrouping==='year'?'selected':''}>Año</option></select></label><label class="ui-field"><span>Fecha utilizada</span><select data-control-grouping-date-field><option value="lastActivityAt" ${groupingDateField==='lastActivityAt'?'selected':''}>Última actividad</option><option value="completedAt" ${groupingDateField==='completedAt'?'selected':''}>Finalización</option></select></label></div><label class="ui-field"><span>Ordenar por</span><select data-control-sort>${[['lastActivityAt','Última actividad'],['firstSeenAt','Entrada en base de datos'],['updatedAt','Actualización'],['title','Título'],['rating','Calificación'],['completedAt','Finalización']].map(([value,label])=>`<option value="${value}" ${sort===value?'selected':''}>${label}</option>`).join('')}</select></label><div class="segmented-control"><label><input type="radio" name="direction" value="desc" ${direction==='desc'?'checked':''}><span>Descendente</span></label><label><input type="radio" name="direction" value="asc" ${direction==='asc'?'checked':''}><span>Ascendente</span></label></div></section>
+      <section id="workspace-presentation" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Presentación</h3><p>Configuración persistente de ${escapeHtml(title)}.</p></header><div class="workspace-visible-types"><h4>Tipos visibles</h4><p class="settings-help">Define qué tipos forman parte de este espacio de trabajo.</p><div class="controls-modal__checks">${availableTypes().map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-type="${escapeAttr(type)}" ${activeTypes.has(type) ? 'checked' : ''}><span>${escapeHtml(typePluralLabel(type, settings))}</span></label>`).join('')}</div></div><div class="setting-choice-grid"><label><input type="radio" name="view-mode" value="grid" ${viewMode==='grid'?'checked':''}><span><strong>Cuadrícula</strong><small>Tarjetas visuales</small></span></label><label><input type="radio" name="view-mode" value="list" ${viewMode==='list'?'checked':''}><span><strong>Tabla</strong><small>Filas compactas</small></span></label></div><div class="setting-choice-grid setting-choice-grid--three">${[['small','Pequeño'],['medium','Mediano'],['large','Grande']].map(([value,label])=>`<label><input type="radio" name="size" value="${value}" ${currentSize()===value?'checked':''}><span><strong>${label}</strong><small>Tamaño de tarjeta</small></span></label>`).join('')}</div><div class="setting-choice-grid"><label><input type="radio" name="card-format" value="simple" ${cardFormat==='simple'?'checked':''}><span><strong>Simple</strong><small>Carátula protagonista</small></span></label><label><input type="radio" name="card-format" value="standard" ${cardFormat==='standard'?'checked':''}><span><strong>Completa</strong><small>Carátula e información</small></span></label></div><label class="ui-field"><span>Actividades por página</span><input data-items-per-page type="number" min="6" max="500" value="${escapeAttr(limit)}"></label></section>
+      <section id="workspace-organization" class="panel-editor__section"><header><span>Espacio de trabajo</span><h3>Organización</h3><p>Las agrupaciones por fecha pueden usar el último movimiento o la fecha de finalización.</p></header><label class="ui-field"><span>Agrupar por</span><select data-control-grouping><option value="none" ${grouping==='none'?'selected':''}>Sin agrupación</option><option value="date" ${grouping==='date'?'selected':''}>Fecha</option><option value="type" ${grouping==='type'?'selected':''}>Tipo</option><option value="group" ${grouping==='group'?'selected':''}>Lista</option></select></label><div class="workspace-date-grouping"><label class="ui-field"><span>Organización de fechas</span><select data-control-date-grouping><option value="relative" ${dateGrouping==='relative'?'selected':''}>Periodos recientes</option><option value="month" ${dateGrouping==='month'?'selected':''}>Mes y año</option><option value="year" ${dateGrouping==='year'?'selected':''}>Año</option></select></label><label class="ui-field"><span>Fecha utilizada</span><select data-control-grouping-date-field><option value="lastActivityAt" ${groupingDateField==='lastActivityAt'?'selected':''}>Último movimiento</option><option value="completedAt" ${groupingDateField==='completedAt'?'selected':''}>Finalización</option></select></label></div><label class="ui-field"><span>Ordenar por</span><select data-control-sort>${[['lastActivityAt','Último movimiento'],['firstSeenAt','Registro en Actividades'],['updatedAt','Actualización'],['title','Título'],['rating','Calificación'],['completedAt','Finalización']].map(([value,label])=>`<option value="${value}" ${sort===value?'selected':''}>${label}</option>`).join('')}</select></label><div class="segmented-control"><label><input type="radio" name="direction" value="desc" ${direction==='desc'?'checked':''}><span>Descendente</span></label><label><input type="radio" name="direction" value="asc" ${direction==='asc'?'checked':''}><span>Ascendente</span></label></div></section>
     </div></div>`;
     const modalPromise = ui.open({ title: `${title} · configuración`, className: 'ui-modal-root--workspace', body, actions: [{ label:'Cancelar',value:null },{ label:'Guardar',variant:'primary',onClick:root=>({ visibleTypes:[...root.querySelectorAll('[data-workspace-type]:checked')].map(input=>input.dataset.workspaceType), viewMode:root.querySelector('input[name="view-mode"]:checked')?.value||viewMode, cardSize:root.querySelector('input[name="size"]:checked')?.value||cardSize, cardFormat:root.querySelector('input[name="card-format"]:checked')?.value||cardFormat, limit:clamp(root.querySelector('[data-items-per-page]')?.value,6,500,limit), grouping:root.querySelector('[data-control-grouping]')?.value||grouping, dateGrouping:root.querySelector('[data-control-date-grouping]')?.value||dateGrouping, groupingDateField:root.querySelector('[data-control-grouping-date-field]')?.value||groupingDateField, sort:root.querySelector('[data-control-sort]')?.value||sort, direction:root.querySelector('input[name="direction"]:checked')?.value||direction }) }] });
     bindPanelEditorNavigation();
@@ -629,13 +654,13 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
   async function openCreateManualItem() {
     if (id !== 'database') return;
     const result = await ui.open({
-      title: 'Nuevo item',
+      title: 'Nueva actividad',
       className: 'ui-modal-root--wide',
       body: `<div class="manual-item-form">
         <div class="manual-item-preview">
           <div class="manual-item-preview__backdrop"></div>
           <div class="manual-item-preview__poster"><span>+</span></div>
-          <div><strong>Nuevo item</strong><small>Creado manualmente en BBQ</small></div>
+          <div><strong>Nueva actividad</strong><small>Creado manualmente en BBQ</small></div>
         </div>
         <label class="ui-field"><span>Título</span><input data-manual-title placeholder="Título" required></label>
         <label class="ui-field"><span>Estado / detalle</span><input data-manual-detail placeholder="Detalle visible, estado, nota..."></label>
@@ -647,7 +672,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
       </div>`,
       actions: [
         { label: 'Cancelar', value: null },
-        { label: 'Crear item', variant: 'primary', onClick: async modal => {
+        { label: 'Crear actividad', variant: 'primary', onClick: async modal => {
           const title = modal.querySelector('[data-manual-title]')?.value?.trim();
           if (!title) return false;
           const posterFile = modal.querySelector('[data-manual-poster-file]')?.files?.[0];
@@ -693,7 +718,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     grid.style.setProperty('--card-gap', `${size.gap}px`);
     grid.style.setProperty('--poster-size', `${size.poster}px`);
     grid.style.setProperty('--mobile-columns', String(size.mobileColumns || 2));
-    if (!visibleItems.length) grid.innerHTML = `<div class="empty-state"><strong>No hay items</strong><span>Ajusta filtros o añade contenido.</span></div>`;
+    if (!visibleItems.length) grid.innerHTML = `<div class="empty-state"><strong>No hay actividades</strong><span>Ajusta filtros o añade contenido.</span></div>`;
     else grid.innerHTML = viewMode === 'list' ? itemListMarkup(visibleItems, { context: id, groups: collectionGroups }) : groupRowsMarkup(visibleItems);
     const pager = el.querySelector('[data-pagination]');
     if (pager) pager.innerHTML = paginationMarkup({ page, pages, total });
@@ -801,7 +826,7 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
     mount(target) {
       el = target;
       loadSession();
-      el.innerHTML = `<div class="app-section ${id}-view unified-view"><div class="section-bg" data-dynamic-bg><div class="section-bg__image is-visible"></div></div><header class="section-title"><div class="section-title__row"><div class="section-title__main"><h1>${escapeHtml(title)} <span data-section-count>0</span></h1>${id === 'database' ? '<button type="button" class="section-title__add" data-create-manual-item title="Crear item">＋</button>' : ''}</div><div class="section-title__controls" data-section-controls></div></div><div data-active-filter-chips></div></header><main class="unified-view__content"><div class="media-grid unified-grid" data-items-grid></div></main><footer class="unified-view__footer" data-pagination></footer></div>`;
+      el.innerHTML = `<div class="app-section ${id}-view unified-view"><div class="section-bg" data-dynamic-bg><div class="section-bg__image is-visible"></div></div><header class="section-title"><div class="section-title__row"><div class="section-title__main"><h1>${escapeHtml(title)} <span data-section-count>0</span></h1>${id === 'database' ? '<button type="button" class="section-title__add" data-create-manual-item title="Crear actividad">＋</button>' : ''}</div><div class="section-title__controls" data-section-controls></div></div><div data-active-filter-chips></div></header><main class="unified-view__content"><div class="media-grid unified-grid" data-items-grid></div></main><footer class="unified-view__footer" data-pagination></footer></div>`;
       charredOnly = localStorage.getItem('bbqueue:charred-only') === '1';
       window.addEventListener('bbqueue:global-search', event => {
         const detail = event.detail;
@@ -825,19 +850,25 @@ export function createItemSegmentView({ id, title, view = 'database', api, ui, c
         saveSession();
         if (isVisible) { renderControls({ force: true }); load({ resetPage: true }); }
       });
+      el.addEventListener('keydown', event => {
+        const groupFilter = event.target.closest?.('[data-group-filter]');
+        if (groupFilter && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); groupFilter.click(); }
+      });
       el.addEventListener('click', event => {
         if (event.target.closest('[data-page-prev]')) { page = Math.max(1, page - 1); render(); saveSession(); return; }
         if (event.target.closest('[data-page-next]')) { page = Math.min(pages, page + 1); render(); saveSession(); return; }
         if (event.target.closest('[data-create-manual-item]')) { openCreateManualItem(); return; }
         const removeGroup = event.target.closest('[data-remove-group-filter]');
         if (removeGroup) { activeGroupIds.delete(removeGroup.dataset.removeGroupFilter); page=1; applyFilters(); renderControls({force:true}); render(); saveSession(); return; }
+        const groupFilter = event.target.closest('[data-group-filter]');
+        if (groupFilter) { event.preventDefault(); event.stopPropagation(); activeGroupIds = new Set([groupFilter.dataset.groupFilter]); groupMatch='any'; page=1; applyFilters(); renderControls({force:true}); render(); saveSession(); return; }
         
         const item = findItemFromEvent(event);
         if (item && event.target.closest('[data-quick-turn]')) { event.preventDefault(); event.stopPropagation(); quickTurnItem(item); return; }
         if (item) openItem(item);
       });
     },
-    show() { isVisible = true; applyWorkspaceTypes(); el?.classList.add('view--active'); el?.classList.remove('view--render-hidden'); el?.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); load(); },
+    show() { isVisible = true; if (sessionLoadedTypes) ensureActiveTypes(); else { applyWorkspaceTypes(); sessionLoadedTypes = true; } el?.classList.add('view--active'); el?.classList.remove('view--render-hidden'); el?.setAttribute('aria-hidden', 'false'); renderControls({ force: true }); load(); },
     hide() { isVisible = false; controlsMounted = false; if (controlsRoot) controlsRoot.innerHTML = ''; el?.classList.remove('view--active'); el?.setAttribute('aria-hidden', 'true'); },
     update(payload = {}) {
       if (payload.collectionGroups) collectionGroups = payload.collectionGroups;

@@ -18,11 +18,11 @@ Esta documentación describe el producto, el dominio y la implementación actual
 ## Terminología oficial
 
 - **BBQ**: nombre visible de la aplicación.
-- **Ítem**: entidad de contenido gestionada por BBQ.
-- **Base de datos**: catálogo completo.
+- **Actividad**: entidad de contenido gestionada por BBQ.
+- **Actividades**: catálogo completo.
 - **Backlog**: pendiente no prioritario.
 - **On Deck**: pendiente prioritario o activo.
 - **Colección**: contenido terminado. Siempre singular en la interfaz y documentación.
-- **Grupo**: etiqueta o agrupación creada por el usuario. No es una Colección.
+- **Lista**: etiqueta o agrupación creada por el usuario. No es una Colección.
 - **Parrilla**: sistema temporal que marca contenido Quemándose o Achicharrado.
-- **Dar la vuelta**: actualizar la actividad de un ítem a ahora.
+- **Dar la vuelta**: actualizar la actividad de un actividad a ahora.

@@ -1,79 +1,8 @@
 # API HTTP y tiempo real
 
-## Convenciones
+## Contrato común de actividad
 
-- JSON UTF-8.
-- Los identificadores en ruta deben enviarse con `encodeURIComponent`.
-- Las respuestas de error usan normalmente `{ "error": "mensaje" }`.
-- La API externa versionada puede protegerse con `BBQUEUE_API_TOKEN` mediante `Authorization: Bearer` o `X-API-Key`.
-
-## Diagnóstico y estado
-
-- `GET /api/health`: versión, estado y recuentos.
-- `GET /api/diagnostics`: diagnóstico ampliado.
-- `GET /api/snapshot`: snapshot inicial para el frontend.
-- `GET /api/settings` / `PUT /api/settings`: configuración pública.
-
-## Biblioteca
-
-- `GET /api/items`: lista y filtros.
-- `POST /api/items`: creación manual.
-- `GET /api/items/:canonicalId`: ficha actual.
-- `PATCH /api/items/:canonicalId`: actualización parcial.
-- `DELETE /api/items/:canonicalId`: eliminación definitiva.
-- `POST /api/items/:canonicalId/backlog`: añadir a Backlog.
-- `DELETE /api/items/:canonicalId/backlog`: retirar de Backlog.
-- `POST /api/items/:canonicalId/deck`: mover o añadir a On Deck.
-- `DELETE /api/items/:canonicalId/deck`: retirar de On Deck.
-- `POST /api/items/:canonicalId/complete`: marcar como terminado y pasar a Colección.
-- `DELETE /api/items/:canonicalId/collection`: retirar de Colección.
-- `POST /api/items/:canonicalId/activity`: registrar actividad o Dar la vuelta.
-- `PUT /api/items/:canonicalId/assessment`: rating y evaluación.
-
-## Diario y reseña
-
-- `GET /api/items/:canonicalId/journal`
-- `POST /api/items/:canonicalId/activity`
-- `PATCH /api/items/:canonicalId/journal/:entryId`
-- `DELETE /api/items/:canonicalId/journal/:entryId`
-- `PUT /api/items/:canonicalId/review`
-- `DELETE /api/items/:canonicalId/review`
-
-## Grupos
-
-- `GET /api/collection-groups`
-- `POST /api/collection-groups`
-- `PATCH /api/collection-groups/:id`
-- `DELETE /api/collection-groups/:id`
-- `POST /api/collection-groups/:id/items`
-- `DELETE /api/collection-groups/:id/items/:itemId`
-
-El nombre histórico de la ruta conserva `collection-groups`, pero el concepto de producto es **Grupo**.
-
-## Parrilla
-
-- `GET /api/grill/pending`
-- `POST /api/items/:canonicalId/grill/turn`
-- `POST /api/items/:canonicalId/grill/char`
-- `DELETE /api/items/:canonicalId/grill/char`
-
-## API externa v1
-
-### Esquema
-
-`GET /api/v1/ingestion/schema`
-
-### Upsert genérico
-
-`POST /api/v1/items/upsert`
-
-Crea o actualiza una entidad sin necesidad de representar un evento de actividad.
-
-### Evento genérico
-
-`POST /api/v1/events`
-
-Ejemplo:
+La API externa usa un modelo deliberadamente pequeño:
 
 ```json
 {
@@ -81,18 +10,18 @@ Ejemplo:
   "externalId": "uuid-del-juego",
   "canonicalId": "playnite:uuid-del-juego",
   "entityType": "games",
-  "title": "Nombre del juego",
-  "detail": "PC (Windows)",
+  "title": "Hades",
+  "subtype": "roguelike",
+  "context": "PC",
+  "detail": "Iniciado",
   "eventType": "started",
-  "occurredAt": "2026-07-18T18:30:00.000Z",
+  "occurredAt": "2026-07-19T10:00:00.000Z",
   "assets": {
     "poster": "data:image/jpeg;base64,...",
     "backdrop": "data:image/jpeg;base64,..."
   },
-  "metadata": {},
   "behavior": {
     "createIfMissing": true,
-    "updateMetadata": true,
     "updateDetail": true,
     "updateActivity": true,
     "clearCharred": true,
@@ -101,34 +30,70 @@ Ejemplo:
 }
 ```
 
-Las imágenes se externalizan antes de guardar. `showToast` solicita feedback visual, no una notificación persistente.
+`subtype`, `context` y `detail` son opcionales:
 
-## Webhooks
+- omitido: conserva el valor;
+- `null` o `""`: lo elimina;
+- texto: lo actualiza.
+
+`subtype` se considera manual por defecto. Una integración solo debe enviarlo cuando quiera cambiarlo conscientemente.
+
+## Rutas principales
+
+### Estado
+
+- `GET /api/health`
+- `GET /api/diagnostics`
+- `GET /api/snapshot`
+- `GET /api/settings`
+- `PUT /api/settings`
+
+### Biblioteca
+
+- `GET /api/items`
+- `POST /api/items`
+- `GET /api/items/:canonicalId`
+- `PATCH /api/items/:canonicalId`
+- `PATCH /api/items/:canonicalId/dates` — también admite `subtype`, `context` y `subtitle`.
+- `DELETE /api/items/:canonicalId`
+- `POST|DELETE /api/items/:canonicalId/backlog`
+- `POST|DELETE /api/items/:canonicalId/deck`
+- `POST /api/items/:canonicalId/complete`
+- `DELETE /api/items/:canonicalId/collection`
+- `POST /api/items/:canonicalId/activity`
+
+### Listas
+
+- `GET /api/collection-groups`
+- `POST /api/collection-groups`
+- `PATCH /api/collection-groups/:id`
+- `DELETE /api/collection-groups/:id`
+- `POST /api/collection-groups/:id/items`
+- `DELETE /api/collection-groups/:id/items/:itemId`
+
+La ruta conserva el nombre histórico `collection-groups`; el concepto de producto es Lista.
+
+### API externa v1
+
+- `GET /api/v1/ingestion/schema`
+- `POST /api/v1/items/upsert`
+- `POST /api/v1/events`
+
+Puede protegerse con `BBQUEUE_API_TOKEN` mediante `Authorization: Bearer` o `X-API-Key`.
+
+### Webhooks
 
 - `POST /webhook/tautulli` y compatibilidad `POST /webhook`
-- `POST /webhook/playnite` para scripts antiguos
+- `POST /webhook/playnite`
 - `POST /webhook/arr/:source`
 
-## Backups y reset
-
-- `GET /api/backups/library`
-- `GET /api/backups/settings`
-- `POST /api/backups/library/import`
-- `POST /api/backups/settings/import`
-- `POST /api/reset/library`
-- `POST /api/reset/settings`
-- `POST /api/reset/all`
-
-## WebSocket
-
-El frontend recibe snapshots y deltas. Eventos relevantes incluyen actualizaciones de ítems, diario, actividad y `activity:received` para toast de actividad. No deben usarse las notificaciones persistentes como transporte genérico de integraciones.
-
-## API del laboratorio de debug
+### Debug
 
 - `POST /api/simulate/notification`
 - `POST /api/simulate/plex`
 - `POST /api/simulate/playnite`
-- `GET /api/debug/history`
-- `DELETE /api/debug/history`
+- `GET|DELETE /api/debug/history`
 
-Estas rutas están destinadas a pruebas manuales desde la interfaz. El historial no contiene eventos reales de Plex, Playnite o Tautulli.
+## Assets
+
+Todas las imágenes entrantes se externalizan, redimensionan y comprimen antes de persistir. SQLite almacena rutas, nunca Data URI o blobs de imagen.

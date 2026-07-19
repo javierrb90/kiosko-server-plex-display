@@ -7,8 +7,8 @@ Los espacios se muestran como vistas alternativas. Los controles específicos de
 ## Configuración y filtros
 
 - La configuración persistente del espacio incluye tipos visibles, presentación, tamaño, agrupación, orden y paginación.
-- Los filtros temporales incluyen grupos, búsqueda y Achicharrados.
-- Al seguir un ítem movido se limpian los filtros temporales.
+- Los filtros temporales incluyen listas, búsqueda y Achicharrados.
+- Al seguir un actividad movido se limpian los filtros temporales.
 - Si su tipo estaba oculto en el destino, se activa y se guarda hasta que el usuario vuelva a modificarlo.
 
 ## Movimiento entre espacios
@@ -16,7 +16,7 @@ Los espacios se muestran como vistas alternativas. Los controles específicos de
 1. guardar la operación;
 2. cerrar la ficha;
 3. limpiar filtros temporales;
-4. activar el tipo del ítem si estaba oculto;
+4. activar el tipo del actividad si estaba oculto;
 5. navegar al destino;
 6. localizar página y nodo;
 7. hacer scroll;
@@ -32,7 +32,7 @@ En Lista se ilumina la fila. Al completar y llegar a Colección se lanza una rá
 - Muestra los días desde la última actividad (`↻ 0d`).
 - Anima el nodo real antes de enviar la petición para impedir que un rerender corte el giro.
 
-No debe aparecer ninguna fecha o contador equivalente en Base de datos ni Colección.
+No debe aparecer ninguna fecha o contador equivalente en Actividades ni Colección.
 
 ## Agrupación
 
@@ -42,14 +42,14 @@ Puede hacerse por:
 - mes y año;
 - año;
 - tipo;
-- grupo.
+- lista.
 
-La fecha base puede ser Última actividad o Finalización. Cada encabezado muestra su total: `Hoy (3)`, `Marzo 2025 (10)` o `2026 (33)`.
+La fecha base puede ser Último movimiento o Finalización. Cada encabezado muestra su total: `Hoy (3)`, `Marzo 2025 (10)` o `2026 (33)`.
 
 ## Feedback visual
 
 - giro manual: confirmación de actividad;
-- colocación: halo y entrada del ítem en el destino;
+- colocación: halo y entrada del actividad en el destino;
 - lista: iluminación de fila;
 - confeti: finalización y llegada a Colección.
 

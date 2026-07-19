@@ -8,8 +8,8 @@ No pretende sustituir a Plex, Playnite o los gestores ARR. Es una capa transvers
 
 ## Objetivos
 
-- Mantener una identidad estable para cada ítem aunque llegue desde distintas vistas o integraciones.
-- Representar con claridad dónde está cada ítem dentro del flujo personal.
+- Mantener una identidad estable para cada actividad aunque llegue desde distintas vistas o integraciones.
+- Representar con claridad dónde está cada actividad dentro del flujo personal.
 - Reducir el contenido abandonado mediante la parrilla y la actividad.
 - Permitir una ingestión externa genérica y extensible.
 - Seguir siendo local, portable y operable con un único volumen persistente.
@@ -25,7 +25,7 @@ No pretende sustituir a Plex, Playnite o los gestores ARR. Es una capa transvers
 
 ## Principios de producto
 
-1. Una acción que mueve un ítem debe seguirlo al espacio de destino.
+1. Una acción que mueve un actividad debe seguirlo al espacio de destino.
 2. Los filtros temporales nunca deben confundirse con configuración persistente.
 3. Una integración actualiza datos y actividad; las notificaciones y los toast son efectos separados.
 4. El usuario debe poder exportar sus datos sin depender del motor interno.

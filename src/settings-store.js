@@ -39,9 +39,9 @@ export const DEFAULT_SETTINGS = {
     itemDetail: {
       background: { background: "backdrop", shade: "medium", blur: "soft" },
       metadataFields: {
-        games: ["year", "platforms", "developers", "publishers", "genres", "playtime", "firstSeenAt", "lastActivityAt", "completedAt"],
-        movies: ["year", "genres", "duration", "studio", "director", "firstSeenAt", "lastActivityAt", "completedAt"],
-        series: ["year", "genres", "studio", "latestActivity", "firstSeenAt", "lastActivityAt", "completedAt"]
+        games: ["subtype", "context", "detail", "lastActivityAt", "completedAt"],
+        movies: ["subtype", "context", "detail", "lastActivityAt", "completedAt"],
+        series: ["subtype", "context", "detail", "lastActivityAt", "completedAt"]
       }
     }
   },
@@ -74,7 +74,8 @@ export const DEFAULT_SETTINGS = {
   },
   itemTypes: [],
   notifications: {
-    maxStored: 50,
+    maxStored: 25,
+    events: { plexAdded: true, plexPlayed: false, plexWatched: false, playniteStarted: false },
     toastEnabled: true,
     toastDurationSeconds: 6,
     toastSize: "medium",
@@ -273,7 +274,9 @@ function sanitize(settings) {
   if (!isObject(s.design.itemDetail.metadataFields)) s.design.itemDetail.metadataFields = DEFAULT_SETTINGS.design.itemDetail.metadataFields;
   for (const key of ["games", "movies", "series"]) {
     if (!Array.isArray(s.design.itemDetail.metadataFields[key])) s.design.itemDetail.metadataFields[key] = DEFAULT_SETTINGS.design.itemDetail.metadataFields[key];
-    s.design.itemDetail.metadataFields[key] = s.design.itemDetail.metadataFields[key].filter(value => typeof value === "string" && value.trim()).slice(0, 24);
+    const allowedDetailFields = new Set(["subtype","context","detail","type","status","source","rating","firstSeenAt","lastActivityAt","completedAt"]);
+    s.design.itemDetail.metadataFields[key] = s.design.itemDetail.metadataFields[key].filter(value => typeof value === "string" && allowedDetailFields.has(value.trim())).slice(0, 12);
+    if (!s.design.itemDetail.metadataFields[key].length) s.design.itemDetail.metadataFields[key] = [...DEFAULT_SETTINGS.design.itemDetail.metadataFields[key]];
   }
 
   if (!isObject(s.backlog)) s.backlog = { sources: {} };

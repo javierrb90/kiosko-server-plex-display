@@ -39,13 +39,13 @@ HTTP Basic protege la interfaz cuando se publica detrás de HTTPS. Los webhooks 
 ## Validación manual recomendada
 
 - arrancar con base vacía;
-- crear un ítem manual;
+- crear un actividad manual;
 - ingerir un juego desde Playnite;
 - reproducir contenido Plex;
 - mover Base → Backlog → On Deck → Colección;
 - retirar Colección → Backlog/On Deck;
-- Dar la vuelta en Grid Simple y Normal;
-- comprobar ausencia del botón en Base de datos y Colección;
+- Dar la vuelta en Cuadrícula Simple y Normal;
+- comprobar ausencia del botón en Actividades y Colección;
 - comprobar Lista, agrupación y confeti;
 - reiniciar y verificar persistencia;
 - exportar e importar Biblioteca y Configuración.

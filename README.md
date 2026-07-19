@@ -4,17 +4,27 @@ BBQ es una aplicación local y autocontenida para gestionar una biblioteca perso
 
 ## Espacios de trabajo
 
-En **Base de datos**, una botonera contextual permite filtrar rápidamente por **Sin organizar**, **Backlog**, **On Deck** y **Colección**. Los botones actúan como segmentos visibles y se combinan con los demás filtros.
+En **Actividades**, una botonera contextual permite filtrar rápidamente por **Sin organizar**, **Backlog**, **On Deck** y **Colección**. Los botones actúan como segmentos visibles y se combinan con los demás filtros.
 
 
 BBQ usa cuatro espacios fijos:
 
-- **Base de datos**: catálogo completo. Todo ítem existe aquí.
+- **Actividades**: catálogo completo. Todo actividad existe aquí.
 - **Backlog**: contenido pendiente que aún no está en consumo activo.
 - **On Deck**: selección prioritaria o actualmente activa.
 - **Colección**: contenido terminado.
 
-Los espacios son reglas de dominio, no carpetas independientes. Un ítem conserva una única identidad canónica y su pertenencia se representa mediante estados. Los **grupos** son etiquetas organizativas creadas por el usuario y no deben confundirse con Colección.
+Los espacios son reglas de dominio, no carpetas independientes. Un actividad conserva una única identidad canónica y su pertenencia se representa mediante estados. Los **listas** son etiquetas organizativas creadas por el usuario y no deben confundirse con Colección.
+
+## Modelo común
+
+Además del título y el tipo, BBQ usa tres campos extra opcionales:
+
+- **Subtipo**: clasificación manual, como Horror o Roguelike.
+- **Contexto**: plataforma o unidad actual, como PC o S02E05.
+- **Detalle**: evento o estado legible, como Iniciado o Reproducido.
+
+Los listas dinámicos pueden usar estos campos. El límite de On Deck se calcula por subtipo y, cuando no existe, por tipo.
 
 ## Parrilla
 
@@ -22,9 +32,9 @@ La parrilla utiliza la fecha de actividad para detectar contenido olvidado:
 
 - **Quemándose**: se acerca al límite configurado.
 - **Achicharrado**: ha superado el límite.
-- **Dar la vuelta**: actualiza la actividad a ahora y evita que el ítem se queme.
+- **Dar la vuelta**: actualiza la actividad a ahora y evita que el actividad se queme.
 
-El botón Dar la vuelta solo aparece en Backlog y On Deck. No aparece en Base de datos ni en Colección.
+El botón Dar la vuelta solo aparece en Backlog y On Deck. No aparece en Actividades ni en Colección.
 
 ## Instalación
 
@@ -94,3 +104,8 @@ container: /app/data
 ```
 
 La carpeta del host debe existir y permitir escritura al usuario del contenedor antes del primer arranque.
+
+
+## Terminología
+
+La equivalencia entre nombres de producto y nombres técnicos heredados está en [`docs/TERMINOLOGY.md`](docs/TERMINOLOGY.md).

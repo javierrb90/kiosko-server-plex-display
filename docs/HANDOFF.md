@@ -1,53 +1,46 @@
-# Handoff del proyecto
+# Handoff técnico de BBQ
 
-## Estado de esta milestone
+## Estado actual
 
-La milestone 7.1 consolida la primera etapa SQLite de BBQ. La aplicación funciona como instalación local con biblioteca en SQLite, assets externos comprimidos, API de ingestión, integración con Plex/Tautulli y Playnite, backups separados y feedback visual de los principales movimientos.
+BBQ 7.2.0 es una aplicación local Node.js + Express + WebSocket + SQLite. El directorio `/app/data` es la única persistencia operativa y contiene SQLite, settings, listas, diario y assets comprimidos.
 
-## Decisiones que no deben revertirse accidentalmente
+## Objetivo
 
-1. **Colección** es el espacio de contenido terminado; **Grupo** es otra entidad.
-2. Los cuatro espacios son fijos para el usuario.
-3. `canonicalId` es la identidad de dominio; `items.id` es un UUID interno.
-4. Ninguna imagen debe persistirse en SQLite como Base64 o BLOB.
-5. Playnite debe usar `/api/v1/events`; Tautulli usa `/webhook/tautulli` para que BBQ consulte Plex.
-6. Toast, notificación persistente y actualización de datos son efectos independientes.
-7. Dar la vuelta solo aparece en Backlog y On Deck.
-8. El giro fiable anima el nodo real antes de hacer la petición. No usar clones flotantes para este efecto.
-9. Los backups son el contrato de portabilidad entre motores y versiones mayores.
+Ayudar al usuario a mantener una cola manejable de actividades y terminarlas. No es un sustituto de Plex ni Playnite y no debe duplicar sus catálogos completos.
 
-## Últimos problemas resueltos
+## Modelo público
 
-- colisiones de `items.id` durante sincronizaciones históricas;
-- aliases Plex de película/serie con el mismo `ratingKey`;
-- toast desactualizado respecto al estado real del último ítem;
-- assets de Playnite guardados como Data URI;
-- carga local de `canvas-confetti` desde npm;
-- doble pase visual en colocación e iluminación;
-- botón Dar la vuelta visible por error fuera de Backlog y On Deck.
+Campos nucleares: identidad, fuente, título, tipo, estados, actividad, valoración y assets.
 
-## Próximos trabajos recomendados
+Campos extra opcionales:
 
-1. Dividir `server.js` en routers: biblioteca, configuración, backups, integraciones y legacy.
-2. Crear repositorios explícitos para diario, grupos y configuración; decidir qué migra finalmente a SQLite.
-3. Limpiar `style.css`, eliminando reglas versionadas y agrupando estilos por componente.
-4. Añadir pruebas automatizadas de identidad, movimientos y backups.
-5. Añadir una herramienta manual de diagnóstico de integraciones y assets.
-6. Revisar las rutas legacy y documentar una estrategia de deprecación.
-7. Medir tamaño de payloads WebSocket: los logs históricos mostraron snapshots de varios MB.
+- `subtype`: clasificación manual;
+- `context`: plataforma o unidad actual;
+- `detail`: evento/estado legible.
 
-## Archivos de entrada para continuar
+Omitir conserva; `null`/vacío elimina; texto actualiza.
 
-- lógica principal: `server.js`
-- repositorio SQLite: `src/item-registry-store.js`
-- ingestión: `src/services/ingestion-contract.js`
-- assets: `src/asset-service.js`
-- vista común: `public/views/item-segment-view.js`
-- render de tarjetas: `public/core/item-renderer.js`
-- ficha: `public/core/item-detail.js`
-- estilos: `public/style.css`
+## Reglas importantes
 
-## Comprobación rápida
+- Backlog, On Deck y Colección son excluyentes en los flujos normales.
+- On Deck limita a tres elementos por `subtype`; si falta, usa `type`.
+- Los listas dinámicos deben usar el modelo común, especialmente subtipo y contexto.
+- SQLite nunca almacena imágenes codificadas.
+- Plex decide si algo es película o serie; Tautulli no debe imponer el tipo.
+- El UUID interno no es contrato externo.
+
+## Archivos clave
+
+- `server.js`: HTTP, integraciones y flujos.
+- `src/item-registry-store.js`: normalización y repositorio SQLite.
+- `src/database/sqlite-database.js`: esquema y migraciones.
+- `src/services/ingestion-contract.js`: contrato externo.
+- `src/collection-group-store.js`: listas.
+- `public/core/item-renderer.js`: Cuadrícula y Lista.
+- `public/core/item-detail.js`: ficha y edición.
+- `public/app.js`: shell, opciones y laboratorio debug.
+
+## Comprobación
 
 ```bash
 npm ci
@@ -55,8 +48,25 @@ npm run check
 npm start
 ```
 
-Después abrir `/api/health`, cargar la interfaz y ejecutar el recorrido Base de datos → Backlog → On Deck → Colección.
 
-## Debug operativo desde v7.1.5
+## Listas dinámicos (v7.2.1)
 
-La ficha de cada ítem expone su JSON mediante el botón `{ }`. Además, Datos y diagnóstico contiene simuladores para notificaciones, Plex/Tautulli y Playnite. Para reproducir un problema, reutiliza el identificador externo mostrado en el JSON; si se omite, se crea una entidad de prueba nueva. El historial del laboratorio es independiente de la actividad real y se puede borrar.
+Las reglas dinámicas expuestas en la interfaz se basan únicamente en `subtype`. Los listas manuales se gestionan desde la ficha; los mixtos combinan ambas fuentes. El valor dinámico se compara con `contains` sin distinguir mayúsculas y minúsculas.
+
+
+## Cambio de terminología en v7.3.0
+
+Lee `TERMINOLOGY.md` antes de modificar rutas, modelos o textos. La interfaz dice Actividad/Lista, mientras que el código compatible conserva `item`/`group`.
+
+
+## Notificaciones desde v7.3.1
+
+Las notificaciones persistentes son efectos opcionales de eventos de integración, no el mecanismo de ingestión. `ingestExternalItem()` actualiza primero la Actividad; `maybePublishActivityNotification()` decide después si crea una entrada según `settings.notifications.events`.
+
+Claves configurables: `plexAdded`, `plexPlayed`, `plexWatched` y `playniteStarted`. Las entradas guardan `meta.canonicalId` para abrir la ficha. El límite físico del almacén es 25.
+
+El toast `#toast` solo representa `notification:new`. Los eventos `activity:received`, `current:update`, `plex:update` y `game:update` no deben volver a usarlo.
+
+## Geometría de la ficha desde v7.3.1
+
+En escritorio, `.item-detail__poster` permanece fijo y `.item-detail__info` es el único panel desplazable. `renderInfoSubview()` extrae `.item-detail-form__actions` y las monta en `.ui-modal__footer`; `renderBody()` limpia ese pie al volver al resumen. No vuelvas a insertar acciones persistentes dentro del contenido desplazable.

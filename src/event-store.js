@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const MAX_NOTIFICATIONS = 50;
+const MAX_NOTIFICATIONS = 25;
 const IDEMPOTENCY_TTL_DAYS = 7;
 const IDEMPOTENCY_TTL_MS = IDEMPOTENCY_TTL_DAYS * 24 * 60 * 60 * 1000;
 

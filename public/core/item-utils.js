@@ -33,6 +33,17 @@ export function sourceLabel(item = {}) {
 export function imageFor(item = {}) { return item.poster || item.posterUrl || item.cover || item.coverPath || ''; }
 export function backdropFor(item = {}) { return item.backdrop || item.backdropUrl || item.background || item.backgroundAssetPath || imageFor(item); }
 export function detailFor(item = {}) { return item.detail || item.subtitle || item.activitySubtitle || ''; }
+export function summaryLineFor(item = {}) {
+  const context = cleanText(item.context);
+  const subtype = cleanText(item.subtype);
+  const rawDetail = cleanText(detailFor(item));
+  const norm = value => cleanText(value).toLowerCase();
+  const excluded = new Set([norm(context), norm(subtype)].filter(Boolean));
+  const detailParts = rawDetail.split(/\s*·\s*/).map(cleanText).filter(Boolean).filter(part => !excluded.has(norm(part)));
+  const parts = [context, ...detailParts, subtype].filter(Boolean);
+  const seen = new Set();
+  return parts.filter(part => { const key = norm(part); if (!key || seen.has(key)) return false; seen.add(key); return true; }).join(' · ');
+}
 export function formatDate(value, options = {}) {
   const d = new Date(value || '');
   if (!Number.isFinite(d.getTime())) return '';
@@ -71,7 +82,7 @@ export function fieldValues(item = {}, field = '') {
   const meta = item.meta || item.metadata || {};
   const platform = [...asArray(item.platforms), ...asArray(meta.platforms), ...asArray(item.platform), ...asArray(meta.platform), detailFor(item)];
   const map = {
-    title: [item.title], source: [item.source], type: [item.collectionType, item.type, meta.plexType], year: [item.year, item.releaseYear, meta.releaseYear],
+    title: [item.title], source: [item.source], type: [item.collectionType, item.type, meta.plexType], subtype: [item.subtype], context: [item.context], detail: [detailFor(item)], status: [item.status], year: [item.year, item.releaseYear, meta.releaseYear],
     platform, platforms: platform,
     genre: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)],
     genres: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)],
@@ -102,7 +113,7 @@ export function groupsForItem(item = {}, groups = []) { return (groups || []).fi
 export function stableItemKey(item = {}) { return item.canonicalId || item.id || `${item.source || 'item'}:${item.title || ''}`; }
 export function searchHaystack(item = {}) {
   const meta = item.meta || item.metadata || {};
-  return [item.title, detailFor(item), item.source, item.type, item.collectionType, item.year, meta.summary, meta.studio, meta.director, ...(item.genres || []), ...(meta.genres || [])].filter(Boolean).join(' ').toLowerCase();
+  return [item.title, item.subtype, item.context, detailFor(item), item.source, item.type, item.collectionType, item.year, meta.summary, meta.studio, meta.director, ...(item.genres || []), ...(meta.genres || [])].filter(Boolean).join(' ').toLowerCase();
 }
 export function statePills(item = {}, context = '') {
   const st = itemState(item, context);

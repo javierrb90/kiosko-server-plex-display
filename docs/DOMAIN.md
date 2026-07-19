@@ -1,63 +1,82 @@
 # Modelo de dominio
 
-## Identidad
+## Propósito
 
-Cada ítem usa un `canonicalId` estable. Ejemplos:
+BBQ ayuda a elegir, mantener activas y terminar actividades. No pretende duplicar el catálogo completo de Plex, Playnite u otras plataformas. El modelo público se limita a datos que sirven para identificar, organizar, mostrar y completar un actividad.
 
-- `playnite:<game-id>`
-- `plex:movies:<rating-key>`
-- `plex:series:<rating-key>`
-- `manual:<uuid>`
+## Campos comunes
 
-`items.id` es una clave interna de SQLite y no debe derivarse de identificadores externos. El repositorio conserva el ID interno asociado a un `canonicalId` ya existente y asigna un UUID a elementos nuevos.
+Campos principales:
+
+- `canonicalId`: identidad estable de integración.
+- `source`: origen (`plex`, `playnite`, `manual`, etc.).
+- `externalId`: identidad técnica del proveedor cuando aplica.
+- `title`: título visible.
+- `type`: categoría principal.
+- `poster` y `backdrop`: rutas o URL de assets.
+- `lastActivityAt`, `completedAt`, `rating` y `states`.
+
+Campos extra opcionales:
+
+- `subtype`: clasificación manual del usuario, por ejemplo `horror` o `roguelike`.
+- `context`: unidad, plataforma o punto actual, por ejemplo `PC`, `S02E05` o `Capítulo 8`.
+- `detail`: descripción breve del evento o estado legible, por ejemplo `Iniciado`, `Reproducido` o `Terminado`.
+
+Los tres son opcionales. Al recibir una actualización:
+
+- campo omitido: conserva el valor existente;
+- `null` o cadena vacía: elimina el valor;
+- texto: establece el nuevo valor.
+
+Las integraciones no deben modificar `subtype` salvo que lo envíen expresamente. Su uso normal es manual.
+
+## Terminología
+
+- **Tipo**: qué clase principal de actividad es: película, serie, juego o tipo personalizado.
+- **Subtipo**: cómo la clasifica el usuario: horror, roguelike, documental.
+- **Contexto**: dónde, en qué plataforma o por qué parte va: PC, S02E05, capítulo 8.
+- **Detalle**: qué ha ocurrido o cuál es el estado legible: añadido, reproducido, iniciado.
 
 ## Espacios
 
-### Base de datos
+- **Actividades**: catálogo completo.
+- **Backlog**: pendiente.
+- **On Deck**: activo o prioritario.
+- **Colección**: terminado.
 
-Contiene todos los ítems. No es un estado excluyente, sino la vista del catálogo completo.
+Las acciones normales mantienen Backlog, On Deck y Colección como estados excluyentes.
 
-### Backlog
+## Listas
 
-Contenido pendiente. Puede coexistir históricamente con On Deck, aunque las acciones normales deben mantener un flujo coherente.
+Los listas son transversales a los espacios.
 
-### On Deck
+- **Manual**: el usuario añade o retira actividads desde la ficha.
+- **Dinámico**: la pertenencia se calcula mediante reglas.
+- **Mixto**: combina reglas y altas manuales.
 
-Contenido activo o prioritario. Mover un ítem aquí puede retirarlo de Colección si estaba terminado.
+Las reglas dinámicas trabajan sobre campos comunes: título, tipo, subtipo, contexto, detalle, estado, fuente y año. El uso recomendado para clasificaciones personales es `subtype`; el uso recomendado para plataforma o parte actual es `context`.
 
-### Colección
+Ejemplo:
 
-Contenido terminado. Al completar un ítem se registra `completedAt`, se navega a Colección y puede lanzarse confeti desde la tarjeta o fila de destino.
+```text
+Lista: Horror
+Regla: subtype es exactamente horror
+```
 
-## Grupos
+## Límite de On Deck
 
-Los grupos son etiquetas del usuario y son transversales a los espacios. Se usan para filtrar o agrupar. El término “colecciones” no debe emplearse para ellos.
+El límite de tres elementos se aplica a una categoría efectiva:
 
-## Actividad
+1. `subtype`, cuando existe;
+2. `type`, cuando no existe subtipo.
 
-`lastActivityAt` representa la última interacción significativa. Puede actualizarse por:
+Dos actividads con subtipo `horror` comparten el mismo cupo aunque sus tipos principales sean distintos. Los actividads sin subtipo utilizan el cupo de su tipo.
 
-- reproducción o visionado en Plex;
-- inicio de un juego en Playnite;
-- entrada manual desde la ficha;
-- botón Dar la vuelta.
+## Identidad técnica
 
-## Parrilla
+`items.id` es un UUID interno de SQLite. No debe derivarse de IDs externos. `canonicalId` es el contrato estable usado por la API, la UI y las integraciones.
 
-Los límites se configuran por tipo y espacio. El estado derivado puede ser:
 
-- normal;
-- Quemándose;
-- Achicharrado.
+## Listas dinámicos (v7.2.1)
 
-Dar la vuelta actualiza la actividad. El control rápido solo tiene sentido en Backlog y On Deck.
-
-## Valoración, reseña y diario
-
-- `rating`: valoración numérica.
-- review: reseña principal asociada al ítem.
-- journal: entradas de actividad o comentarios con fecha.
-
-## Assets
-
-Poster, fondo y adjuntos son referencias a archivos o URL. Nunca deben persistirse como Data URI en SQLite.
+Las reglas dinámicas expuestas en la interfaz se basan únicamente en `subtype`. Los listas manuales se gestionan desde la ficha; los mixtos combinan ambas fuentes. El valor dinámico se compara con `contains` sin distinguir mayúsculas y minúsculas.

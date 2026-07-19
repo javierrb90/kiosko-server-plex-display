@@ -1,6 +1,17 @@
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c])); }
 function escapeAttr(value) { return escapeHtml(value).replace(/`/g, '&#96;'); }
 function text(value) { return Array.isArray(value) ? value.filter(Boolean).join(' · ') : (value ? String(value) : ''); }
+function summaryLineFor(item = {}) {
+  const clean = value => String(value ?? '').trim();
+  const context = clean(item.context);
+  const subtype = clean(item.subtype);
+  const rawDetail = clean(item.detail || item.subtitle || item.activitySubtitle || '');
+  const norm = value => clean(value).toLowerCase();
+  const excluded = new Set([norm(context), norm(subtype)].filter(Boolean));
+  const detailParts = rawDetail.split(/\s*·\s*/).map(clean).filter(Boolean).filter(part => !excluded.has(norm(part)));
+  const seen = new Set();
+  return [context, ...detailParts, subtype].filter(Boolean).filter(part => { const key=norm(part); if(!key || seen.has(key)) return false; seen.add(key); return true; }).join(' · ');
+}
 
 function typeFor(item = {}) {
   if (item.collectionType === 'games' || item.source === 'playnite' || item.kind === 'game') return 'games';
@@ -11,7 +22,7 @@ function typeLabel(item = {}, settings = {}) {
   const type = collectionTypeFor(item);
   const configured = customTypesFromSettings(settings).find(entry => entry.id === type);
   if (configured) return configured.singular || configured.plural || type;
-  return type === 'games' ? 'Juego' : type === 'movies' ? 'Película' : type === 'series' ? 'Serie' : String(type || 'Item').replace(/[-_]+/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+  return type === 'games' ? 'Juego' : type === 'movies' ? 'Película' : type === 'series' ? 'Serie' : String(type || 'Actividad').replace(/[-_]+/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
 }
 function sourceLabel(item = {}) {
   if (item.source === 'playnite' || item.kind === 'game') return 'Playnite';
@@ -45,15 +56,15 @@ function activityTurnButtonMarkup(item = {}) {
   if (!date) return '';
   const state = activityStateDescriptor(item);
   const icon = item.completedAt ? '✓' : (item.lastActivityAt || item.lastSeenAt) ? '↻' : '＋';
-  const label = item.completedAt ? 'Finalización' : (item.lastActivityAt || item.lastSeenAt) ? 'Última actividad' : 'Entrada en base de datos';
-  return `<button type="button" class="item-detail__activity-turn ${state.key !== 'normal' ? `is-${state.key}` : ''}" data-detail-action="activity" title="Actualizar actividad" aria-label="${escapeAttr(label)}: ${escapeAttr(formatDate(date))}"><span class="item-detail__activity-turn-date"><span class="item-detail__activity-turn-icon">${icon}</span><span class="item-detail__activity-turn-copy"><strong>${escapeHtml(formatDate(date))}</strong><small>${escapeHtml(relativeDaysText(date))}</small></span></span>${state.label ? `<span class="item-detail__activity-turn-state">${escapeHtml(state.label)}</span>` : ''}</button>`;
+  const label = item.completedAt ? 'Finalización' : (item.lastActivityAt || item.lastSeenAt) ? 'Último movimiento' : 'Registro en Actividades';
+  return `<button type="button" class="item-detail__activity-turn ${state.key !== 'normal' ? `is-${state.key}` : ''}" data-detail-action="activity" title="Registrar movimiento" aria-label="${escapeAttr(label)}: ${escapeAttr(formatDate(date))}"><span class="item-detail__activity-turn-date"><span class="item-detail__activity-turn-icon">${icon}</span><span class="item-detail__activity-turn-copy"><strong>${escapeHtml(formatDate(date))}</strong><small>${escapeHtml(relativeDaysText(date))}</small></span></span>${state.label ? `<span class="item-detail__activity-turn-state">${escapeHtml(state.label)}</span>` : ''}</button>`;
 }
 function itemDateLine(item = {}) {
   const date = item.completedAt || item.lastActivityAt || item.lastSeenAt || item.firstSeenAt;
   if (!date) return '';
-  const label = item.completedAt ? 'Fecha de finalización' : (item.lastActivityAt || item.lastSeenAt) ? 'Última actividad' : 'Entrada en base de datos';
+  const label = item.completedAt ? 'Fecha de finalización' : (item.lastActivityAt || item.lastSeenAt) ? 'Último movimiento' : 'Registro en Actividades';
   const icon = item.completedAt ? '✓' : (item.lastActivityAt || item.lastSeenAt) ? '↻' : '＋';
-  return `<button type="button" class="item-detail__date-line item-detail__date-action" data-detail-action="activity" title="Actualizar actividad" aria-label="Actualizar actividad. ${escapeAttr(label)}: ${escapeAttr(formatDate(date))}"><span>${icon}</span>${escapeHtml(formatDate(date))}</button>`;
+  return `<button type="button" class="item-detail__date-line item-detail__date-action" data-detail-action="activity" title="Registrar movimiento" aria-label="Registrar movimiento. ${escapeAttr(label)}: ${escapeAttr(formatDate(date))}"><span>${icon}</span>${escapeHtml(formatDate(date))}</button>`;
 }
 function defaultDetailDesign() { return { background: 'backdrop', shade: 'medium', blur: 'soft' }; }
 function readDetailDesign(settings = {}) {
@@ -80,7 +91,7 @@ function statusLabel(context, item = {}) {
   if (context === 'on-deck') return 'On Deck';
   if (context === 'collections') return item.rating ? `Valorado · ${'★'.repeat(Number(item.rating)||0)}${'☆'.repeat(5-(Number(item.rating)||0))}` : 'Colección';
   if (context === 'current') return 'Actual';
-  if (context === 'database') return 'Base de datos';
+  if (context === 'database') return 'Actividades';
   return typeLabel(item);
 }
 function cleanList(values) {
@@ -93,6 +104,13 @@ function cleanList(values) {
 function metaValue(item = {}, key = '') {
   const meta = item.meta || item.metadata || {};
   const map = {
+    subtype: item.subtype,
+    context: item.context,
+    detail: item.detail || item.subtitle,
+    status: item.status,
+    source: item.source,
+    type: collectionTypeFor(item),
+    rating: item.rating,
     year: item.releaseYear || item.year || meta.releaseYear,
     platform: cleanList(item.platforms || meta.platforms || item.platform || meta.platform).join(' · '),
     platforms: cleanList(item.platforms || meta.platforms || item.platform || meta.platform).join(' · '),
@@ -116,14 +134,15 @@ function metaValue(item = {}, key = '') {
   return text(map[key] ?? item[key] ?? meta[key]);
 }
 const META_LABELS = {
+  subtype: 'Subtipo', context: 'Contexto', detail: 'Detalle', status: 'Estado', source: 'Fuente', rating: 'Calificación',
   year: 'Año', platform: 'Plataforma', platforms: 'Plataforma', developer: 'Desarrollador', developers: 'Desarrollador',
   publisher: 'Publisher', publishers: 'Publisher', genres: 'Géneros', genre: 'Géneros', playtime: 'Tiempo jugado', duration: 'Duración',
-  studio: 'Studio', director: 'Director', type: 'Tipo', firstSeenAt: 'Entrada en BD', lastActivityAt: 'Última actividad', completedAt: 'Finalización', latestActivity: 'Última novedad'
+  studio: 'Studio', director: 'Director', type: 'Tipo', firstSeenAt: 'Entrada en BD', lastActivityAt: 'Último movimiento', completedAt: 'Finalización', latestActivity: 'Última novedad'
 };
 const DEFAULT_METADATA_FIELDS = {
-  games: ['year','platforms','developers','publishers','genres','playtime','firstSeenAt','lastActivityAt','completedAt'],
-  movies: ['year','genres','duration','studio','director','firstSeenAt','lastActivityAt','completedAt'],
-  series: ['year','genres','studio','latestActivity','firstSeenAt','lastActivityAt','completedAt']
+  games: ['subtype','context','detail','lastActivityAt','completedAt'],
+  movies: ['subtype','context','detail','lastActivityAt','completedAt'],
+  series: ['subtype','context','detail','lastActivityAt','completedAt']
 };
 function metadataFieldsFor(item = {}, settings = {}) {
   const t = typeFor(item);
@@ -131,7 +150,7 @@ function metadataFieldsFor(item = {}, settings = {}) {
   return Array.isArray(configured) && configured.length ? configured : DEFAULT_METADATA_FIELDS[t];
 }
 function metadataRows(item = {}, settings = {}) {
-  return metadataFieldsFor(item, settings).map(key => [META_LABELS[key] || key.replace(/^meta\./, ''), metaValue(item, key)]).filter(([, value]) => Boolean(value));
+  return metadataFieldsFor(item, settings).filter(key => !['subtype','context','detail'].includes(key)).map(key => [META_LABELS[key] || key.replace(/^meta\./, ''), metaValue(item, key)]).filter(([, value]) => Boolean(value));
 }
 function ratingControlMarkup(item = {}, context = '') {
   const rating = Math.max(0, Math.min(5, Number(item.rating) || 0));
@@ -190,7 +209,7 @@ function fieldValues(item = {}, field = '') {
   const meta = item.meta || {};
   const asArray = value => Array.isArray(value) ? value : (value ? [value] : []);
   const platformCandidates = [...asArray(item.platforms), ...asArray(meta.platforms), ...asArray(item.platform), ...asArray(meta.platform), item.subtitle];
-  const valueMap = { title: [item.title], source: [item.source], type: [item.collectionType, item.type, meta.plexType], year: [item.year, item.releaseYear, meta.releaseYear], platform: platformCandidates, platforms: platformCandidates, genre: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)], genres: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)], developer: [...asArray(item.developers), ...asArray(meta.developers), ...asArray(item.developer), ...asArray(meta.developer)], publisher: [...asArray(item.publishers), ...asArray(meta.publishers), ...asArray(item.publisher), ...asArray(meta.publisher)] };
+  const valueMap = { title: [item.title], source: [item.source], type: [item.collectionType, item.type, meta.plexType], subtype: [item.subtype], context: [item.context], detail: [item.detail || item.subtitle], status: [item.status], year: [item.year, item.releaseYear, meta.releaseYear], platform: platformCandidates, platforms: platformCandidates, genre: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)], genres: [...asArray(item.genres), ...asArray(meta.genres), ...asArray(item.genre), ...asArray(meta.genre)], developer: [...asArray(item.developers), ...asArray(meta.developers), ...asArray(item.developer), ...asArray(meta.developer)], publisher: [...asArray(item.publishers), ...asArray(meta.publishers), ...asArray(item.publisher), ...asArray(meta.publisher)] };
   return (valueMap[field] || [item[field], meta[field]]).flat().filter(Boolean).map(value => String(value).toLowerCase());
 }
 function itemInGroup(item = {}, group = {}) {
@@ -212,7 +231,7 @@ function itemInGroup(item = {}, group = {}) {
 function groupsMarkup(item = {}, context = '', collectionGroups = []) {
   if (!['backlog', 'on-deck', 'collections', 'current', 'database'].includes(context)) return '';
   const activeGroups = collectionGroups.filter(group => itemInGroup(item, group));
-  return `<div class="item-detail__groups item-detail__groups--compact" data-detail-groups><div class="item-detail__groups-head"><span>Grupos</span><button type="button" class="item-detail__group-add" data-detail-action="groups" aria-label="Gestionar grupos" title="Gestionar grupos"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>${activeGroups.length ? `<div class="item-detail__group-list">${activeGroups.map(group => `<span class="item-detail__group-chip">${escapeHtml(group.name)}</span>`).join('')}</div>` : ''}<div class="item-detail__group-picker" data-detail-group-picker hidden></div></div>`;
+  return `<div class="item-detail__groups item-detail__groups--compact" data-detail-groups><div class="item-detail__groups-head"><span>Listas</span><button type="button" class="item-detail__group-add" data-detail-action="groups" aria-label="Gestionar listas" title="Gestionar listas"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>${activeGroups.length ? `<div class="item-detail__group-list">${activeGroups.map(group => `<span class="item-detail__group-chip">${escapeHtml(group.name)}</span>`).join('')}</div>` : ''}<div class="item-detail__group-picker" data-detail-group-picker hidden></div></div>`;
 }
 function workspaceActionIcon(kind = 'backlog') {
   if (kind === 'deck') return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h9v3H5V7Zm0 7h14v3H5v-3Zm11-7 3 1.9L16 11V7Z"/></svg>`;
@@ -232,7 +251,7 @@ function detailActionsMarkup(item = {}, context = '') {
     <div class="item-detail__quick-group">${primaryActionsMarkup(item, context)}</div>
     <div class="item-detail__utility-actions">
       <button type="button" class="item-detail__edit-trigger" data-detail-action="debug" title="Ver JSON de depuración" aria-label="Ver JSON de depuración">{ }</button>
-      <button type="button" class="item-detail__edit-trigger" data-detail-action="edit" title="Editar item" aria-label="Editar item">✎</button>
+      <button type="button" class="item-detail__edit-trigger" data-detail-action="edit" title="Editar actividad" aria-label="Editar actividad">✎</button>
     </div>
   </div>`;
 }
@@ -273,7 +292,7 @@ async function setupJournalComposer(root) {
 }
 
 function bodyMarkup(item = {}, context = '', collectionGroups = [], settings = {}) {
-  const subtitle = item.detail || item.subtitle || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item, settings));
+  const subtitle = summaryLineFor(item) || (Array.isArray(item.platforms) ? item.platforms.join(' · ') : typeLabel(item, settings));
   const backdrop = effectiveBackdrop(item, settings);
   return `<div class="item-detail ${detailDesignClass(settings)} ${backdrop ? 'item-detail--has-bg' : ''}">
     ${grillTurnButtonMarkup(item)}
@@ -292,10 +311,10 @@ function bodyMarkup(item = {}, context = '', collectionGroups = [], settings = {
   </div>`;
 }
 export async function askRating(ui, item = {}, { title = null } = {}) {
-  return ui.open({ title: title || (item.source === 'plex' ? 'Marcar como visto' : 'Marcar como terminado'), className: 'ui-modal-root--rating', body: `<div class="rating-modal"><div class="rating-modal__poster">${posterMarkup(item)}</div><div class="rating-modal__copy"><h3>${escapeHtml(item.title || 'Sin título')}</h3><p>${escapeHtml(item.subtitle || typeLabel(item))}</p><fieldset class="rating-picker" data-value="${Number(item.rating || 0)}">${[1,2,3,4,5].map(n => `<button type="button" data-rating="${n}">${n <= Number(item.rating || 0) ? '★' : '☆'}</button>`).join('')}</fieldset></div></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Confirmar', variant: 'primary', onClick: root => Number(root.querySelector('.rating-picker')?.dataset.value || item.rating || 0) }] });
+  return ui.open({ title: title || (item.source === 'plex' ? 'Marcar como visto' : 'Marcar como terminado'), className: 'ui-modal-root--rating', body: `<div class="rating-modal"><div class="rating-modal__poster">${posterMarkup(item)}</div><div class="rating-modal__copy"><h3>${escapeHtml(item.title || 'Sin título')}</h3><p>${escapeHtml(summaryLineFor(item) || typeLabel(item))}</p><fieldset class="rating-picker" data-value="${Number(item.rating || 0)}">${[1,2,3,4,5].map(n => `<button type="button" data-rating="${n}">${n <= Number(item.rating || 0) ? '★' : '☆'}</button>`).join('')}</fieldset></div></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Confirmar', variant: 'primary', onClick: root => Number(root.querySelector('.rating-picker')?.dataset.value || item.rating || 0) }] });
 }
 async function askRemoveFromDeck(ui) {
-  return ui.confirm({ title: 'Calificación guardada', message: 'Este item está en On Deck. ¿Quieres retirarlo de On Deck también?', confirmText: 'Retirar de On Deck' });
+  return ui.confirm({ title: 'Calificación guardada', message: 'Este actividad está en On Deck. ¿Quieres retirarlo de On Deck también?', confirmText: 'Retirar de On Deck' });
 }
 async function applyRating({ ui, api, item, context, rating, toast }) {
   if (!rating) return false;
@@ -314,6 +333,8 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   let currentContext = context;
   let busy = false;
   const previousHash = window.location.hash;
+  const previousTitle = document.title;
+  document.title = `${item.title || 'Actividad'} · BBQ`;
   try { if (item.canonicalId) window.history.replaceState(null, '', `#/item/${encodeURIComponent(item.canonicalId)}?from=${encodeURIComponent(context || 'database')}`); } catch {}
   const mergeReturnedItem = payload => { const next = payload?.completed || payload?.deckItem || payload?.backlogItem || payload?.item || payload; if (next && typeof next === 'object') { Object.assign(item, next); onItemUpdated({ ...item }); } };
   const followItem = (root, destination, reason = 'moved', options = {}) => {
@@ -328,7 +349,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     root.classList.toggle('is-hot', hot && !charred);
     root.classList.toggle('is-charred', charred);
   };
-  const renderBody = root => { const body = root.querySelector('.ui-modal__body'); if (body) body.innerHTML = bodyMarkup(item, currentContext, collectionGroups, settings); syncDetailState(root); };
+  const renderBody = root => { const body = root.querySelector('.ui-modal__body'); const footer = root.querySelector('.ui-modal__footer'); if (body) body.innerHTML = bodyMarkup(item, currentContext, collectionGroups, settings); if (footer) { footer.innerHTML = ''; footer.hidden = true; } syncDetailState(root); };
   try {
     const journal = await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/journal?page=1&limit=1`);
     item.review = journal.review || null;
@@ -336,9 +357,9 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     item.latestJournalEntry = journal.items?.[0] || null;
   } catch {}
   const refreshGroups = async () => { const response = await api('/api/collection-groups').catch(() => null); if (response?.groups) collectionGroups = response.groups; return collectionGroups; };
-  function renderInlineGroupPicker(root) { const picker = root.querySelector('[data-detail-group-picker]'); if (!picker) return; const keys = groupItemKeys(item); if (!keys.length) { picker.hidden = false; picker.innerHTML = `<p class="settings-help">No hay una clave estable para este item.</p>`; return; } if (!collectionGroups.length) { picker.hidden = false; picker.innerHTML = `<p class="settings-help">No hay grupos creados.</p>`; return; } picker.hidden = false; picker.innerHTML = `<div class="groups-picker groups-picker--inline">${collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-group-pick="${escapeAttr(group.id)}" ${itemInGroup(item, group) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('')}</div><div class="item-detail__group-picker-actions"><button type="button" class="ui-modal__button" data-detail-action="groups-cancel">Cancelar</button><button type="button" class="ui-modal__button ui-modal__button--primary" data-detail-action="groups-save">Guardar grupos</button></div>`; }
-  async function saveInlineGroups(root) { if (busy) return; const keys = groupItemKeys(item); const primaryKey = keys[0]; if (!primaryKey) { toast('No hay una clave estable para este item'); return; } busy = true; const selected = new Set([...root.querySelectorAll('[data-group-pick]:checked')].map(input => input.dataset.groupPick)); for (const group of collectionGroups) { const active = itemInGroup(item, group); if (selected.has(group.id) && !active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items`, { method: 'POST', body: JSON.stringify({ itemId: primaryKey, itemKeys: keys }) }); if (!selected.has(group.id) && active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items/${encodeURIComponent(primaryKey)}`, { method: 'DELETE', body: JSON.stringify({ itemKeys: keys }) }); } await refreshGroups(); busy = false; toast('Grupos actualizados'); window.dispatchEvent(new CustomEvent('kiosko:collection-groups-changed')); renderBody(root); }
-  async function chooseDeckReplacement(limitPayload = {}) { const categoryLabel = { games: 'juegos', movies: 'películas', series: 'series' }[limitPayload.category] || 'items'; const cards = (limitPayload.currentItems || []).map(entry => { const img = entry.poster || entry.posterUrl || entry.cover || ''; const initial = escapeHtml((entry.title || '?').slice(0, 1)); return `<label class="deck-replace-card"><input type="radio" name="deck-replace" value="${escapeAttr(entry.id)}"><span class="deck-replace-card__poster">${img ? `<img src="${escapeAttr(img)}" alt="">` : `<span>${initial}</span>`}</span><strong>${escapeHtml(entry.title || 'Sin título')}</strong><small>${escapeHtml(entry.subtitle || '')}</small></label>`; }).join(''); const result = await ui.open({ title: 'Límite de On Deck', className: 'ui-modal-root--wide', body: `<div class="deck-limit-modal"><p>Ya tienes ${limitPayload.limit || 3} ${categoryLabel} en On Deck. Para añadir <strong>${escapeHtml(limitPayload.newItem?.title || item.title || 'este item')}</strong>, elige cuál quieres reemplazar.</p><div class="deck-replace-grid">${cards}</div></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Reemplazar seleccionado', variant: 'primary', onClick: root => root.querySelector('input[name="deck-replace"]:checked')?.value || false }] }); return result || null; }
+  function renderInlineGroupPicker(root) { const picker = root.querySelector('[data-detail-group-picker]'); if (!picker) return; const keys = groupItemKeys(item); if (!keys.length) { picker.hidden = false; picker.innerHTML = `<p class="settings-help">No hay una clave estable para esta actividad.</p>`; return; } if (!collectionGroups.length) { picker.hidden = false; picker.innerHTML = `<p class="settings-help">No hay listas creadas.</p>`; return; } picker.hidden = false; picker.innerHTML = `<div class="groups-picker groups-picker--inline">${collectionGroups.map(group => `<label class="controls-modal__toggle"><input type="checkbox" data-group-pick="${escapeAttr(group.id)}" ${itemInGroup(item, group) ? 'checked' : ''}><span>${escapeHtml(group.name)}</span><small>${escapeHtml(group.mode || 'manual')}</small></label>`).join('')}</div><div class="item-detail__group-picker-actions"><button type="button" class="ui-modal__button" data-detail-action="groups-cancel">Cancelar</button><button type="button" class="ui-modal__button ui-modal__button--primary" data-detail-action="groups-save">Guardar listas</button></div>`; }
+  async function saveInlineGroups(root) { if (busy) return; const keys = groupItemKeys(item); const primaryKey = keys[0]; if (!primaryKey) { toast('No hay una clave estable para esta actividad'); return; } busy = true; const selected = new Set([...root.querySelectorAll('[data-group-pick]:checked')].map(input => input.dataset.groupPick)); for (const group of collectionGroups) { const active = itemInGroup(item, group); if (selected.has(group.id) && !active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items`, { method: 'POST', body: JSON.stringify({ itemId: primaryKey, itemKeys: keys }) }); if (!selected.has(group.id) && active) await api(`/api/collection-groups/${encodeURIComponent(group.id)}/items/${encodeURIComponent(primaryKey)}`, { method: 'DELETE', body: JSON.stringify({ itemKeys: keys }) }); } await refreshGroups(); busy = false; toast('Listas actualizadas'); window.dispatchEvent(new CustomEvent('kiosko:collection-groups-changed')); renderBody(root); }
+  async function chooseDeckReplacement(limitPayload = {}) { const categoryLabel = limitPayload.categoryLabel || ({ games: 'juegos', movies: 'películas', series: 'series' }[String(limitPayload.category || '').replace(/^type:/,'')] || 'items'); const cards = (limitPayload.currentItems || []).map(entry => { const img = entry.poster || entry.posterUrl || entry.cover || ''; const initial = escapeHtml((entry.title || '?').slice(0, 1)); return `<label class="deck-replace-card"><input type="radio" name="deck-replace" value="${escapeAttr(entry.id)}"><span class="deck-replace-card__poster">${img ? `<img src="${escapeAttr(img)}" alt="">` : `<span>${initial}</span>`}</span><strong>${escapeHtml(entry.title || 'Sin título')}</strong><small>${escapeHtml(entry.subtitle || '')}</small></label>`; }).join(''); const result = await ui.open({ title: 'Límite de On Deck', className: 'ui-modal-root--wide', body: `<div class="deck-limit-modal"><p>Ya tienes ${limitPayload.limit || 3} ${categoryLabel} en On Deck. Para añadir <strong>${escapeHtml(limitPayload.newItem?.title || item.title || 'esta actividad')}</strong>, elige cuál quieres reemplazar.</p><div class="deck-replace-grid">${cards}</div></div>`, actions: [{ label: 'Cancelar', value: null }, { label: 'Reemplazar seleccionado', variant: 'primary', onClick: root => root.querySelector('input[name="deck-replace"]:checked')?.value || false }] }); return result || null; }
   async function postDeckWithReplacement(path) { try { return await api(path, { method: 'POST' }); } catch (error) { if (error.status !== 409 || error.data?.reason !== 'deck_limit_reached') throw error; const replaceId = await chooseDeckReplacement(error.data); if (!replaceId) return null; return api(path, { method: 'POST', body: JSON.stringify({ replaceId }) }); } }
   async function editItem(root) {
     const manual = isManualEditableItem(item);
@@ -350,56 +371,98 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
       <label class="ui-field"><span>Subir carátula</span><input type="file" accept="image/*" data-edit-poster-file></label>
       <label class="ui-field"><span>Subir backdrop</span><input type="file" accept="image/*" data-edit-backdrop-file></label>
     </section>` : '';
-    const result = await ui.open({
-      title: 'Editar item',
-      className: 'ui-modal-root--wide',
-      body: `<div class="controls-modal">${manualFields}<section class="controls-modal__section"><h3>Estado / detalle</h3><label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Última actividad, plataforma, episodio..."></label><p class="settings-help">Al modificar el detalle se actualiza la fecha de última actividad. Las integraciones podrán volver a actualizarlo.</p></section><section class="controls-modal__section"><h3>Fechas</h3><label class="ui-field"><span>Entrada en base de datos</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label><label class="ui-field"><span>Última actividad</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label><label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label></section><section class="controls-modal__section debug-item-state"><h3>Depuración</h3><label class="ui-check"><input type="checkbox" data-edit-charred ${item.states?.charred || item.grill?.charred ? 'checked' : ''}> Marcar como achicharrado</label><p class="settings-help">Marca visualmente el item sin cambiar el espacio al que pertenece.</p></section></div>`,
-      actions: [
-        { label: 'Eliminar', value: '__delete__', variant: 'danger' },
-        { label: 'Cancelar', value: null },
-        { label: 'Guardar', variant: 'primary', onClick: async modal => ({
-          subtitle: modal.querySelector('[data-detail-subtitle]')?.value || '',
-          firstSeenAt: modal.querySelector('[data-date-first]')?.value || null,
-          lastActivityAt: modal.querySelector('[data-date-activity]')?.value || null,
-          completedAt: modal.querySelector('[data-date-completed]')?.value || null,
-          charred: modal.querySelector('[data-edit-charred]')?.checked === true,
-          manual: manual ? {
-            title: modal.querySelector('[data-edit-title]')?.value?.trim() || item.title,
-            collectionType: modal.querySelector('[data-edit-type]')?.value || collectionTypeFor(item),
-            poster: modal.querySelector('[data-edit-poster]')?.value || '',
-            backdrop: modal.querySelector('[data-edit-backdrop]')?.value || '',
-            posterAsset: await fileToDataUri(modal.querySelector('[data-edit-poster-file]')?.files?.[0]),
-            backdropAsset: await fileToDataUri(modal.querySelector('[data-edit-backdrop-file]')?.files?.[0])
-          } : null
-        }) }
-      ]
-    });
-    if (!result) return;
-    if (result === '__delete__') {
-      const ok = await ui.confirm({ title: 'Eliminar definitivamente', message: 'Esto eliminará el item de todas las vistas y grupos. ¿Continuar?', confirmText: 'Eliminar definitivamente', danger: true });
-      if (!ok) return;
-      await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/delete`, { method: 'POST' });
-      currentContext = 'removed';
-      toast('Item eliminado definitivamente');
-      renderBody(root);
-      return;
-    }
-    if (result.manual) {
-      const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}`, { method: 'PATCH', body: JSON.stringify({ ...result.manual, detail: result.subtitle }) });
-      mergeReturnedItem(response);
-    }
-    const payload = Object.fromEntries(Object.entries({ subtitle: result.subtitle, firstSeenAt: result.firstSeenAt, lastActivityAt: result.lastActivityAt, completedAt: result.completedAt }).map(([key, value]) => [key, key === 'subtitle' ? value : (value ? `${value}T12:00:00.000Z` : null)]));
-    const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/dates`, { method: 'PATCH', body: JSON.stringify(payload) });
-    mergeReturnedItem(response);
-    const isCharred = Boolean(item.states?.charred || item.grill?.charred);
-    if (result.charred !== isCharred) {
-      const grillResponse = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/grill/char`, { method: result.charred ? 'POST' : 'DELETE' });
-      mergeReturnedItem(grillResponse);
-    }
-    toast('Item actualizado');
-    onItemUpdated({ ...item });
-    renderBody(root);
+    const body = `<form class="item-detail-form item-detail-edit-form" data-edit-activity-form>
+      <div class="controls-modal">${manualFields}
+        <section class="controls-modal__section"><h3>Clasificación y contexto</h3>
+          <label class="ui-field"><span>Subtipo</span><input type="text" data-detail-subtype value="${escapeAttr(item.subtype || '')}" placeholder="Horror, roguelike, documental..."></label>
+          <p class="settings-help">Clasificación manual. Las integraciones solo la cambian cuando envían <code>subtype</code> expresamente.</p>
+          <label class="ui-field"><span>Contexto</span><input type="text" data-detail-context value="${escapeAttr(item.context || '')}" placeholder="PC, S02E05, Capítulo 8..."></label>
+        </section>
+        <section class="controls-modal__section"><h3>Detalle</h3>
+          <label class="ui-field"><span>Detalle visible</span><input type="text" data-detail-subtitle value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Iniciado, reproducido, terminado..."></label>
+          <p class="settings-help">Al cambiarlo se registra un nuevo movimiento. Una integración puede volver a actualizarlo.</p>
+        </section>
+        <section class="controls-modal__section"><h3>Fechas</h3>
+          <label class="ui-field"><span>Registro en Actividades</span><input type="date" data-date-first value="${escapeAttr(inputDate(item.firstSeenAt))}"></label>
+          <label class="ui-field"><span>Último movimiento</span><input type="date" data-date-activity value="${escapeAttr(inputDate(item.lastActivityAt || item.lastSeenAt))}"></label>
+          <label class="ui-field"><span>Finalización</span><input type="date" data-date-completed value="${escapeAttr(inputDate(item.completedAt))}"></label>
+        </section>
+        <section class="controls-modal__section debug-item-state"><h3>Depuración</h3>
+          <label class="ui-check"><input type="checkbox" data-edit-charred ${item.states?.charred || item.grill?.charred ? 'checked' : ''}> Marcar como achicharrada</label>
+          <p class="settings-help">Cambia el estado visual sin mover la actividad de espacio.</p>
+        </section>
+      </div>
+      <footer class="item-detail-form__actions item-detail-form__actions--edit">
+        <button type="button" class="item-detail-control item-detail-control--danger-quiet" data-detail-action="edit-delete">Eliminar</button>
+        <button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button>
+        <button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="edit-save">Guardar cambios</button>
+      </footer>
+    </form>`;
+    renderInfoSubview(root, subviewMarkup('Editar actividad', body, { eyebrow: item.title || 'Actividad' }));
+    root.__editManual = manual;
   }
+
+  async function saveEditedItem(root) {
+    if (busy) return;
+    const form = root.querySelector('[data-edit-activity-form]');
+    if (!form) return;
+    busy = true;
+    try {
+      const subtype = form.querySelector('[data-detail-subtype]')?.value || '';
+      const contextValue = form.querySelector('[data-detail-context]')?.value || '';
+      const detail = form.querySelector('[data-detail-subtitle]')?.value || '';
+      if (root.__editManual) {
+        const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            title: form.querySelector('[data-edit-title]')?.value?.trim() || item.title,
+            collectionType: form.querySelector('[data-edit-type]')?.value || collectionTypeFor(item),
+            poster: form.querySelector('[data-edit-poster]')?.value || '',
+            backdrop: form.querySelector('[data-edit-backdrop]')?.value || '',
+            posterAsset: await fileToDataUri(form.querySelector('[data-edit-poster-file]')?.files?.[0]),
+            backdropAsset: await fileToDataUri(form.querySelector('[data-edit-backdrop-file]')?.files?.[0]),
+            subtype, context: contextValue, detail
+          })
+        });
+        mergeReturnedItem(response);
+      }
+      const dateValue = selector => form.querySelector(selector)?.value || '';
+      const response = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/dates`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          subtype,
+          context: contextValue,
+          subtitle: detail,
+          firstSeenAt: dateValue('[data-date-first]') ? `${dateValue('[data-date-first]')}T12:00:00.000Z` : null,
+          lastActivityAt: dateValue('[data-date-activity]') ? `${dateValue('[data-date-activity]')}T12:00:00.000Z` : null,
+          completedAt: dateValue('[data-date-completed]') ? `${dateValue('[data-date-completed]')}T12:00:00.000Z` : null
+        })
+      });
+      mergeReturnedItem(response);
+      const requestedCharred = form.querySelector('[data-edit-charred]')?.checked === true;
+      const isCharred = Boolean(item.states?.charred || item.grill?.charred);
+      if (requestedCharred !== isCharred) {
+        const grillResponse = await api(`/api/items/${encodeURIComponent(item.canonicalId)}/grill/char`, { method: requestedCharred ? 'POST' : 'DELETE' });
+        mergeReturnedItem(grillResponse);
+      }
+      onItemUpdated({ ...item });
+      document.title = `${item.title || 'Actividad'} · BBQ`;
+      renderBody(root);
+      toast('Actividad actualizada');
+    } catch (error) {
+      toast(`No se pudo actualizar la actividad · ${error.message || String(error)}`);
+    } finally { busy = false; }
+  }
+
+  async function deleteEditedItem(root) {
+    const ok = await ui.confirm({ title: 'Eliminar definitivamente', message: 'Esto eliminará la actividad de todos los espacios y listas. ¿Continuar?', confirmText: 'Eliminar definitivamente', danger: true });
+    if (!ok) return;
+    await api(`/api/items/${encodeURIComponent(item.canonicalId || item.id)}/delete`, { method: 'POST' });
+    currentContext = 'removed';
+    toast('Actividad eliminada definitivamente');
+    root.querySelector('[data-modal-close]')?.click();
+  }
+
   async function editManualData(root) {
     if (!isManualEditableItem(item)) return;
     const currentType = collectionTypeFor(item);
@@ -410,7 +473,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
         <div class="manual-item-preview">
           <div class="manual-item-preview__backdrop" style="${(item.backdrop || item.backdropUrl || item.background) ? `background-image:url('${escapeAttr(item.backdrop || item.backdropUrl || item.background)}')` : ''}"></div>
           <div class="manual-item-preview__poster">${(item.poster || item.posterUrl || item.cover) ? `<img src="${escapeAttr(item.poster || item.posterUrl || item.cover)}" alt="">` : `<span>${escapeHtml((item.title || '?').slice(0,1))}</span>`}</div>
-          <div><strong>${escapeHtml(item.title || 'Nuevo item')}</strong><small>${escapeHtml(item.detail || item.subtitle || '')}</small></div>
+          <div><strong>${escapeHtml(item.title || 'Nueva actividad')}</strong><small>${escapeHtml(item.detail || item.subtitle || '')}</small></div>
         </div>
         <label class="ui-field"><span>Título</span><input data-manual-title value="${escapeAttr(item.title || '')}" required></label>
         <label class="ui-field"><span>Detalle / estado</span><input data-manual-detail value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Estado visible del item"></label>
@@ -451,22 +514,33 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
   async function openImagePopup(src) { await ui.open({ title: '', className: 'ui-modal-root--image-viewer', body: `<div class="journal-image-viewer"><img src="${escapeAttr(src)}" alt="Imagen del diario"></div>`, actions: [{ label: 'Cerrar', value: null }] }); }
   async function composeActivity(root) {
     let getter = null;
-    const result = await ui.open({ title: 'Actualizar actividad', className: 'ui-modal-root--wide', body: journalComposerMarkup({ detail: item.detail || item.subtitle || '', includeDetail: true }), actions: [{ label: 'Cancelar', value: null }, { label: 'Guardar actividad', variant: 'primary', onClick: modal => getter?.() || false }], onMount: modal => {} });
+    const result = await ui.open({ title: 'Registrar movimiento', className: 'ui-modal-root--wide', body: journalComposerMarkup({ detail: item.detail || item.subtitle || '', includeDetail: true }), actions: [{ label: 'Cancelar', value: null }, { label: 'Registrar movimiento', variant: 'primary', onClick: modal => getter?.() || false }], onMount: modal => {} });
     return result;
   }
   function subviewMarkup(title, content, { backAction = 'subview-back', eyebrow = '' } = {}) {
-    return `<section class="item-detail-subview"><header class="item-detail-subview__header"><div>${eyebrow ? `<span>${escapeHtml(eyebrow)}</span>` : ''}<h3>${escapeHtml(title)}</h3></div><button type="button" class="item-detail-subview__back" data-detail-action="${escapeAttr(backAction)}">← Resumen</button></header>${content}</section>`;
+    return `<section class="item-detail-subview"><header class="item-detail-subview__header"><div>${eyebrow ? `<span>${escapeHtml(eyebrow)}</span>` : ''}<h3>${escapeHtml(title)}</h3></div></header><button type="button" class="item-detail-subview__back" data-detail-action="${escapeAttr(backAction)}">← Volver al resumen</button>${content}</section>`;
   }
-  function renderInfoSubview(root, markup) { const info = root.querySelector('.item-detail__info'); if (info) info.innerHTML = markup; }
+  function renderInfoSubview(root, markup) {
+    const info = root.querySelector('.item-detail__info');
+    const footer = root.querySelector('.ui-modal__footer');
+    if (!info) return;
+    info.innerHTML = markup;
+    if (footer) {
+      const actions = info.querySelector('.item-detail-form__actions');
+      footer.innerHTML = '';
+      footer.hidden = !actions;
+      if (actions) { footer.append(...actions.childNodes); actions.remove(); }
+    }
+  }
   async function showActivityForm(root, { journalOnly = false } = {}) {
     const checked = journalOnly ? 'checked' : '';
     const body = `<form class="item-detail-form" data-activity-form>
       <label class="ui-field"><span>Detalle / estado</span><input data-journal-detail value="${escapeAttr(item.detail || item.subtitle || '')}" placeholder="Qué ha ocurrido"></label>
       <label class="item-detail-form__toggle"><input type="checkbox" data-activity-note-toggle ${checked}><span><strong>Añadir una anotación</strong><small>Comentario e imagen opcionales para el diario.</small></span></label>
       <div class="item-detail-form__optional" data-activity-note-fields ${checked ? '' : 'hidden'}>${journalComposerMarkup({})}</div>
-      <footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button>${(item.grill?.hot || item.grill?.charred || item.states?.charred) ? '<button type="button" class="item-detail-control item-detail-control--danger-quiet" data-detail-action="grill-turn">Dar la vuelta</button>' : ''}<button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="activity-save">Guardar actividad</button></footer>
+      <footer class="item-detail-form__actions"><button type="button" class="item-detail-control item-detail-control--quiet" data-detail-action="subview-back">Cancelar</button>${(item.grill?.hot || item.grill?.charred || item.states?.charred) ? '<button type="button" class="item-detail-control item-detail-control--danger-quiet" data-detail-action="grill-turn">Dar la vuelta</button>' : ''}<button type="button" class="item-detail-control item-detail-control--primary" data-detail-action="activity-save">Registrar movimiento</button></footer>
     </form>`;
-    renderInfoSubview(root, subviewMarkup(journalOnly ? 'Nueva entrada' : 'Actualizar actividad', body, { eyebrow: journalOnly ? 'Diario' : item.title || '' }));
+    renderInfoSubview(root, subviewMarkup(journalOnly ? 'Nueva entrada' : 'Registrar movimiento', body, { eyebrow: journalOnly ? 'Diario' : item.title || '' }));
     root.__composerGetter = await setupJournalComposer(root.querySelector('[data-activity-form]'));
   }
   async function showAssessmentForm(root) {
@@ -539,7 +613,7 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     const fresh = await api(`/api/items/${canonical}`).catch(() => ({ item }));
     const raw = fresh?.item || fresh || item;
     const json = JSON.stringify(raw, null, 2);
-    const content = `<div class="item-debug"><div class="item-debug__toolbar"><p>Estado completo del item tal y como lo expone la API.</p><button type="button" class="item-detail-control item-detail-control--primary item-detail-control--compact" data-detail-action="debug-copy">Copiar JSON</button></div><pre data-item-debug-json>${escapeHtml(json)}</pre></div>`;
+    const content = `<div class="item-debug"><div class="item-debug__toolbar"><p>Estado completo de la actividad tal y como lo expone la API.</p><button type="button" class="item-detail-control item-detail-control--primary item-detail-control--compact" data-detail-action="debug-copy">Copiar JSON</button></div><pre data-item-debug-json>${escapeHtml(json)}</pre></div>`;
     root.__debugJson = json;
     renderInfoSubview(root, subviewMarkup('Depuración JSON', content, { eyebrow: item.canonicalId || item.id || 'item' }));
   }
@@ -551,6 +625,8 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
     if (action === 'groups-save') { await saveInlineGroups(root); return; }
     if (action === 'menu') { const menu = root.querySelector('[data-detail-more-menu]'); if (menu) menu.hidden = !menu.hidden; return; }
     if (action === 'edit') { await editItem(root); return; }
+    if (action === 'edit-save') { await saveEditedItem(root); return; }
+    if (action === 'edit-delete') { await deleteEditedItem(root); return; }
     if (action === 'debug') { await showDebug(root); return; }
     if (action === 'debug-copy') { try { await navigator.clipboard.writeText(root.__debugJson || root.querySelector('[data-item-debug-json]')?.textContent || ''); toast('JSON copiado'); } catch { toast('No se pudo copiar el JSON'); } return; }
     if (action === 'edit-manual-data') { await editManualData(root); return; }
@@ -582,12 +658,12 @@ export async function openItemDetail({ ui, api, item, context, toast = () => {},
         if (isInDeck(item, currentContext)) { await api(`/api/items/${canonical}/deck`, { method: 'DELETE' }); item.states = { ...(item.states || {}), inOnDeck: false }; item.status = 'known'; item.lastActivityAt = new Date().toISOString(); onItemUpdated({ ...item }); toast('Quitado de On Deck'); followItem(root, 'database'); return; }
         const response = await postDeckWithReplacement(`/api/items/${canonical}/deck`); if (!response) return; mergeReturnedItem(response); item.states = { ...(item.states || {}), inOnDeck: true, inBacklog: false, completed: false }; item.completedAt = null; item.status = 'on-deck'; onItemUpdated({ ...item }); toast('Movido a On Deck'); followItem(root, 'on-deck'); return;
       }
-      if (action === 'remove-collection') { const ok = await ui.confirm({ title: 'Quitar de Colección', message: 'Se retirará la calificación/finalización, pero el item seguirá en Base de datos.', confirmText: 'Quitar' }); if (!ok) return; const response = await api(`/api/items/${canonical}/collection`, { method: 'DELETE' }); mergeReturnedItem(response); item.rating = null; item.completedAt = null; item.states = { ...(item.states || {}), completed: false, inBacklog: false, inOnDeck: false }; item.status = 'known'; item.lastActivityAt = response?.item?.lastActivityAt || item.lastActivityAt || new Date().toISOString(); if (currentContext === 'collections') currentContext = 'database'; onItemUpdated({ ...item }); toast('Quitado de Colección'); followItem(root, 'database'); return; }
-      if (action === 'delete-permanent') { const ok = await ui.confirm({ title: 'Eliminar definitivamente', message: 'Esto eliminará el item de la base de datos, Backlog, On Deck, Colección, grupos y assets locales asociados. ¿Continuar?', confirmText: 'Eliminar definitivamente', danger: true }); if (!ok) return; await api(`/api/items/${canonical}/delete`, { method: 'POST' }); currentContext = 'removed'; toast('Item eliminado definitivamente'); renderBody(root); return; }
+      if (action === 'remove-collection') { const ok = await ui.confirm({ title: 'Quitar de Colección', message: 'Se retirará la calificación/finalización, pero el actividad seguirá en Actividades.', confirmText: 'Quitar' }); if (!ok) return; const response = await api(`/api/items/${canonical}/collection`, { method: 'DELETE' }); mergeReturnedItem(response); item.rating = null; item.completedAt = null; item.states = { ...(item.states || {}), completed: false, inBacklog: false, inOnDeck: false }; item.status = 'known'; item.lastActivityAt = response?.item?.lastActivityAt || item.lastActivityAt || new Date().toISOString(); if (currentContext === 'collections') currentContext = 'database'; onItemUpdated({ ...item }); toast('Quitado de Colección'); followItem(root, 'database'); return; }
+      if (action === 'delete-permanent') { const ok = await ui.confirm({ title: 'Eliminar definitivamente', message: 'Esto eliminará el item de la base de datos, Backlog, On Deck, Colección, grupos y assets locales asociados. ¿Continuar?', confirmText: 'Eliminar definitivamente', danger: true }); if (!ok) return; await api(`/api/items/${canonical}/delete`, { method: 'POST' }); currentContext = 'removed'; toast('Actividad eliminada definitivamente'); renderBody(root); return; }
     } finally { busy = false; }
   }
   return new Promise(resolve => {
-    ui.open({ title: labels.title || '', className: `ui-modal-root--item-detail ${item.states?.charred || item.grill?.charred ? 'is-charred' : item.grill?.hot ? 'is-hot' : ''}`, body: bodyMarkup(item, currentContext, collectionGroups, settings), actions: [] }).then(value => { try { if (window.location.hash.startsWith('#/item/')) window.history.replaceState(null, '', previousHash || '#/database'); } catch {} resolve(value); });
+    ui.open({ title: labels.title || '', className: `ui-modal-root--item-detail ${item.states?.charred || item.grill?.charred ? 'is-charred' : item.grill?.hot ? 'is-hot' : ''}`, body: bodyMarkup(item, currentContext, collectionGroups, settings), actions: [] }).then(value => { try { if (window.location.hash.startsWith('#/item/')) window.history.replaceState(null, '', previousHash || '#/database'); } catch {} document.title = previousTitle; resolve(value); });
     requestAnimationFrame(() => { const root = document.querySelector('.ui-modal-root--item-detail'); if (!root) return; if (root.__itemDetailAbort) root.__itemDetailAbort.abort(); root.__itemDetailAbort = new AbortController(); root.addEventListener('click', async event => { if (event.target.closest('.ui-modal__x')) { try { window.history.replaceState(null, '', previousHash && !previousHash.startsWith('#/item/') ? previousHash : '#/database'); } catch {} } const journalImage = event.target.closest('[data-journal-image]'); if (journalImage) { await openImagePopup(journalImage.dataset.journalImage); return; } const rateButton = event.target.closest('[data-item-rate]'); if (rateButton) { if (busy) return; busy = true; try { const rating = Number(rateButton.dataset.itemRate || 0); const result = await applyRating({ ui, api, item, context: currentContext, rating, toast }); if (result) { onItemUpdated({ ...item }); followItem(root, 'collections', 'moved', { celebrate: true }); } } finally { busy = false; } return; } const noteToggle = event.target.closest('[data-activity-note-toggle]'); if (noteToggle) { const fields=root.querySelector('[data-activity-note-fields]'); if(fields) fields.hidden=!noteToggle.checked; return; } const actionButton = event.target.closest('[data-detail-action]'); if (actionButton) await runAction(root, actionButton.dataset.detailAction, actionButton); }, { signal: root.__itemDetailAbort.signal }); root.addEventListener('keydown', async event => { const activator = event.target.closest('.item-detail__note--clickable[data-detail-action]'); if (!activator) return; if (event.key !== 'Enter' && event.key !== ' ') return; event.preventDefault(); await runAction(root, activator.dataset.detailAction, activator); }, { signal: root.__itemDetailAbort.signal }); });
   });
 }

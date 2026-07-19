@@ -13,7 +13,7 @@ Express + adaptadores
           ▼
 Contrato de ingestión / servicios
           │
-          ├── SQLite: ítems, actividad y estados
+          ├── SQLite: actividads, actividad y estados
           ├── JSON: configuración y almacenes auxiliares
           └── data/assets: binarios normalizados
           │
@@ -48,9 +48,9 @@ WebSocket → frontend SPA
 ## Flujo de actualización
 
 1. Una acción HTTP modifica el repositorio.
-2. El servidor devuelve el ítem actualizado.
+2. El servidor devuelve el actividad actualizado.
 3. El servidor emite un evento WebSocket.
-4. El frontend fusiona el ítem por `canonicalId`.
+4. El frontend fusiona el actividad por `canonicalId`.
 5. Se renderiza la vista y se aplica feedback visual.
 
 Las acciones locales que necesitan una animación exacta pueden animar el nodo real antes de enviar la petición, como Dar la vuelta.

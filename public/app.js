@@ -55,6 +55,19 @@ const state = {
 
 const LOCAL_VIEW_KEY = 'kiosko:active-view';
 
+const VIEW_TITLES = {
+  database: 'Actividades',
+  backlog: 'Backlog',
+  'on-deck': 'On Deck',
+  'current-content': 'Actual',
+  collections: 'Colección'
+};
+function setPageTitle(label = '') {
+  const clean = String(label || '').trim();
+  document.title = clean ? `${clean} · BBQ` : 'BBQ';
+}
+
+
 async function showGrillReviewOnce() {
   try {
     if (sessionStorage.getItem('bbqueue:grill-shown')) return;
@@ -271,44 +284,34 @@ function notificationCounts(items = []) {
   }, {});
 }
 function filteredOverlayNotifications() {
-  const items = (state.overlayNotifications || []).slice(0, 50);
-  if (state.notificationSourceFilter === 'all') return items;
-  return items.filter(item => normalizeNotificationSource(item) === state.notificationSourceFilter);
+  return (state.overlayNotifications || []).slice(0, 25);
 }
 function renderNotificationFilters() {
-  if (!notificationsOverlayFilters) return;
-  const items = (state.overlayNotifications || []).slice(0, 50);
-  const counts = notificationCounts(items);
-  const preferred = ['plex', 'playnite', 'syncthing', 'sonarr', 'radarr', 'system', 'other'];
-  const keys = preferred.filter(key => counts[key]).concat(Object.keys(counts).filter(key => !preferred.includes(key)).sort());
-  if (!keys.length) {
-    notificationsOverlayFilters.innerHTML = '';
-    return;
-  }
-  const allCount = items.length;
-  notificationsOverlayFilters.innerHTML = `<div class="notifications-filter-chips">
-    <button type="button" data-notification-filter="all" class="${state.notificationSourceFilter === 'all' ? 'is-active' : ''}">Todas <small>${allCount}</small></button>
-    ${keys.map(key => `<button type="button" data-notification-filter="${escapeAttr(key)}" class="${state.notificationSourceFilter === key ? 'is-active' : ''}">${escapeHtml(notificationSourceLabel(key))} <small>${counts[key] || 0}</small></button>`).join('')}
-  </div>`;
+  if (notificationsOverlayFilters) notificationsOverlayFilters.innerHTML = '';
+}
+function notificationCanonicalId(item = {}) {
+  return item.meta?.canonicalId || item.canonicalId || null;
+}
+function notificationSummary(item = {}) {
+  return item.subtitle || item.meta?.summary || item.type || 'Actividad actualizada';
 }
 function renderNotificationsOverlay() {
   if (!notificationsOverlayList) return;
-  renderNotificationFilters();
   const items = filteredOverlayNotifications();
-  const total = (state.overlayNotifications || []).length;
-  if (notificationsOverlayCount) {
-    const scope = state.notificationSourceFilter === 'all' ? `${items.length} recientes` : `${items.length} de ${notificationSourceLabel(state.notificationSourceFilter)}`;
-    notificationsOverlayCount.textContent = total ? scope : 'Sin actividad reciente';
-  }
+  if (notificationsOverlayCount) notificationsOverlayCount.textContent = items.length ? `${items.length} recientes` : 'Sin notificaciones';
   if (!items.length) {
-    const message = state.notificationSourceFilter === 'all' ? 'No hay notificaciones recientes.' : `No hay notificaciones de ${notificationSourceLabel(state.notificationSourceFilter)}.`;
-    notificationsOverlayList.innerHTML = `<div class="notifications-panel__empty">${escapeHtml(message)}</div>`;
+    notificationsOverlayList.innerHTML = `<div class="notifications-panel__empty">No hay notificaciones recientes.</div>`;
     return;
   }
-  notificationsOverlayList.innerHTML = items.map(item => `<article class="overlay-notification ${item.unread ? 'overlay-notification--unread' : ''}" data-source="${escapeAttr(normalizeNotificationSource(item))}">
-    <div class="overlay-notification__icon" aria-hidden="true">${notificationIcon(item)}</div>
-    <div class="overlay-notification__copy"><h2>${escapeHtml(item.title || 'Nueva notificación')}</h2><p>${escapeHtml(item.subtitle || item.type || item.source || notificationSourceLabel(normalizeNotificationSource(item)))}</p><time>${escapeHtml(relativeTime(item.createdAt))}</time></div>
-  </article>`).join('');
+  notificationsOverlayList.innerHTML = items.map(item => {
+    const poster = item.image || item.poster || '/favicon.ico';
+    const canonicalId = notificationCanonicalId(item);
+    return `<article class="overlay-notification ${item.unread ? 'overlay-notification--unread' : ''}" data-source="${escapeAttr(normalizeNotificationSource(item))}" ${canonicalId ? `data-notification-item="${escapeAttr(canonicalId)}"` : ''}>
+      <span class="overlay-notification__poster"><img src="${escapeAttr(poster)}" alt=""></span>
+      <span class="overlay-notification__copy"><strong>${escapeHtml(item.title || 'Actividad')}</strong><small>${escapeHtml(notificationSummary(item))}</small></span>
+      <time>${escapeHtml(relativeTime(item.createdAt))}</time>
+    </article>`;
+  }).join('');
 }
 async function markNotificationsViewed() {
   const now = new Date().toISOString();
@@ -320,7 +323,7 @@ async function markNotificationsViewed() {
   await api('/api/state', { method: 'PUT', body: JSON.stringify({ lastNotificationsViewedAt: now }) }).catch(debugError);
 }
 async function loadOverlayNotifications() {
-  const result = await api('/api/notifications?page=1&limit=50');
+  const result = await api('/api/notifications?page=1&limit=25');
   const lastViewed = Date.parse(state.runtime?.lastNotificationsViewedAt || '');
   state.overlayNotifications = (result.items || []).map(item => ({ ...item, unread: Number.isFinite(lastViewed) ? Date.parse(item.createdAt) > lastViewed : true }));
   if (state.notificationSourceFilter !== 'all') {
@@ -382,25 +385,30 @@ function playNotificationSound() {
   } catch (error) { debugError('No se pudo reproducir sonido de notificación', error); }
 }
 function showActionToast({ title, subtitle = '', action = null, notification = null, item = null, force = false } = {}) {
-  // Los toasts de actividad solicitados explícitamente por la API no dependen
-  // de la preferencia de toasts del centro de notificaciones.
   if (!force && !state.settings?.notifications?.toastEnabled) return;
   state.latestNotification = notification;
   state.latestToastAction = action;
   if (item) state.latestToastItem = item;
   clearTimeout(state.toastTimer);
+  const poster = notification?.image || item?.poster || item?.cover || '/favicon.ico';
   toast.hidden = false;
   toast.classList.remove('event-toast--small', 'event-toast--medium', 'event-toast--large');
   const size = state.settings?.notifications?.toastSize || 'medium';
   toast.classList.add(`event-toast--${['small','medium','large'].includes(size) ? size : 'medium'}`);
-  toast.innerHTML = state.privacyLocked ? `<strong>Nueva actividad</strong><span>Actividad recibida</span>` : `<strong>${escapeHtml(title || 'Nueva actividad')}</strong><span>${escapeHtml(subtitle || '')}</span>`;
+  toast.innerHTML = `<button type="button" class="event-toast__open" data-event-toast-open><img src="${escapeAttr(poster)}" alt=""><span><strong>${escapeHtml(title || 'Nueva notificación')}</strong><small>${escapeHtml(subtitle || '')}</small></span></button><button type="button" class="event-toast__close" data-event-toast-close aria-label="Cerrar y marcar como leída">×</button>`;
   toast.classList.add('event-toast--visible');
   playNotificationSound();
   const seconds = Number(state.settings?.notifications?.toastDurationSeconds || 6);
   state.toastTimer = setTimeout(() => toast.classList.remove('event-toast--visible'), seconds * 1000);
 }
 function showNotificationToast(notification) {
-  return showActionToast({ title: notification.title || 'Nueva notificación', subtitle: notification.subtitle || notification.source || '', notification, action: () => openNotificationsOverlay().catch(debugError) });
+  const canonicalId = notificationCanonicalId(notification);
+  return showActionToast({
+    title: notification.title || 'Nueva notificación',
+    subtitle: notificationSummary(notification),
+    notification,
+    action: canonicalId ? () => openItemFromRoute(canonicalId, views.activeId || 'database').catch(debugError) : null
+  });
 }
 function activityToastLabel(payload = {}) {
   const source = String(payload.source || '').toLowerCase();
@@ -418,7 +426,7 @@ function itemStatusForToast(item = {}) {
   const spaces = [];
   if (item.states?.inBacklog) spaces.push('Backlog');
   if (item.states?.inOnDeck) spaces.push('On Deck');
-  return spaces.length ? spaces.join(' · ') : (item.detail || item.subtitle || 'Base de datos');
+  return spaces.length ? spaces.join(' · ') : (item.detail || item.subtitle || 'Actividades');
 }
 function refreshLatestToastItem(item = {}) {
   const latest = state.latestToastItem;
@@ -508,6 +516,10 @@ function fieldValuesForGroupToast(item = {}, field = '') {
     title: [item.title],
     source: [item.source],
     type: [item.collectionType, item.type, meta.plexType],
+    subtype: [item.subtype],
+    context: [item.context],
+    detail: [item.detail || item.subtitle],
+    status: [item.status],
     year: [item.year, item.releaseYear, meta.releaseYear],
     platform: platformCandidates,
     platforms: platformCandidates,
@@ -569,6 +581,7 @@ function navigate(id, { persist = true, reason = 'dock', force = false } = {}) {
     state.localNavigationAt = Date.now();
   }
   views.show(id, { reason });
+  setPageTitle(VIEW_TITLES[id] || 'BBQ');
   try { if (persist) window.history.replaceState(null, '', hashForView(id)); } catch {}
   document.querySelectorAll('[data-nav]').forEach(btn => { const active = btn.dataset.nav === id; btn.classList.toggle('dock__item--active', active); if (active) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current'); });
   if (persist) api('/api/state', { method: 'PUT', body: JSON.stringify({ activeView: id }) }).catch(debugError);
@@ -800,9 +813,9 @@ const socket = new SocketClient({
       if (state.privacyLocked && views.activeId !== 'backlog') navigate('backlog', { persist: false, reason: 'privacy update', force: true });
       return;
     }
-    if (message.type === 'current:update') { if (message.payload) refreshLatestToastItem(message.payload); views.update('current-content', { currentContent: message.payload }); if (message.payload) showCurrentToast(message.payload); else updateNowPlayingMini(null); return; }
-    if (message.type === 'plex:update') { const current = { ...(message.payload || {}), source: 'plex', kind: 'plex' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
-    if (message.type === 'game:update') { const current = { ...(message.payload || {}), source: 'playnite', kind: 'game' }; views.update('current-content', { currentContent: current }); if (message.payload) showCurrentToast(current); return; }
+    if (message.type === 'current:update') { if (message.payload) refreshLatestToastItem(message.payload); views.update('current-content', { currentContent: message.payload }); if (!message.payload) updateNowPlayingMini(null); return; }
+    if (message.type === 'plex:update') { const current = { ...(message.payload || {}), source: 'plex', kind: 'plex' }; views.update('current-content', { currentContent: current }); return; }
+    if (message.type === 'game:update') { const current = { ...(message.payload || {}), source: 'playnite', kind: 'game' }; views.update('current-content', { currentContent: current }); return; }
     if (message.type === 'activity:received') {
       const activity = message.payload || {};
       // Un inicio desde Playnite también representa el contenido actual. Así se
@@ -821,7 +834,6 @@ const socket = new SocketClient({
         state.nowPlayingDismissed = false;
         updateNowPlayingMini(current, { highlight: true, forceOpen: true });
       }
-      showIngestionActivityToast(activity);
       return;
     }
     if (message.type === 'notifications:cleared') {
@@ -835,7 +847,7 @@ const socket = new SocketClient({
     if (message.type === 'notification:new') {
       state.unreadCount += 1;
       state.overlayNotifications.unshift({ ...message.payload, unread: true });
-      state.overlayNotifications = state.overlayNotifications.slice(0, 50);
+      state.overlayNotifications = state.overlayNotifications.slice(0, 25);
       if (state.notificationsOverlayOpen) renderNotificationsOverlay();
       updateNotificationsTrigger();
       showNotificationToast(message.payload);
@@ -864,9 +876,19 @@ nowPlayingMini?.addEventListener('click', event => {
   }
   if (event.target.closest('[data-now-playing-open]')) openCurrentContentFromMini();
 });
-toast.addEventListener('click', () => { if (!state.privacyLocked) { toast.classList.remove('event-toast--visible'); const action = state.latestToastAction; state.latestToastAction = null; if (typeof action === 'function') action(); else openNotificationsOverlay().catch(debugError); } });
+toast.addEventListener('click', async event => {
+  if (state.privacyLocked) return;
+  const closing = event.target.closest('[data-event-toast-close]');
+  const opening = event.target.closest('[data-event-toast-open]');
+  if (!closing && !opening) return;
+  toast.classList.remove('event-toast--visible');
+  await markNotificationsViewed().catch(debugError);
+  if (opening) { const action = state.latestToastAction; state.latestToastAction = null; if (typeof action === 'function') action(); }
+});
 notificationsOverlay.addEventListener('click', event => {
   if (event.target.closest('[data-close-notifications]')) closeNotificationsOverlay();
+  const notificationRow = event.target.closest('[data-notification-item]');
+  if (notificationRow) { const canonicalId = notificationRow.dataset.notificationItem; closeNotificationsOverlay(); openItemFromRoute(canonicalId, views.activeId || 'database').catch(debugError); return; }
   const filterButton = event.target.closest('[data-notification-filter]');
   if (filterButton) {
     state.notificationSourceFilter = filterButton.dataset.notificationFilter || 'all';
@@ -921,7 +943,7 @@ document.addEventListener('kiosk:navigate', event => {
   navigate(id, { reason: 'app' });
 });
 
-settingsTrigger?.addEventListener('click', () => openSettingsModal().catch(debugError));
+settingsTrigger?.addEventListener('click', async () => { setPageTitle('Opciones'); try { await openSettingsModal(); } catch (error) { debugError(error); } finally { setPageTitle(VIEW_TITLES[views.activeId || state.activeView] || 'BBQ'); } });
 
 function colorField(name, label, value, help = '') {
   return `<label class="ui-field color-field"><span>${escapeHtml(label)}</span><div class="color-field__control"><input data-setting="${escapeAttr(name)}" type="color" value="${escapeAttr(value)}"><code data-color-preview="${escapeAttr(name)}">${escapeHtml(String(value || '').toUpperCase())}</code></div>${help ? `<small class="ui-field__help">${escapeHtml(help)}</small>` : ''}</label>`;
@@ -975,31 +997,35 @@ async function runDestructiveAction(endpoint, phrase) {
   return api(endpoint, { method:'POST', body:JSON.stringify({ confirmation }) });
 }
 
+function groupModeLabel(mode = 'manual') {
+  return mode === 'dynamic' ? 'Dinámico' : mode === 'mixed' ? 'Mixto' : 'Manual';
+}
+function groupRuleSummary(group = {}) {
+  const rule = (group.rules || [])[0];
+  if (!rule) return groupModeLabel(group.mode);
+  return `${groupModeLabel(group.mode)} · Subtipo contiene “${escapeHtml(rule.value || '')}”`;
+}
 function renderCollectionGroupRows(groups = []) {
-  return groups.length ? groups.map(group => `<article class="collection-group-row" data-group-id="${escapeAttr(group.id)}"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.mode || 'manual')} · ${(group.rules || []).length} regla(s)</small></div><button type="button" class="ui-action-button ui-action-button--danger" data-delete-group="${escapeAttr(group.id)}">Eliminar</button></article>`).join('') : '<p class="settings-help">Todavía no hay grupos creados.</p>';
+  return groups.length ? groups.map(group => `<article class="collection-group-row" data-group-id="${escapeAttr(group.id)}"><div><strong>${escapeHtml(group.name)}</strong><small>${groupRuleSummary(group)}</small></div><button type="button" class="ui-action-button ui-action-button--danger ui-action-button--compact" data-delete-group="${escapeAttr(group.id)}">Eliminar</button></article>`).join('') : '<p class="settings-help">Todavía no hay grupos creados.</p>';
 }
 function collectionGroupsSettingsMarkup(groups = []) {
-  const fieldOptions = [
-    ['platform','Plataforma'], ['genre','Género'], ['developer','Desarrollador'], ['publisher','Publisher'],
-    ['year','Año'], ['source','Fuente'], ['type','Tipo'], ['title','Título']
-  ];
-  return `<div class="settings-fieldset"><h4>Grupos</h4><p class="settings-help">Los grupos organizan items de forma transversal. No son la Colección ni cambian el estado Terminado.</p>
+  return `<div class="settings-fieldset"><h4>Listas</h4><p class="settings-help">Los grupos organizan items de forma transversal. Los manuales se rellenan desde la ficha; los dinámicos incluyen automáticamente los items cuyo Subtipo coincide.</p>
     <div class="collection-groups-manager" data-groups-manager>
-      ${groups.length ? groups.map(group => `<article class="collection-group-row" data-group-id="${escapeAttr(group.id)}"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.mode || 'manual')} · ${(group.rules || []).length} regla(s)</small></div><button type="button" class="ui-action-button ui-action-button--danger" data-delete-group="${escapeAttr(group.id)}">Eliminar</button></article>`).join('') : '<p class="settings-help">Todavía no hay grupos creados.</p>'}
+      ${renderCollectionGroupRows(groups)}
     </div>
     <div class="collection-group-create settings-inline-create">
-      <h4>Crear grupo</h4>
-      <label class="ui-field"><span>Nombre</span><input data-new-group-name type="text" placeholder="Nintendo DS"></label>
-      <div class="segmented-control" role="group" aria-label="Tipo de grupo">
+      <div class="collection-group-create__heading"><div><h4>Crear grupo</h4><p class="settings-help">Elige cómo se llena el grupo. Puedes cambiar los grupos manuales desde la ficha de cada item.</p></div></div>
+      <label class="ui-field"><span>Nombre del grupo</span><input data-new-group-name type="text" placeholder="Horror"></label>
+      <fieldset class="collection-group-create__mode"><legend>Cómo se llena</legend><div class="segmented-control" role="radiogroup" aria-label="Tipo de grupo">
         <label><input type="radio" name="settings-new-group-mode" value="manual" checked><span>Manual</span></label>
         <label><input type="radio" name="settings-new-group-mode" value="dynamic"><span>Dinámico</span></label>
         <label><input type="radio" name="settings-new-group-mode" value="mixed"><span>Mixto</span></label>
+      </div><p class="settings-help" data-group-mode-help>Manual: añades y quitas items desde su ficha.</p></fieldset>
+      <div class="collection-group-create__dynamic" data-new-group-dynamic-fields hidden>
+        <label class="ui-field"><span>Subtipo que debe contener</span><input data-new-group-value type="text" placeholder="Horror" autocomplete="off"></label>
+        <p class="settings-help">La comparación ignora mayúsculas y minúsculas. Ejemplo: “horror” incluye items con Subtipo “Horror”.</p>
       </div>
-      <div class="segmented-control segmented-control--wrap" role="group" aria-label="Campo dinámico">
-        ${fieldOptions.map(([value,label], index) => `<label><input type="radio" name="settings-new-group-field" value="${value}" ${index === 0 ? 'checked' : ''}><span>${label}</span></label>`).join('')}
-      </div>
-      <label class="ui-field"><span>Valor dinámico</span><input data-new-group-value type="text" placeholder="Nintendo DS"></label>
-      <button type="button" class="ui-action-button" data-create-group>Crear grupo</button>
+      <div class="collection-group-create__actions"><button type="button" class="ui-action-button ui-action-button--primary" data-create-group><span>＋</span> Crear grupo</button></div>
     </div>
   </div>`;
 }
@@ -1041,7 +1067,7 @@ function grillSettingsMarkup(settings = {}) {
 }
 function integrationBehaviorMarkup(settings = {}) {
   const grill = settings.grill || {};
-  return `<div class="settings-fieldset"><h4>Playnite</h4><p class="settings-help">Configura cómo afectan los eventos de Playnite a la biblioteca y a la parrilla.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="playniteStarted" ${settings.backlog?.sources?.playniteStarted !== false ? 'checked' : ''}> Observar inicio de juegos</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlaynite" ${(grill.clearCharredOn?.playniteStarted ?? true) ? 'checked' : ''}> Quitar Achicharrado al iniciar</label></div></div><div class="settings-fieldset"><h4>Plex / Tautulli</h4><p class="settings-help">Cada evento puede actualizar el item y decidir si reinicia su estado de parrilla.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="plexRecentlyAdded" ${settings.backlog?.sources?.plexRecentlyAdded !== false ? 'checked' : ''}> Observar contenido añadido</label><label class="ui-check"><input type="checkbox" data-setting="plexPlayback" ${settings.backlog?.sources?.plexPlayback !== false ? 'checked' : ''}> Observar reproducciones</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexLibrary" ${(grill.clearCharredOn?.plexLibraryAdded ?? false) ? 'checked' : ''}> Añadido quita Achicharrado</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexPlayback" ${(grill.clearCharredOn?.plexPlayback ?? false) ? 'checked' : ''}> Reproducción quita Achicharrado</label></div></div><div class="settings-fieldset"><h4>Actividad manual</h4><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="grillClearManual" ${(grill.clearCharredOn?.manual ?? true) ? 'checked' : ''}> Mover o editar actividad quita Achicharrado</label><label class="ui-check"><input type="checkbox" data-setting="grillClearJournal" ${(grill.clearCharredOn?.journal ?? true) ? 'checked' : ''}> Guardar diario quita Achicharrado</label></div></div>`;
+  return `<div class="settings-fieldset"><h4>Playnite</h4><p class="settings-help">Configura cómo afectan los eventos de Playnite a la biblioteca y a la parrilla.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="playniteStarted" ${settings.backlog?.sources?.playniteStarted !== false ? 'checked' : ''}> Observar inicio de juegos</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlaynite" ${(grill.clearCharredOn?.playniteStarted ?? true) ? 'checked' : ''}> Quitar Achicharrado al iniciar</label></div></div><div class="settings-fieldset"><h4>Plex / Tautulli</h4><p class="settings-help">Cada evento puede actualizar la actividad y decidir si reinicia su estado de parrilla.</p><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="plexRecentlyAdded" ${settings.backlog?.sources?.plexRecentlyAdded !== false ? 'checked' : ''}> Observar contenido añadido</label><label class="ui-check"><input type="checkbox" data-setting="plexPlayback" ${settings.backlog?.sources?.plexPlayback !== false ? 'checked' : ''}> Observar reproducciones</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexLibrary" ${(grill.clearCharredOn?.plexLibraryAdded ?? false) ? 'checked' : ''}> Añadido quita Achicharrado</label><label class="ui-check"><input type="checkbox" data-setting="grillClearPlexPlayback" ${(grill.clearCharredOn?.plexPlayback ?? false) ? 'checked' : ''}> Reproducción quita Achicharrado</label></div></div><div class="settings-fieldset"><h4>Actividad manual</h4><div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-setting="grillClearManual" ${(grill.clearCharredOn?.manual ?? true) ? 'checked' : ''}> Mover o editar actividad quita Achicharrado</label><label class="ui-check"><input type="checkbox" data-setting="grillClearJournal" ${(grill.clearCharredOn?.journal ?? true) ? 'checked' : ''}> Guardar diario quita Achicharrado</label></div></div>`;
 }
 function readGrillSettings(root, settings = {}) {
   const limits = {}; root.querySelectorAll('[data-grill-type]').forEach(input => { const type=input.dataset.grillType; const view=input.dataset.grillView; limits[type] ||= {}; limits[type][view] = Math.max(1, Number(input.value) || (view === 'onDeck' ? 7 : 30)); });
@@ -1066,17 +1092,17 @@ async function openSettingsModal() {
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
-        ['general','General'], ['appearance','Apariencia'], ['content','Biblioteca'], ['workspaces','Espacios de trabajo'], ['grill','Parrilla'], ['integrations','Integraciones'], ['advanced','Datos y diagnóstico']
+        ['general','General'], ['notifications','Notificaciones'], ['appearance','Apariencia'], ['content','Biblioteca'], ['workspaces','Espacios de trabajo'], ['grill','Parrilla'], ['integrations','Integraciones'], ['advanced','Datos y diagnóstico']
       ].map(([id,label], index) => `<button type="button" data-settings-tab="${id}" class="${index === 0 ? 'is-active' : ''}">${label}</button>`).join('')}
     </nav>
     <div class="settings-tabs__content"><nav class="settings-subnav" data-settings-subnav aria-label="Subsecciones"></nav><div class="settings-tabs__panels">
       <section data-settings-panel="general" class="settings-tab-panel is-active"><h3>General</h3>
-        <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="database" ${selected('database', s.display?.defaultView)}>Base de datos</option><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colección</option></select></label>
+        <label class="ui-field"><span>Vista inicial</span><select data-setting="defaultView"><option value="database" ${selected('database', s.display?.defaultView)}>Actividades</option><option value="backlog" ${selected('backlog', s.display?.defaultView)}>Backlog</option><option value="on-deck" ${selected('on-deck', s.display?.defaultView)}>On Deck</option><option value="current-content" ${selected('current-content', s.display?.defaultView)}>Actual</option><option value="collections" ${selected('collections', s.display?.defaultView)}>Colección</option></select></label>
       </section>
 
       <section data-settings-panel="workspaces" class="settings-tab-panel"><h3>Organización por espacio</h3>
         <p class="settings-help">Los espacios son fijos. Aquí solo defines su presentación y organización predeterminadas.</p>
-        ${[['database','Base de datos','Todos los items'],['backlog','Backlog','Pertenencia manual'],['onDeck','On Deck','Pertenencia manual · límite por tipo'],['collections','Colección','Items marcados como terminados']].map(([key,label,rule]) => { const ws=s.workspaces?.[key]||{}; const visibleTypes=new Set(ws.visibleTypes||['games','movies','series']); return `<article class="workspace-rule-card"><header><div><strong>${label}</strong><small>${rule}</small></div></header><div class="workspace-type-settings"><span>Tipos visibles</span><div class="controls-modal__checks">${[{id:'games',singular:'Juego',plural:'Juegos'},{id:'movies',singular:'Película',plural:'Películas'},{id:'series',singular:'Serie',plural:'Series'},...(s.itemTypes||[])].filter((type,index,rows)=>type?.id&&rows.findIndex(row=>row.id===type.id)===index).map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-visible-type="${key}:${escapeAttr(type.id)}" ${visibleTypes.has(type.id)?'checked':''}><span>${escapeHtml(type.plural||type.singular||type.id)}</span></label>`).join('')}</div></div><div class="workspace-rule-grid"><label class="ui-field"><span>Agrupación</span><select data-workspace-setting="${key}.grouping"><option value="none" ${selected('none',ws.grouping||'none')}>Sin agrupación</option><option value="date" ${selected('date',['lastActivity','completedAt'].includes(ws.grouping)?'date':ws.grouping)}>Fecha</option><option value="type" ${selected('type',ws.grouping)}>Tipo</option><option value="group" ${selected('group',ws.grouping)}>Grupo</option></select></label><label class="ui-field"><span>Organización de fechas</span><select data-workspace-setting="${key}.dateGrouping"><option value="relative" ${selected('relative',ws.dateGrouping||'relative')}>Periodos recientes</option><option value="month" ${selected('month',ws.dateGrouping)}>Mes y año</option><option value="year" ${selected('year',ws.dateGrouping)}>Año</option></select></label><label class="ui-field"><span>Fecha utilizada</span><select data-workspace-setting="${key}.groupingDateField"><option value="lastActivityAt" ${selected('lastActivityAt',ws.grouping==='completedAt'?'completedAt':(ws.groupingDateField||'lastActivityAt'))}>Última actividad</option><option value="completedAt" ${selected('completedAt',ws.grouping==='completedAt'?'completedAt':ws.groupingDateField)}>Finalización</option></select></label><label class="ui-field"><span>Orden</span><select data-workspace-setting="${key}.sort"><option value="lastActivityAt" ${selected('lastActivityAt',ws.sort||'lastActivityAt')}>Última actividad</option><option value="title" ${selected('title',ws.sort)}>Título</option><option value="rating" ${selected('rating',ws.sort)}>Calificación</option><option value="completedAt" ${selected('completedAt',ws.sort)}>Finalización</option></select></label><label class="ui-field"><span>Diseño</span><select data-workspace-setting="${key}.cardFormat"><option value="simple" ${selected('simple',ws.cardFormat)}>Simple</option><option value="standard" ${selected('standard',ws.cardFormat||'standard')}>Normal</option></select></label><label class="ui-field"><span>Tamaño</span><select data-workspace-setting="${key}.cardSize"><option value="small" ${selected('small',ws.cardSize)}>Pequeño</option><option value="medium" ${selected('medium',ws.cardSize||'medium')}>Mediano</option><option value="large" ${selected('large',ws.cardSize)}>Grande</option></select></label></div></article>`; }).join('')}
+        ${[['database','Actividades','Todas las actividades'],['backlog','Backlog','Pertenencia manual'],['onDeck','On Deck','Pertenencia manual · límite por tipo'],['collections','Colección','Actividades terminadas']].map(([key,label,rule]) => { const ws=s.workspaces?.[key]||{}; const visibleTypes=new Set(ws.visibleTypes||['games','movies','series']); return `<article class="workspace-rule-card"><header><div><strong>${label}</strong><small>${rule}</small></div></header><div class="workspace-type-settings"><span>Tipos visibles</span><div class="controls-modal__checks">${[{id:'games',singular:'Juego',plural:'Juegos'},{id:'movies',singular:'Película',plural:'Películas'},{id:'series',singular:'Serie',plural:'Series'},...(s.itemTypes||[])].filter((type,index,rows)=>type?.id&&rows.findIndex(row=>row.id===type.id)===index).map(type => `<label class="controls-modal__toggle"><input type="checkbox" data-workspace-visible-type="${key}:${escapeAttr(type.id)}" ${visibleTypes.has(type.id)?'checked':''}><span>${escapeHtml(type.plural||type.singular||type.id)}</span></label>`).join('')}</div></div><div class="workspace-rule-grid"><label class="ui-field"><span>Agrupación</span><select data-workspace-setting="${key}.grouping"><option value="none" ${selected('none',ws.grouping||'none')}>Sin agrupación</option><option value="date" ${selected('date',['lastActivity','completedAt'].includes(ws.grouping)?'date':ws.grouping)}>Fecha</option><option value="type" ${selected('type',ws.grouping)}>Tipo</option><option value="group" ${selected('group',ws.grouping)}>Tabla</option></select></label><label class="ui-field"><span>Organización de fechas</span><select data-workspace-setting="${key}.dateGrouping"><option value="relative" ${selected('relative',ws.dateGrouping||'relative')}>Periodos recientes</option><option value="month" ${selected('month',ws.dateGrouping)}>Mes y año</option><option value="year" ${selected('year',ws.dateGrouping)}>Año</option></select></label><label class="ui-field"><span>Fecha utilizada</span><select data-workspace-setting="${key}.groupingDateField"><option value="lastActivityAt" ${selected('lastActivityAt',ws.grouping==='completedAt'?'completedAt':(ws.groupingDateField||'lastActivityAt'))}>Último movimiento</option><option value="completedAt" ${selected('completedAt',ws.grouping==='completedAt'?'completedAt':ws.groupingDateField)}>Finalización</option></select></label><label class="ui-field"><span>Orden</span><select data-workspace-setting="${key}.sort"><option value="lastActivityAt" ${selected('lastActivityAt',ws.sort||'lastActivityAt')}>Último movimiento</option><option value="title" ${selected('title',ws.sort)}>Título</option><option value="rating" ${selected('rating',ws.sort)}>Calificación</option><option value="completedAt" ${selected('completedAt',ws.sort)}>Finalización</option></select></label><label class="ui-field"><span>Diseño</span><select data-workspace-setting="${key}.cardFormat"><option value="simple" ${selected('simple',ws.cardFormat)}>Simple</option><option value="standard" ${selected('standard',ws.cardFormat||'standard')}>Completa</option></select></label><label class="ui-field"><span>Tamaño</span><select data-workspace-setting="${key}.cardSize"><option value="small" ${selected('small',ws.cardSize)}>Pequeño</option><option value="medium" ${selected('medium',ws.cardSize||'medium')}>Mediano</option><option value="large" ${selected('large',ws.cardSize)}>Grande</option></select></label></div></article>`; }).join('')}
       </section>
       <section data-settings-panel="grill" class="settings-tab-panel"><h3>Parrilla</h3>${grillSettingsMarkup(s)}</section>
       <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Tema y fondos</h3>
@@ -1095,20 +1121,20 @@ async function openSettingsModal() {
           ${colorField('bgOverlayColor', 'Color de capa', bg.overlayColor || '#05070c')}
           ${valueField('bgFadeSeconds', 'Transición entre fondos', bg.fadeSeconds ?? 1.2, { min:0,max:5,step:.05,unit:'s' })}
         </div>
-        <div class="settings-fieldset"><h4>Contenido de las tarjetas</h4><p class="settings-help">Define qué elementos aparecen en cada diseño de tarjeta.</p>${[['simple','Simple'],['standard','Normal']].map(([format,label]) => `<div class="card-visibility-settings"><h5>${label}</h5><div class="settings-check-grid">${[['title','Título'],['detail','Estado / detalle'],['rating','Calificación'],['date','Fecha'],['type','Tipo'],['groups','Grupos'],['state','Vista activa'],['journal','Diario'],['grill','Parrilla']].map(([key,text]) => { const current=s.design?.gridCards?.[format] || {}; const fallback=format==='simple' ? ['title','detail','rating','journal','grill'].includes(key) : key!=='type'; return `<label class="ui-check"><input type="checkbox" data-card-default="${format}.${key}" ${(current[key] ?? fallback) ? 'checked' : ''}> ${text}</label>`; }).join('')}</div></div>`).join('')}</div><div class="settings-fieldset"><h4>Tarjetas</h4>
-          <label class="ui-check"><input type="checkbox" data-setting="itemBgEnabled" ${checked(itemBg.enabled !== false)}> Usar backdrop dentro de cada item</label>
+        <div class="settings-fieldset"><h4>Contenido de las tarjetas</h4><p class="settings-help">Define qué elementos aparecen en cada diseño de tarjeta.</p>${[['simple','Simple'],['standard','Completa']].map(([format,label]) => `<div class="card-visibility-settings"><h5>${label}</h5><div class="settings-check-grid">${[['title','Título'],['detail','Contexto · detalle · subtipo'],['rating','Calificación'],['date','Fecha'],['type','Tipo'],['groups','Listas'],['state','Vista activa'],['journal','Diario'],['grill','Parrilla']].map(([key,text]) => { const current=s.design?.gridCards?.[format] || {}; const fallback=format==='simple' ? ['title','detail','rating','journal','grill'].includes(key) : key!=='type'; return `<label class="ui-check"><input type="checkbox" data-card-default="${format}.${key}" ${(current[key] ?? fallback) ? 'checked' : ''}> ${text}</label>`; }).join('')}</div></div>`).join('')}</div><div class="settings-fieldset"><h4>Tarjetas</h4>
+          <label class="ui-check"><input type="checkbox" data-setting="itemBgEnabled" ${checked(itemBg.enabled !== false)}> Usar backdrop dentro de cada actividad</label>
           ${valueField('itemBgOpacity', 'Opacidad del backdrop', itemBg.opacity ?? 0.32, { min:0,max:1,step:.01 })}
           ${valueField('itemBgBlur', 'Desenfoque del backdrop', itemBg.blur ?? 12, { min:0,max:36,step:1,unit:'px' })}
           ${valueField('itemBgOverlayOpacity', 'Oscurecimiento de tarjeta', itemBg.overlayOpacity ?? 0.72, { min:0,max:1,step:.01 })}
           ${valueField('itemBgGrayscale', 'Blanco y negro del backdrop', itemBg.grayscale ?? 0, { min:0,max:100,step:1,unit:'%' })}
-          ${radiusField('cardRadius', 'Radio de tarjeta', cards.radius ?? 18)}${radiusField('posterRadiusSimple', 'Radio de carátula · Simple', cards.posterRadiusSimple ?? 14)}${radiusField('posterRadiusStandard', 'Radio de carátula · Normal', cards.posterRadiusStandard ?? 12)}
+          ${radiusField('cardRadius', 'Radio de tarjeta', cards.radius ?? 18)}${radiusField('posterRadiusSimple', 'Radio de carátula · Simple', cards.posterRadiusSimple ?? 14)}${radiusField('posterRadiusStandard', 'Radio de carátula · Completa', cards.posterRadiusStandard ?? 12)}
         </div>
         <div class="settings-fieldset"><h4>Escala</h4>
           <label class="ui-field"><span>Tamaño de fuente</span><select data-setting="fontScale"><option value="small" ${selected('small', s.design?.fontScale)}>Pequeño</option><option value="medium" ${selected('medium', s.design?.fontScale)}>Medio</option><option value="large" ${selected('large', s.design?.fontScale)}>Grande</option></select></label>
           <label class="ui-field"><span>Densidad UI</span><select data-setting="density"><option value="compact" ${selected('compact', s.design?.density)}>Compacta</option><option value="comfortable" ${selected('comfortable', s.design?.density)}>Cómoda</option><option value="large" ${selected('large', s.design?.density)}>Grande</option></select></label>
         </div>
       </section>
-      <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Ficha del item</h3>
+      <section data-settings-panel="appearance" class="settings-tab-panel"><h3>Ficha de la actividad</h3>
         <div class="settings-fieldset"><h4>Diseño visual</h4>
           <label class="ui-field"><span>Fondo</span><select data-setting="detailBg"><option value="backdrop" ${selected('backdrop', s.design?.itemDetail?.background?.background || 'backdrop')}>Backdrop</option><option value="poster" ${selected('poster', s.design?.itemDetail?.background?.background)}>Poster</option><option value="solid" ${selected('solid', s.design?.itemDetail?.background?.background)}>Sólido</option><option value="none" ${selected('none', s.design?.itemDetail?.background?.background)}>Sin imagen</option></select></label>
           <label class="ui-field"><span>Oscurecimiento</span><select data-setting="detailShade"><option value="low" ${selected('low', s.design?.itemDetail?.background?.shade)}>Bajo</option><option value="medium" ${selected('medium', s.design?.itemDetail?.background?.shade || 'medium')}>Medio</option><option value="high" ${selected('high', s.design?.itemDetail?.background?.shade)}>Alto</option></select></label>
@@ -1116,7 +1142,7 @@ async function openSettingsModal() {
         </div>
         <div class="settings-fieldset"><h4>Metadata visible</h4>
           <p class="settings-help">Escribe claves separadas por comas. Usa “Ver claves detectadas” para consultar la chuleta de metadata real.</p>
-          <label class="ui-field"><span>Juegos</span><textarea data-setting="detailMetaGames" rows="2">${escapeHtml((s.design?.itemDetail?.metadataFields?.games || []).join(', '))}</textarea></label>
+          <p class="settings-help">Campos comunes disponibles: detail (muestra Contexto · Detalle · Subtipo), type, status, source, rating, lastActivityAt y completedAt. Los campos vacíos no dejan huecos.</p><label class="ui-field"><span>Juegos</span><textarea data-setting="detailMetaGames" rows="2">${escapeHtml((s.design?.itemDetail?.metadataFields?.games || []).join(', '))}</textarea></label>
           <label class="ui-field"><span>Películas</span><textarea data-setting="detailMetaMovies" rows="2">${escapeHtml((s.design?.itemDetail?.metadataFields?.movies || []).join(', '))}</textarea></label>
           <label class="ui-field"><span>Series</span><textarea data-setting="detailMetaSeries" rows="2">${escapeHtml((s.design?.itemDetail?.metadataFields?.series || []).join(', '))}</textarea></label>
           <button type="button" class="ui-action-button" data-load-metadata-keys>Ver claves detectadas</button>
@@ -1126,15 +1152,26 @@ async function openSettingsModal() {
       <section data-settings-panel="content" class="settings-tab-panel"><h3>Tipos</h3>
         ${itemTypesSettingsMarkup(s.itemTypes || [])}
       </section>
-      <section data-settings-panel="general" class="settings-tab-panel is-active"><h3>Notificaciones</h3>
-        <label class="ui-check"><input type="checkbox" data-setting="toastEnabled" ${checked(s.notifications?.toastEnabled !== false)}> Mostrar toast</label>
-        <label class="ui-check"><input type="checkbox" data-setting="soundEnabled" ${checked(s.notifications?.soundEnabled === true)}> Sonido</label>
-        <label class="ui-field"><span>Tamaño toast</span><select data-setting="toastSize"><option value="small" ${selected('small', s.notifications?.toastSize)}>Pequeño</option><option value="medium" ${selected('medium', s.notifications?.toastSize)}>Medio</option><option value="large" ${selected('large', s.notifications?.toastSize)}>Grande</option></select></label>
+      <section data-settings-panel="notifications" class="settings-tab-panel"><h3>Notificaciones</h3>
+        <div class="settings-fieldset"><h4>Eventos que generan notificación</h4><p class="settings-help">Solo los eventos activados se guardan en el centro de notificaciones y aparecen como toast.</p>
+          <div class="settings-check-grid">
+            <label class="ui-check"><input type="checkbox" data-setting="notifyPlexAdded" ${checked(s.notifications?.events?.plexAdded === true)}> Plex · contenido añadido</label>
+            <label class="ui-check"><input type="checkbox" data-setting="notifyPlexPlayed" ${checked(s.notifications?.events?.plexPlayed === true)}> Plex · reproducción iniciada</label>
+            <label class="ui-check"><input type="checkbox" data-setting="notifyPlexWatched" ${checked(s.notifications?.events?.plexWatched === true)}> Plex · contenido visto</label>
+            <label class="ui-check"><input type="checkbox" data-setting="notifyPlayniteStarted" ${checked(s.notifications?.events?.playniteStarted === true)}> Playnite · juego iniciado</label>
+          </div>
+        </div>
+        <div class="settings-fieldset"><h4>Presentación</h4>
+          <label class="ui-check"><input type="checkbox" data-setting="toastEnabled" ${checked(s.notifications?.toastEnabled !== false)}> Mostrar la última notificación como toast</label>
+          <label class="ui-check"><input type="checkbox" data-setting="soundEnabled" ${checked(s.notifications?.soundEnabled === true)}> Sonido</label>
+          <label class="ui-field"><span>Tamaño del toast</span><select data-setting="toastSize"><option value="small" ${selected('small', s.notifications?.toastSize)}>Pequeño</option><option value="medium" ${selected('medium', s.notifications?.toastSize)}>Medio</option><option value="large" ${selected('large', s.notifications?.toastSize)}>Grande</option></select></label>
+          <p class="settings-help">Se conservan las 25 notificaciones más recientes. Abrir o cerrar el toast la marca como leída.</p>
+        </div>
       </section>
       <section data-settings-panel="integrations" class="settings-tab-panel"><h3>Integraciones</h3>
         <div class="settings-fieldset"><h4>Conexión Plex</h4><p class="settings-help">Credenciales del servidor Plex usadas por la integración y Tautulli.</p><label class="ui-field"><span>URL</span><input data-setting="plexUrl" type="text" value="${escapeAttr(s.plex?.url || '')}" placeholder="http://IP:32400"></label><label class="ui-field"><span>Token</span><input data-setting="plexToken" type="password" value="${escapeAttr(s.plex?.token || '')}"></label></div>${integrationBehaviorMarkup(s)}
       </section>
-      <section data-settings-panel="content" class="settings-tab-panel"><h3>Grupos</h3>
+      <section data-settings-panel="content" class="settings-tab-panel"><h3>Listas</h3>
         ${collectionGroupsSettingsMarkup(state.collectionGroups || [])}
       </section>
       <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Datos y mantenimiento</h3>
@@ -1156,20 +1193,20 @@ async function openSettingsModal() {
       <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Laboratorio de debug</h3>
         <p class="settings-help">Estas pruebas usan los mismos flujos de notificación e ingestión que las integraciones reales. El historial solo registra ejecuciones lanzadas desde este laboratorio.</p>
         <div class="settings-fieldset"><h4>Notificación personalizada</h4>
-          <div class="settings-form-grid"><label class="ui-field"><span>Tipo</span><select data-debug-notification="type">${debugTypeOptions}</select></label><label class="ui-field"><span>Origen</span><input data-debug-notification="source" value="system"></label><label class="ui-field"><span>Prioridad</span><select data-debug-notification="priority"><option value="low">Baja</option><option value="normal" selected>Normal</option><option value="high">Alta</option></select></label><label class="ui-field"><span>ID de debug opcional</span><input data-debug-notification="debugId" placeholder="Vacío = nuevo"></label></div>
+          <div class="settings-form-grid"><label class="ui-field"><span>Tipo</span><select data-debug-notification="type">${debugTypeOptions}</select></label><label class="ui-field"><span>Origen</span><input data-debug-notification="source" value="system"></label><label class="ui-field"><span>Prioridad</span><select data-debug-notification="priority"><option value="low">Baja</option><option value="normal" selected>Completa</option><option value="high">Alta</option></select></label><label class="ui-field"><span>ID de debug opcional</span><input data-debug-notification="debugId" placeholder="Vacío = nuevo"></label></div>
           <label class="ui-field"><span>Título</span><input data-debug-notification="title" value="Notificación de prueba"></label><label class="ui-field"><span>Mensaje</span><input data-debug-notification="subtitle" value="Simulación desde BBQ"></label>
           <button type="button" class="ui-action-button" data-debug-submit="notification">Enviar notificación</button>
         </div>
         <div class="settings-fieldset"><h4>Plex / Tautulli</h4>
           <div class="settings-form-grid"><label class="ui-field"><span>Modo</span><select data-debug-plex="mode"><option value="real">Consultar Plex por ratingKey</option><option value="synthetic">Evento sintético</option></select></label><label class="ui-field"><span>RatingKey / ID de debug</span><input data-debug-plex="ratingKey" placeholder="Ej. 17975"></label><label class="ui-field"><span>Evento</span><select data-debug-plex="event"><option value="play">Reproducción</option><option value="watched">Visto</option><option value="added">Añadido</option></select></label><label class="ui-field"><span>Tipo sintético</span><select data-debug-plex="mediaType"><option value="movie">Película</option><option value="episode">Episodio</option><option value="show">Serie</option></select></label></div>
           <div class="settings-form-grid"><label class="ui-field"><span>Título sintético</span><input data-debug-plex="title" value="Contenido Plex de prueba"></label><label class="ui-field"><span>ID de serie</span><input data-debug-plex="seriesId" placeholder="Solo episodios/series"></label><label class="ui-field"><span>Temporada</span><input type="number" min="0" data-debug-plex="seasonNumber" value="1"></label><label class="ui-field"><span>Episodio</span><input type="number" min="0" data-debug-plex="episodeNumber" value="1"></label></div>
-          <div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-debug-plex="updateActivity" checked> Actualizar actividad</label><label class="ui-check"><input type="checkbox" data-debug-plex="clearCharred"> Quitar Achicharrado</label><label class="ui-check"><input type="checkbox" data-debug-plex="showToast" checked> Mostrar toast</label></div>
+          <div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-debug-plex="updateActivity" checked> Registrar movimiento</label><label class="ui-check"><input type="checkbox" data-debug-plex="clearCharred"> Quitar Achicharrado</label><label class="ui-check"><input type="checkbox" data-debug-plex="showToast" checked> Mostrar toast</label></div>
           <button type="button" class="ui-action-button" data-debug-submit="plex">Enviar evento Plex</button>
         </div>
         <div class="settings-fieldset"><h4>Playnite</h4>
           <div class="settings-form-grid"><label class="ui-field"><span>ID de debug / gameId</span><input data-debug-playnite="debugId" placeholder="Vacío = nuevo"></label><label class="ui-field"><span>Evento</span><select data-debug-playnite="event"><option value="started">Juego iniciado</option><option value="updated">Actualización</option><option value="completed">Terminado</option></select></label><label class="ui-field"><span>Título</span><input data-debug-playnite="title" value="Juego de prueba"></label><label class="ui-field"><span>Plataforma</span><input data-debug-playnite="platform" value="PC (Windows)"></label></div>
           <div class="settings-form-grid"><label class="ui-field"><span>Desarrollador</span><input data-debug-playnite="developer" value="Debug Studio"></label><label class="ui-field"><span>Editor</span><input data-debug-playnite="publisher"></label><label class="ui-field"><span>Géneros</span><input data-debug-playnite="genres" value="Test"></label><label class="ui-field"><span>Año</span><input data-debug-playnite="year" value="2026"></label></div>
-          <div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-debug-playnite="updateActivity" checked> Actualizar actividad</label><label class="ui-check"><input type="checkbox" data-debug-playnite="clearCharred" checked> Quitar Achicharrado</label><label class="ui-check"><input type="checkbox" data-debug-playnite="showToast" checked> Mostrar toast</label></div>
+          <div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-debug-playnite="updateActivity" checked> Registrar movimiento</label><label class="ui-check"><input type="checkbox" data-debug-playnite="clearCharred" checked> Quitar Achicharrado</label><label class="ui-check"><input type="checkbox" data-debug-playnite="showToast" checked> Mostrar toast</label></div>
           <button type="button" class="ui-action-button" data-debug-submit="playnite">Enviar evento Playnite</button>
         </div>
         <div class="settings-fieldset"><div class="settings-section-heading"><div><h4>Historial de pruebas</h4><p class="settings-help">Solo contiene ejecuciones del laboratorio de debug.</p></div><button type="button" class="ui-action-button ui-action-button--danger" data-debug-history-clear>Borrar historial</button></div><div data-debug-history class="debug-history"><p class="settings-help">Cargando…</p></div></div>
@@ -1236,7 +1273,7 @@ async function openSettingsModal() {
           backlog: { sources: { plexRecentlyAdded: get('plexRecentlyAdded')?.checked, plexPlayback: get('plexPlayback')?.checked, playniteStarted: get('playniteStarted')?.checked } },
           workspaces: Object.fromEntries(['database','backlog','onDeck','collections'].map(key => [key, { ...Object.fromEntries(['grouping','dateGrouping','groupingDateField','sort','cardFormat','cardSize'].map(field => [field, root.querySelector(`[data-workspace-setting="${key}.${field}"]`)?.value])), visibleTypes: [...root.querySelectorAll(`[data-workspace-visible-type^="${key}:"]:checked`)].map(input => input.dataset.workspaceVisibleType.split(':').slice(1).join(':')) }])),
           itemTypes: readCustomTypesFromSettings(root),
-          notifications: { toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
+          notifications: { maxStored: 25, events: { plexAdded: get('notifyPlexAdded')?.checked === true, plexPlayed: get('notifyPlexPlayed')?.checked === true, plexWatched: get('notifyPlexWatched')?.checked === true, playniteStarted: get('notifyPlayniteStarted')?.checked === true }, toastEnabled: get('toastEnabled')?.checked, soundEnabled: get('soundEnabled')?.checked, toastSize: get('toastSize')?.value || 'medium' },
           plex: { url: get('plexUrl')?.value || '', token: get('plexToken')?.value || '' },
           customCssText: get('customCss')?.value || ''
         };
@@ -1255,16 +1292,33 @@ async function openSettingsModal() {
     }));
     refreshSettingsSubnav('general');
 
+    const syncNewGroupMode = () => {
+      const mode = modalRoot.querySelector('input[name="settings-new-group-mode"]:checked')?.value || 'manual';
+      const dynamicFields = modalRoot.querySelector('[data-new-group-dynamic-fields]');
+      const help = modalRoot.querySelector('[data-group-mode-help]');
+      if (dynamicFields) dynamicFields.hidden = mode === 'manual';
+      if (help) help.textContent = mode === 'dynamic'
+        ? 'Dinámico: se llena automáticamente cuando el Subtipo del item contiene el valor indicado.'
+        : mode === 'mixed'
+          ? 'Mixto: combina items añadidos manualmente con coincidencias automáticas por Subtipo.'
+          : 'Manual: añades y quitas items desde su ficha.';
+    };
+    modalRoot.querySelectorAll('input[name="settings-new-group-mode"]').forEach(input => input.addEventListener('change', syncNewGroupMode));
+    syncNewGroupMode();
+
     modalRoot.querySelector('[data-create-group]')?.addEventListener('click', async event => {
       const button = event.currentTarget;
       if (button.dataset.busy === '1') return;
       const name = modalRoot.querySelector('[data-new-group-name]')?.value || '';
       if (!name.trim()) { ui.toast('Pon un nombre para el grupo'); return; }
       const mode = modalRoot.querySelector('input[name="settings-new-group-mode"]:checked')?.value || 'manual';
-      const field = modalRoot.querySelector('input[name="settings-new-group-field"]:checked')?.value || 'platform';
+      const field = 'subtype';
       const value = modalRoot.querySelector('[data-new-group-value]')?.value || '';
       const payload = { name, mode };
-      if (['dynamic','mixed'].includes(mode) && value.trim()) payload.rules = [{ field, operator: 'contains', value }];
+      if (['dynamic','mixed'].includes(mode)) {
+        if (!value.trim()) { ui.toast('Indica el Subtipo del grupo dinámico'); return; }
+        payload.rules = [{ field, operator: 'contains', value: value.trim() }];
+      }
       button.dataset.busy = '1';
       button.disabled = true;
       const created = await api('/api/collection-groups', { method: 'POST', body: JSON.stringify(payload) }).catch(error => { ui.toast(error.message || 'No se pudo crear el grupo'); return null; });
@@ -1281,7 +1335,7 @@ async function openSettingsModal() {
         });
         const manager = modalRoot.querySelector('[data-groups-manager]');
         if (manager) manager.innerHTML = renderCollectionGroupRows(state.collectionGroups || []);
-        ui.toast('Grupo creado');
+        ui.toast('Lista creada');
       }
     });
     modalRoot.addEventListener('click', async event => {
@@ -1293,7 +1347,7 @@ async function openSettingsModal() {
       await api(`/api/collection-groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
       state.collectionGroups = (state.collectionGroups || []).filter(group => group.id !== id);
       button.closest('[data-group-id]')?.remove();
-      ui.toast('Grupo eliminado');
+      ui.toast('Lista eliminada');
     });
 
     modalRoot.addEventListener('click', event => {

@@ -55,7 +55,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`BBQ v7.1.5 escuchando en ${host}:${port}`);
+  console.log(`BBQ v7.3.0 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -206,7 +206,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "BBQ",
-    version: "v7.1.4",
+    version: "v7.3.1",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -635,7 +635,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.1.4", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.3.1", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -894,7 +894,7 @@ app.post("/api/simulate/:kind", async (req, res) => {
       trackedItem = canonicalizePlexSeriesItem(trackedItem);
       const ingestion = await ingestExternalItem({
         source: "plex", canonicalId: trackedItem.canonicalId, externalId: String(metadata.ratingKey || debugId),
-        entityType: trackedItem.collectionType, title: trackedItem.title, detail: trackedItem.subtitle,
+        entityType: trackedItem.collectionType, title: trackedItem.title, context: plexActivityContext(metadata), detail: plexActivityStatus(event),
         eventType: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : "played",
         occurredAt: trackedItem.lastActivityAt, assets: { poster: trackedItem.poster || "/favicon.ico", backdrop: trackedItem.backdrop || "/favicon.ico" },
         metadata: { ...(trackedItem.meta || {}), debug: true, debugId },
@@ -910,7 +910,7 @@ app.post("/api/simulate/:kind", async (req, res) => {
       const title = input.title || "Juego de prueba";
       const item = await ingestExternalItem({
         source: "playnite", canonicalId: `playnite:${debugId}`, externalId: debugId, entityType: "games",
-        title, detail: input.detail || input.platform || "PC", eventType: input.event || "started",
+        title, context: input.context || input.platform || "PC", detail: input.detail || ({ started: "Iniciado", completed: "Terminado", updated: "Actualizado" }[input.event] || "Iniciado"), eventType: input.event || "started",
         occurredAt: input.timestamp || new Date().toISOString(),
         assets: { poster: "/favicon.ico", backdrop: "/favicon.ico" },
         metadata: {
@@ -1037,6 +1037,16 @@ function plexActivityDetail(metadata = {}, event = {}) {
   return metadata.subtitle || metadata.summary || metadata.year || "";
 }
 
+function plexActivityContext(metadata = {}) {
+  const plexType = metadata.type || metadata.meta?.plexType || "unknown";
+  if (!["episode", "season"].includes(plexType)) return "";
+  const match = String(metadata.subtitle || metadata.meta?.createdEpisodeCode || "").match(/S\d{1,3}E\d{1,4}/i);
+  return match ? match[0].toUpperCase() : "";
+}
+function plexActivityStatus(event = {}) {
+  return event.isWatched ? "Terminado" : event.isLibraryAdded ? "Añadido" : event.startsPlayback ? "Reproducido" : "Actualizado";
+}
+
 function normalizePlexBacklogItem(metadata = {}) {
   return {
     source: "plex",
@@ -1129,27 +1139,65 @@ function normalizeDeckItem(input = {}) {
   return input;
 }
 
-function deckCategoryFor(item = {}) {
-  if (item.collectionType === "games" || item.source === "playnite") return "games";
-  if (item.collectionType === "movies") return "movies";
-  return "series";
+function normalizeDeckBucketValue(value = "") {
+  return String(value || "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
 }
-const deckLimitByCategory = { games: 3, movies: 3, series: 3 };
+function deckCategoryFor(item = {}) {
+  const subtype = normalizeDeckBucketValue(item.subtype);
+  if (subtype) return `subtype:${subtype}`;
+  const type = item.collectionType === "games" || item.source === "playnite" ? "games" : item.collectionType === "movies" ? "movies" : "series";
+  return `type:${type}`;
+}
+const deckLimit = 3;
+function currentRegistryItemForDeck(item = {}) {
+  if (!item) return item;
+  const canonicalId = item.canonicalId || item.entityId || item.id;
+  const current = canonicalId ? itemRegistryStore.get(canonicalId) : null;
+  // El registro SQLite contiene la clasificación editable más reciente. El almacén
+  // de On Deck conserva fechas/identidad de pertenencia, pero no debe imponer un
+  // subtipo antiguo al evaluar el cupo.
+  return current ? { ...item, ...current, id: item.id, addedToDeckAt: item.addedToDeckAt } : item;
+}
 function deckItemsForCategory(category) {
-  return onDeckStore.list().filter(item => deckCategoryFor(item) === category);
+  return onDeckStore.list()
+    .map(currentRegistryItemForDeck)
+    .filter(item => deckCategoryFor(item) === category);
+}
+function deckCategoryLabel(category = "") {
+  return category.startsWith("subtype:") ? category.slice(8) : ({ games: "juegos", movies: "películas", series: "series" }[category.slice(5)] || "items");
 }
 function deckLimitPayload(category, newItem = {}) {
   return {
     reason: "deck_limit_reached",
     category,
-    limit: deckLimitByCategory[category] || 3,
+    categoryLabel: deckCategoryLabel(category),
+    limit: deckLimit,
     newItem: publicItem(newItem),
     currentItems: deckItemsForCategory(category).map(publicItem)
   };
 }
+function deckSubtypeChangeConflict(existing = {}, incoming = {}) {
+  const deckEntry = findOnDeckItemByCanonicalId(existing.canonicalId || existing.id);
+  if (!deckEntry) return null;
+  if (!Object.prototype.hasOwnProperty.call(incoming, "subtype")) return null;
+  const proposed = { ...existing, subtype: String(incoming.subtype || "").trim() || null };
+  const currentCategory = deckCategoryFor(existing);
+  const proposedCategory = deckCategoryFor(proposed);
+  if (currentCategory === proposedCategory) return null;
+  const currentItems = deckItemsForCategory(proposedCategory).filter(item => !sameItemIdentity(item, existing.canonicalId || existing.id));
+  if (currentItems.length < deckLimit) return null;
+  return {
+    reason: "deck_subtype_limit_reached",
+    category: proposedCategory,
+    categoryLabel: deckCategoryLabel(proposedCategory),
+    limit: deckLimit,
+    newItem: publicItem(proposed),
+    currentItems: currentItems.map(publicItem)
+  };
+}
 async function enforceDeckLimitOrReplace(deckItem = {}, replaceId = "") {
   const category = deckCategoryFor(deckItem);
-  const limit = deckLimitByCategory[category] || 3;
+  const limit = deckLimit;
   const current = deckItemsForCategory(category);
   const already = current.find(item => item.canonicalId === deckItem.canonicalId || item.id === deckItem.id);
   if (already) return { ok: true, replaced: null, category };
@@ -1163,7 +1211,7 @@ function csvEscape(value) {
   return /[",\n\r;]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 function itemsToCsv(rows = []) {
-  const headers = ["title", "subtitle", "source", "type", "collectionType", "status", "rating", "completedAt", "firstSeenAt", "lastActivityAt", "canonicalId"];
+  const headers = ["title", "subtype", "context", "detail", "source", "type", "collectionType", "status", "rating", "completedAt", "firstSeenAt", "lastActivityAt", "canonicalId"];
   const lines = [headers.join(",")];
   for (const item of rows) {
     lines.push(headers.map(key => csvEscape(item[key])).join(","));
@@ -1229,7 +1277,9 @@ function normalizePlayniteBacklogItem(game = {}) {
     canonicalId: `playnite:${String(game.gameId || game.title || "game").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "game"}`,
     gameId: game.gameId || game.title,
     title: game.title || "Juego sin título",
-    subtitle: Array.isArray(game.platforms) ? game.platforms.join(" · ") : "",
+    context: Array.isArray(game.platforms) ? game.platforms.join(" · ") : "",
+    detail: "Iniciado",
+    subtitle: "Iniciado",
     poster: game.cover || null,
     backdrop: game.background || null,
     year: game.releaseYear || "",
@@ -1419,6 +1469,8 @@ async function prepareManualItemPayload(input = {}, existing = null) {
     type: manualTypeForCollection(collectionType),
     collectionType,
     title,
+    subtype: Object.prototype.hasOwnProperty.call(input, "subtype") ? (String(input.subtype || "").trim() || null) : (existing?.subtype || null),
+    context: Object.prototype.hasOwnProperty.call(input, "context") ? (String(input.context || "").trim() || null) : (existing?.context || null),
     detail,
     subtitle: detail,
     poster,
@@ -1476,6 +1528,8 @@ app.patch("/api/items/:canonicalId", async (req, res) => {
     const existing = itemRegistryStore.get(id);
     if (!existing) return res.status(404).json({ error: "Item no encontrado." });
     if (!isManualEditableItem(existing)) return res.status(403).json({ error: "Sólo se pueden editar datos principales de items creados manualmente en BBQueue." });
+    const conflict = deckSubtypeChangeConflict(existing, req.body || {});
+    if (conflict) return res.status(409).json({ error: `No puedes cambiar el subtipo: ya hay ${conflict.limit} ${conflict.categoryLabel} en On Deck.`, ...conflict });
     const payload = await prepareManualItemPayload({ ...(req.body || {}), canonicalId: existing.canonicalId }, existing);
     let item = await itemRegistryStore.upsert(payload, { forceSubtitle: true, activity: { eventType: "manual_item_edit", title: payload.title, subtitle: payload.subtitle, activityAt: payload.lastActivityAt } });
     await updateManualItemInLegacyStores(item);
@@ -1496,20 +1550,26 @@ app.get("/api/items/:canonicalId", async (req, res) => {
   res.json(publicGrillItem(item));
 });
 app.patch("/api/items/:canonicalId/dates", async (req, res) => {
-  const id = decodeURIComponent(req.params.canonicalId);
-  let item = await itemRegistryStore.updateDates(id, req.body || {});
-  if (!item) return res.status(404).json({ error: "Item no encontrado." });
+  try {
+    const id = decodeURIComponent(req.params.canonicalId);
+    const existing = itemRegistryStore.get(id);
+    if (!existing) return res.status(404).json({ error: "Item no encontrado." });
+    const conflict = deckSubtypeChangeConflict(existing, req.body || {});
+    if (conflict) return res.status(409).json({ error: `No puedes cambiar el subtipo: ya hay ${conflict.limit} ${conflict.categoryLabel} en On Deck.`, ...conflict });
+    let item = await itemRegistryStore.updateDates(id, req.body || {});
+    if (!item) return res.status(404).json({ error: "Item no encontrado." });
 
-  // La fecha editada debe ser autoritativa también en las vistas históricas.
-  // De lo contrario, la siguiente sincronización vuelve a importar la fecha antigua
-  // desde Backlog, On Deck o Colección y hace imposible depurar la parrilla.
-  await updateManualItemInLegacyStores(item);
-  await syncItemRegistryNow("manual-dates-edit");
-  item = itemRegistryStore.get(id) || item;
+    // La fecha editada debe ser autoritativa también en las vistas históricas.
+    await updateManualItemInLegacyStores(item);
+    await syncItemRegistryNow("manual-dates-edit");
+    item = itemRegistryStore.get(id) || item;
 
-  const payload = fullStatePayload({ item: publicGrillItem(item) });
-  broadcastDelta("item:database-updated", payload);
-  res.json({ ok: true, item });
+    const payload = fullStatePayload({ item: publicGrillItem(item) });
+    broadcastDelta("item:database-updated", payload);
+    res.json({ ok: true, item });
+  } catch (error) {
+    res.status(400).json({ error: error.message || String(error) });
+  }
 });
 async function handlePermanentItemDelete(req, res) {
   const id = decodeURIComponent(req.params.canonicalId || req.body?.canonicalId || "");
@@ -1898,6 +1958,38 @@ async function normalizeIngestionAssets(envelope) {
   return { ...envelope, assets: { poster, backdrop }, metadata: stripEmbeddedBinary(envelope.metadata) };
 }
 
+
+function notificationEventKey(envelope = {}) {
+  const source = String(envelope.source || '').toLowerCase();
+  const event = String(envelope.eventType || '').toLowerCase();
+  if (source === 'playnite' && ['started','played'].includes(event)) return 'playniteStarted';
+  if (source === 'plex' && ['added','library_added','recently_added'].includes(event)) return 'plexAdded';
+  if (source === 'plex' && ['watched','completed'].includes(event)) return 'plexWatched';
+  if (source === 'plex' && ['play','played','start','started','playback_start'].includes(event)) return 'plexPlayed';
+  return null;
+}
+
+function activitySummary(item = {}) {
+  return [item.context, item.detail || item.subtitle, item.subtype].map(value => String(value || '').trim()).filter((value, index, rows) => value && rows.findIndex(other => other.toLowerCase() === value.toLowerCase()) === index).join(' · ');
+}
+
+async function maybePublishActivityNotification(envelope = {}, item = {}, { broadcast = true } = {}) {
+  const key = notificationEventKey(envelope);
+  if (!key || settingsStore.get().notifications?.events?.[key] !== true) return null;
+  const notification = await store.add({
+    source: envelope.source || item.source || 'system',
+    type: envelope.eventType || 'activity',
+    priority: 'normal',
+    title: item.title || envelope.title || 'Actividad actualizada',
+    subtitle: activitySummary(item) || 'Actividad actualizada',
+    image: item.poster || null,
+    backdrop: item.backdrop || null,
+    meta: { canonicalId: item.canonicalId || envelope.canonicalId || null, externalId: envelope.externalId || null, eventType: envelope.eventType || null }
+  });
+  if (broadcast) await publishNotification(notification);
+  return notification;
+}
+
 async function ingestExternalItem(rawPayload = {}, { integration = "external", broadcast = true } = {}) {
   const envelope = await normalizeIngestionAssets(normalizeIngestionPayload(rawPayload));
   const current = itemFromAnyStore(envelope.canonicalId);
@@ -1912,8 +2004,9 @@ async function ingestExternalItem(rawPayload = {}, { integration = "external", b
     type: envelope.entityType,
     collectionType: collectionTypeFromEntityType(envelope.entityType),
     title: envelope.title,
-    detail: envelope.behavior.updateDetail ? envelope.detail : (current?.detail || current?.subtitle || ""),
-    subtitle: envelope.behavior.updateDetail ? envelope.detail : (current?.detail || current?.subtitle || ""),
+    ...(Object.prototype.hasOwnProperty.call(envelope, "subtype") ? { subtype: envelope.subtype } : {}),
+    ...(Object.prototype.hasOwnProperty.call(envelope, "context") ? { context: envelope.context } : {}),
+    ...(envelope.behavior.updateDetail && Object.prototype.hasOwnProperty.call(envelope, "detail") ? { detail: envelope.detail || "", subtitle: envelope.detail || "" } : { detail: current?.detail || current?.subtitle || "", subtitle: current?.detail || current?.subtitle || "" }),
     poster: envelope.assets.poster || current?.poster || null,
     backdrop: envelope.assets.backdrop || current?.backdrop || null,
     lastActivityAt: envelope.behavior.updateActivity ? envelope.occurredAt : (current?.lastActivityAt || envelope.occurredAt),
@@ -1922,7 +2015,7 @@ async function ingestExternalItem(rawPayload = {}, { integration = "external", b
   if (incoming.source === "plex") incoming = canonicalizePlexSeriesItem(incoming);
 
   const patch = {
-    forceSubtitle: envelope.behavior.updateDetail,
+    forceSubtitle: envelope.behavior.updateDetail && Object.prototype.hasOwnProperty.call(envelope, "detail"),
     lastActivityAt: incoming.lastActivityAt,
     charred: envelope.behavior.clearCharred ? false : undefined,
     activity: envelope.behavior.updateActivity ? {
@@ -1964,6 +2057,7 @@ async function ingestExternalItem(rawPayload = {}, { integration = "external", b
   await syncItemRegistryNow(`ingest:${integration}`);
   const finalItem = publicGrillItem(itemRegistryStore.get(updated.canonicalId) || updated);
   const currentActivity = await persistIngestedCurrentActivity(envelope, finalItem);
+  const notification = await maybePublishActivityNotification(envelope, finalItem, { broadcast });
   const payload = fullStatePayload({ item: finalItem, backlogItem: savedBacklogItem ? publicItem(savedBacklogItem) : null, deckItem: savedDeckItem ? publicItem(savedDeckItem) : null, currentContent: currentActivity });
   if (broadcast) {
     broadcastDelta(savedBacklogItem ? "item:backlog-upserted" : savedDeckItem ? "item:deck-upserted" : "item:database-updated", payload);
@@ -1984,7 +2078,7 @@ async function ingestExternalItem(rawPayload = {}, { integration = "external", b
       });
     }
   }
-  return { ok: true, created: !current, item: finalItem, backlogItem: savedBacklogItem ? publicItem(savedBacklogItem) : null, deckItem: savedDeckItem ? publicItem(savedDeckItem) : null, currentContent: currentActivity, toastEmitted: Boolean(broadcast && envelope.behavior.showToast), envelope };
+  return { ok: true, created: !current, item: finalItem, backlogItem: savedBacklogItem ? publicItem(savedBacklogItem) : null, deckItem: savedDeckItem ? publicItem(savedDeckItem) : null, currentContent: currentActivity, toastEmitted: Boolean(notification), notification, envelope };
 }
 
 function requireExternalApiToken(req, res, next) {
@@ -2197,12 +2291,13 @@ async function handleTautulliWebhook(req, res) {
       trackedItem.lastActivityAt = parsedTimestamp && !Number.isNaN(parsedTimestamp.getTime()) ? parsedTimestamp.toISOString() : new Date().toISOString();
       trackedItem.subtitle = plexActivityDetail(metadata, event) || trackedItem.subtitle;
       trackedItem.detail = trackedItem.subtitle;
+      const payloadSubtype = String(req.body?.subtype || "").trim();
       trackedItem.meta = {
         ...(trackedItem.meta || {}),
         activityKind: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : event.startsPlayback ? "played" : "activity",
         tautulliPayloadType: payloadMediaType || null,
         plexResolvedType: plexMediaType,
-        tautulliPayload: { event: event.rawEvent, ratingKey: String(ratingKey), mediaType: payloadMediaType || null, title: req.body?.title || null, seasonNumber: req.body?.seasonNumber || req.body?.season_num || null, episodeNumber: req.body?.episodeNumber || req.body?.episode_num || null, timestamp: payloadTimestamp || null }
+        tautulliPayload: { event: event.rawEvent, ratingKey: String(ratingKey), mediaType: payloadMediaType || null, subtype: payloadSubtype || null, title: req.body?.title || null, seasonNumber: req.body?.seasonNumber || req.body?.season_num || null, episodeNumber: req.body?.episodeNumber || req.body?.episode_num || null, timestamp: payloadTimestamp || null }
       };
       trackedItem = canonicalizePlexSeriesItem(trackedItem);
       const ingestion = await ingestExternalItem({
@@ -2211,7 +2306,9 @@ async function handleTautulliWebhook(req, res) {
         externalId: String(metadata.ratingKey || trackedItem.ratingKey || trackedItem.canonicalId),
         entityType: trackedItem.collectionType || trackedItem.type,
         title: trackedItem.title,
-        detail: trackedItem.subtitle,
+        ...(payloadSubtype ? { subtype: payloadSubtype } : {}),
+        context: plexActivityContext(metadata),
+        detail: plexActivityStatus(event),
         eventType: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : "played",
         occurredAt: trackedItem.lastActivityAt,
         assets: { poster: trackedItem.poster, backdrop: trackedItem.backdrop },
@@ -2242,10 +2339,6 @@ async function handleTautulliWebhook(req, res) {
     }
     hub.broadcast({ type: "current:update", payload: runtime.currentContent });
 
-    if (event.isLibraryAdded && settingsStore.get().integrations?.tautulli?.notifyLibraryAdded) {
-      const notification = await store.add({ source: "plex", type: "library_added", priority: "normal", title: `${metadata.title} añadido a Plex`, subtitle: metadata.subtitle || metadata.year, image: metadata.posterUrl, backdrop: metadata.backdropUrl, meta: { ratingKey: metadata.ratingKey, plexType: metadata.type } });
-      await publishNotification(notification);
-    }
     res.status(200).json({ ok: true, event: event.event, rawEvent: event.rawEvent, activeView: runtime.activeView });
   } catch (error) {
     console.error("Error en webhook Tautulli:", error);
@@ -2330,7 +2423,8 @@ async function handlePlayniteWebhook(req, res) {
       externalId: String(playniteItem.gameId || game.gameId || playniteItem.canonicalId),
       entityType: "games",
       title: playniteItem.title,
-      detail: playniteItem.subtitle,
+      context: playniteItem.context || "",
+      detail: playniteItem.detail || "Iniciado",
       eventType: "started",
       occurredAt: playniteItem.lastActivityAt,
       assets: { poster: playniteItem.poster, backdrop: playniteItem.backdrop },

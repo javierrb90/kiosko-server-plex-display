@@ -4,7 +4,7 @@ Esta versión cierra la primera fase estable de BBQ sobre SQLite. Reúne persist
 
 ## Cambio visible de esta entrega
 
-El contador y botón Dar la vuelta ya no se renderizan en Base de datos ni en Colección, tanto en diseño Normal como Simple. Solo aparecen en Backlog y On Deck.
+El contador y botón Dar la vuelta ya no se renderizan en Actividades ni en Colección, tanto en diseño Normal como Simple. Solo aparecen en Backlog y On Deck.
 
 ## Documentación
 
