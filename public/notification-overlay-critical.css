@@ -1,3 +1,0 @@
-/* v7.3.1 · notifications are activity cards in one scrollable list. */
-.notifications-panel__list{display:flex!important;flex-direction:column!important;overflow-y:auto!important;overflow-x:hidden!important}
-.overlay-notification{width:100%!important;max-width:100%!important;height:auto!important;flex:0 0 auto!important;box-sizing:border-box!important}

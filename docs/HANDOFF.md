@@ -2,7 +2,7 @@
 
 ## Estado actual
 
-BBQ 7.2.0 es una aplicación local Node.js + Express + WebSocket + SQLite. El directorio `/app/data` es la única persistencia operativa y contiene SQLite, settings, listas, diario y assets comprimidos.
+BBQ 7.4.2 es una aplicación local Node.js + Express + WebSocket + SQLite. El directorio `/app/data` es la única persistencia operativa y contiene SQLite, settings, listas, diario y assets comprimidos.
 
 ## Objetivo
 
@@ -59,7 +59,7 @@ Las reglas dinámicas expuestas en la interfaz se basan únicamente en `subtype`
 Lee `TERMINOLOGY.md` antes de modificar rutas, modelos o textos. La interfaz dice Actividad/Lista, mientras que el código compatible conserva `item`/`group`.
 
 
-## Notificaciones desde v7.3.1
+## Notificaciones desde v7.4.0
 
 Las notificaciones persistentes son efectos opcionales de eventos de integración, no el mecanismo de ingestión. `ingestExternalItem()` actualiza primero la Actividad; `maybePublishActivityNotification()` decide después si crea una entrada según `settings.notifications.events`.
 
@@ -67,6 +67,17 @@ Claves configurables: `plexAdded`, `plexPlayed`, `plexWatched` y `playniteStarte
 
 El toast `#toast` solo representa `notification:new`. Los eventos `activity:received`, `current:update`, `plex:update` y `game:update` no deben volver a usarlo.
 
-## Geometría de la ficha desde v7.3.1
+## Geometría de la ficha desde v7.4.0
 
 En escritorio, `.item-detail__poster` permanece fijo y `.item-detail__info` es el único panel desplazable. `renderInfoSubview()` extrae `.item-detail-form__actions` y las monta en `.ui-modal__footer`; `renderBody()` limpia ese pie al volver al resumen. No vuelvas a insertar acciones persistentes dentro del contenido desplazable.
+
+
+## Toast y estado leído desde v7.4.2
+
+El antiguo componente `#now-playing-mini` fue retirado. Aunque se parecía visualmente a un toast, se reconstruía desde `state.lastCurrent`, no desde `notifications.json`, y era la causa de que reapareciera contenido antiguo al recargar.
+
+La única fuente del toast persistente es ahora la notificación más reciente no leída del `EventStore`. El snapshot HTTP entrega las notificaciones y `public/app.js` restaura solo la más reciente que sea posterior a `state.lastNotificationsViewedAt` y cuyo ID no coincida con `state.lastNotificationHandledId`.
+
+Leer o cerrar el toast y abrir el panel actualiza ambos campos mediante `PUT /api/state` con escritura inmediata. No reintroduzcas un segundo componente flotante para Plex o Playnite: los eventos sin notificación pueden actualizar la actividad y el contenido actual, pero no deben crear otra tarjeta visual en la esquina.
+
+La hoja personalizada heredada `custom-css/notifications` dejó de cargarse en v7.4.2. Los estilos del centro y del toast viven en `public/style.css`; el CSS global personalizado sigue disponible.

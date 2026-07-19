@@ -9,6 +9,7 @@ const DEFAULT_STATE = {
   lastGame: null,
   lastCurrent: null,
   lastNotificationsViewedAt: null,
+  lastNotificationHandledId: null,
   privacyLocked: false,
   updatedAt: null
 };
@@ -29,23 +30,31 @@ export class StateStore {
     }
   }
   get() { return this.state; }
-  async update(patch) {
+  async update(patch, { immediate = false } = {}) {
     this.state = { ...this.state, ...(patch || {}), updatedAt: new Date().toISOString() };
-    await this.persist();
+    await this.persist({ immediate });
     return this.state;
   }
-  async persist() {
+  async persist({ immediate = false } = {}) {
     this.pendingData = this.state;
+    if (immediate) return this.flush();
     if (this.writeTimer) return;
     this.writeTimer = setTimeout(() => {
       this.writeTimer = null;
-      const snapshot = this.pendingData;
-      this.writeQueue = this.writeQueue.then(async () => {
-        const started = Date.now();
-        await fs.writeFile(this.filePath, JSON.stringify(snapshot), "utf8");
-        const ms = Date.now() - started;
-        if (ms > 250) console.warn(`[persist] state.json ${ms}ms`);
-      }).catch(error => console.error(`[persist] state.json error:`, error));
+      this.flush().catch(error => console.error(`[persist] state.json error:`, error));
     }, Number(process.env.PERSIST_DEBOUNCE_MS || 350));
+  }
+  async flush() {
+    if (this.writeTimer) { clearTimeout(this.writeTimer); this.writeTimer = null; }
+    const snapshot = this.pendingData || this.state;
+    this.writeQueue = this.writeQueue.then(async () => {
+      const started = Date.now();
+      const tmpPath = `${this.filePath}.tmp`;
+      await fs.writeFile(tmpPath, JSON.stringify(snapshot), "utf8");
+      await fs.rename(tmpPath, this.filePath);
+      const ms = Date.now() - started;
+      if (ms > 250) console.warn(`[persist] state.json ${ms}ms`);
+    });
+    await this.writeQueue;
   }
 }

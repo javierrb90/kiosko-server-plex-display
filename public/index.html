@@ -9,11 +9,9 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=7.4.2">
   <link rel="stylesheet" href="/api/custom-css/global" data-custom-css="global">
-  <link rel="stylesheet" href="/api/custom-css/notifications" data-custom-css="notifications">
   <link rel="stylesheet" href="/api/custom-css/collections" data-custom-css="collections">
-  <link rel="stylesheet" href="/notification-overlay-critical.css">
 </head>
 <body>
   <header class="app-topbar" aria-label="Controles principales">
@@ -64,19 +62,9 @@
     </section>
   </aside>
   <div id="modal-root" class="ui-modal-root" hidden></div>
-  <aside id="now-playing-mini" class="now-playing-mini" aria-live="polite" hidden>
-    <button class="now-playing-mini__body" type="button" data-now-playing-open aria-label="Abrir reproducción actual">
-      <span class="now-playing-mini__poster" data-now-playing-poster></span>
-      <span class="now-playing-mini__copy">
-        <strong data-now-playing-title>Actual</strong>
-        <small data-now-playing-subtitle></small>
-      </span>
-    </button>
-    <button class="now-playing-mini__close" type="button" data-now-playing-close aria-label="Ocultar reproducción actual">×</button>
-  </aside>
   <div id="ui-toast-root" class="ui-toast-root" aria-live="polite"></div>
   <script>if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/service-worker.js').catch(() => {}));</script>
   <script src="/vendor/canvas-confetti.min.js"></script>
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/app.js?v=7.4.2"></script>
 </body>
 </html>

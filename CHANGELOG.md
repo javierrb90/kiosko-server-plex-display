@@ -1,6 +1,20 @@
 # Changelog
 
-## 7.3.1
+## 7.4.2
+
+- Corregido un error tipográfico en el listener del toast (`addEventListenerr` → `addEventListener`) que impedía arrancar el frontend.
+- Sin cambios funcionales adicionales.
+
+## 7.4.1
+
+- Retirado el antiguo mini reproductor flotante (`now-playing-mini`), que se superponía al toast de notificaciones y reaparecía al recargar desde `lastCurrent`.
+- El toast inferior representa ahora una única fuente de verdad: la notificación persistente más reciente que siga sin leer.
+- El snapshot inicial restaura esa notificación con el mismo contenido y diseño que el evento recibido en tiempo real.
+- Abrir o cerrar el toast, o abrir el centro de notificaciones, persiste inmediatamente `lastNotificationsViewedAt` y `lastNotificationHandledId`.
+- Eliminada la hoja heredada `/api/custom-css/notifications`, que podía volver a aplicar estilos antiguos tras recargar.
+- La escritura de `state.json` admite vaciado inmediato y atómico para que el estado leído no se pierda aunque se recargue enseguida.
+
+## 7.4.0
 
 - La ficha de actividad adopta una geometría fija: carátula siempre visible, panel derecho desplazable y acciones persistentes en el pie del modal.
 - Corregida la escala tipográfica de formularios y subvistas.
@@ -98,3 +112,13 @@
 - Historial exclusivo de pruebas, borrable desde Opciones.
 - Corrección autoritativa de películas Plex almacenadas históricamente como series.
 - Documentación de pruebas simples y reutilización de identificadores.
+
+## 7.4.0
+
+- Geometría contenida y estable para la ficha de actividad.
+- Pie fijo para las acciones de edición y panel derecho desplazable.
+- Toast de última notificación con lectura y cierre persistentes.
+- Navegación de notificaciones al espacio real de cada actividad.
+- Sustitución determinista del toast para evitar solapamientos.
+- Versionado explícito de CSS, JavaScript y caché del service worker.
+- Limpieza de notas históricas y documentación consolidada de handoff.

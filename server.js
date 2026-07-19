@@ -206,7 +206,7 @@ app.get("/api/diagnostics", async (_req, res) => {
   res.json({
     ok: true,
     app: "BBQ",
-    version: "v7.3.1",
+    version: "v7.4.2",
     pid: process.pid,
     cwd: process.cwd(),
     node: process.version,
@@ -584,7 +584,7 @@ async function buildExportPayload() {
   } catch {}
   return {
     exportedAt: new Date().toISOString(),
-    app: "kiosko-media-center",
+    app: "bbq",
     version: "v5.5",
     settings: publicSettings(),
     state: stateStore.get(),
@@ -635,7 +635,7 @@ wss.on("connection", ws => {
   hub.send(ws, { type: "socket:ready", payload: { ok: true } });
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.3.1", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, app: "BBQ", version: "v7.4.2", pid: process.pid, uptimeSeconds: Math.round(process.uptime()), time: new Date().toISOString(), ...configStatus(), notifications: store.list({ page: 1, limit: 1 }).total, backlog: backlogStore.source("plex").length + backlogStore.source("playnite").length + backlogStore.source("kiosko").length + backlogStore.source("manual").length, onDeck: onDeckStore.list().length, collection: completionStore.list().length }));
 app.get("/api/snapshot", (_req, res) => {
   const started = Date.now();
   const payload = snapshot().payload;
@@ -647,8 +647,10 @@ app.get("/api/snapshot", (_req, res) => {
 });
 app.get("/api/state", (_req, res) => res.json(stateStore.get()));
 app.put("/api/state", async (req, res) => {
-  const patch = req.body || {};
-  const state = await stateStore.update(patch);
+  const patch = { ...(req.body || {}) };
+  const immediate = patch.flush === true;
+  delete patch.flush;
+  const state = await stateStore.update(patch, { immediate });
   if (patch.activeView && validViews.has(patch.activeView)) runtime.activeView = patch.activeView;
   if (patch.privacyLocked === true) {
     runtime.activeView = "backlog";
@@ -724,7 +726,7 @@ app.post('/api/reset/settings', async (req, res) => {
 app.post('/api/reset/all', async (req, res) => {
   requireConfirmation(req, 'REINICIAR TODO');
   await clearLibrary({ dataDir:DATA_DIR, itemRegistryStore, backlogStore, onDeckStore, completionStore, collectionGroupStore, journalStore });
-  await store.clear(); const next=await settingsStore.reset(); await stateStore.update({activeView:next.display?.defaultView || 'backlog', selectedCollectionId:null,lastPlex:null,lastGame:null,lastCurrent:null,lastNotificationsViewedAt:null,privacyLocked:false});
+  await store.clear(); const next=await settingsStore.reset(); await stateStore.update({activeView:next.display?.defaultView || 'backlog', selectedCollectionId:null,lastPlex:null,lastGame:null,lastCurrent:null,lastNotificationsViewedAt:null,lastNotificationHandledId:null,privacyLocked:false});
   await fs.rm(path.join(DATA_DIR,'custom-css'),{recursive:true,force:true}); runtime.activeView=next.display?.defaultView || 'backlog'; runtime.currentContent=null; runtime.game=null; hub.broadcast({type:'state:reload',payload:{ok:true}}); res.json({ok:true});
 });
 

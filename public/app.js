@@ -20,15 +20,10 @@ const notificationsBadge = document.querySelector('[data-notifications-badge]');
 const notificationsOverlay = document.getElementById('notifications-overlay');
 const notificationsOverlayList = document.querySelector('[data-notifications-overlay-list]');
 const notificationsOverlayCount = document.querySelector('[data-notifications-overlay-count]');
-const notificationsOverlayFilters = document.querySelector('[data-notifications-overlay-filters]');
 const modalRoot = document.getElementById('modal-root');
 const settingsTrigger = document.getElementById('settings-trigger');
 const viewControls = document.getElementById('view-controls');
 const uiToastRoot = document.getElementById('ui-toast-root');
-const nowPlayingMini = document.getElementById('now-playing-mini');
-const nowPlayingPoster = document.querySelector('[data-now-playing-poster]');
-const nowPlayingTitle = document.querySelector('[data-now-playing-title]');
-const nowPlayingSubtitle = document.querySelector('[data-now-playing-subtitle]');
 const ui = createUi({ modalRoot, toastRoot: uiToastRoot });
 
 const state = {
@@ -43,13 +38,11 @@ const state = {
   latestToastItem: null,
   notificationsOverlayOpen: false,
   overlayNotifications: [],
-  notificationSourceFilter: 'all',
   initialViewResolved: false,
   localNavigationAt: 0,
   currentContent: null,
   collectionGroups: [],
-  nowPlayingDismissed: false,
-  nowPlayingHighlightTimer: null
+  toastSequence: 0
 };
 
 
@@ -230,16 +223,6 @@ function refreshCustomCss(name) {
   }
 }
 
-function notificationIcon(item = {}) {
-  const key = String(item.source || item.type || 'system').toLowerCase();
-  if (key.includes('syncthing')) return `<svg viewBox="0 0 24 24"><path d="M12 2 4 6v6c0 5 3.4 9.8 8 10 4.6-.2 8-5 8-10V6l-8-4Zm0 2.2 5.8 2.9v4.9c0 3.9-2.5 7.7-5.8 8.6-3.3-.9-5.8-4.7-5.8-8.6V7.1L12 4.2Zm-2 3.8h4v2h-2v4.6l3 1.7-1 1.7-4-2.3V8Z"/></svg>`;
-  if (key.includes('sonarr')) return `<svg viewBox="0 0 24 24"><path d="M5 4h14v16H5V4Zm2 2v3h10V6H7Zm0 5v3h10v-3H7Zm0 5v2h10v-2H7Z"/></svg>`;
-  if (key.includes('radarr')) return `<svg viewBox="0 0 24 24"><path d="M4 6h16v12H4V6Zm3 2-1 2h3l1-2H7Zm5 0-1 2h3l1-2h-3Zm5 0-1 2h2v-2h-1ZM7 13v3h10v-3H7Z"/></svg>`;
-  if (key.includes('playnite') || key.includes('game')) return `<svg viewBox="0 0 24 24"><path d="M7 9h10a4 4 0 0 1 4 4v2a3 3 0 0 1-3 3h-1.4l-2.4-2.8a3.2 3.2 0 0 0-4.8 0L7 18H6a3 3 0 0 1-3-3v-2a4 4 0 0 1 4-4Zm1.5 4H6v2h2.5v2h2v-2H13v-2h-2.5v-2h-2v2Zm8.5.5a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Zm2 3a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5Z"/></svg>`;
-  if (key.includes('plex')) return `<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5Z"/></svg>`;
-  if (key.includes('grab') || key.includes('download')) return `<svg viewBox="0 0 24 24"><path d="M11 4h2v9l3.5-3.5 1.4 1.4L12 16.8l-5.9-5.9 1.4-1.4L11 13V4ZM5 19h14v2H5v-2Z"/></svg>`;
-  return `<svg viewBox="0 0 24 24"><path d="M12 22a2.4 2.4 0 0 0 2.3-1.7H9.7A2.4 2.4 0 0 0 12 22Zm7-5-1.7-2.2V10a5.3 5.3 0 0 0-4-5.1V3a1.3 1.3 0 1 0-2.6 0v1.9a5.3 5.3 0 0 0-4 5.1v4.8L5 17v1.2h14V17Z"/></svg>`;
-}
 function relativeTime(value) {
   const t = Date.parse(value);
   if (!Number.isFinite(t)) return '';
@@ -263,31 +246,8 @@ function normalizeNotificationSource(item = {}) {
   if (['system', 'external', 'manual'].includes(raw)) return 'system';
   return raw;
 }
-function notificationSourceLabel(key) {
-  const labels = {
-    all: 'Todas',
-    plex: 'Plex',
-    playnite: 'Playnite',
-    syncthing: 'Syncthing',
-    sonarr: 'Sonarr',
-    radarr: 'Radarr',
-    system: 'Sistema',
-    other: 'Otros'
-  };
-  return labels[key] || key.charAt(0).toUpperCase() + key.slice(1);
-}
-function notificationCounts(items = []) {
-  return items.reduce((acc, item) => {
-    const key = normalizeNotificationSource(item) || 'other';
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-}
 function filteredOverlayNotifications() {
   return (state.overlayNotifications || []).slice(0, 25);
-}
-function renderNotificationFilters() {
-  if (notificationsOverlayFilters) notificationsOverlayFilters.innerHTML = '';
 }
 function notificationCanonicalId(item = {}) {
   return item.meta?.canonicalId || item.canonicalId || null;
@@ -313,39 +273,73 @@ function renderNotificationsOverlay() {
     </article>`;
   }).join('');
 }
-async function markNotificationsViewed() {
+
+function workspaceForActivity(item = {}) {
+  if (item.states?.completed || item.completedAt || item.status === 'completed') return 'collections';
+  if (item.states?.inOnDeck) return 'on-deck';
+  if (item.states?.inBacklog) return 'backlog';
+  return 'database';
+}
+async function openNotificationActivity(canonicalId) {
+  if (!canonicalId) return;
+  const item = await api(`/api/items/${encodeURIComponent(canonicalId)}`);
+  const destination = workspaceForActivity(item);
+  navigate(destination, { persist: true, reason: 'notificación', force: true });
+  try { window.history.replaceState(null, '', hashForView(destination)); } catch {}
+  await openItemDetail({
+    ui, api, item, context: destination,
+    toast: message => ui.toast(message), labels: { title: '' },
+    collectionGroups: state.collectionGroups, settings: state.settings,
+    onItemUpdated: updated => refreshLatestToastItem(updated)
+  });
+}
+function hideNotificationToast({ clear = true } = {}) {
+  clearTimeout(state.toastTimer);
+  state.toastSequence += 1;
+  toast.classList.remove('event-toast--visible');
+  toast.hidden = true;
+  if (clear) {
+    toast.innerHTML = '';
+    state.latestToastAction = null;
+    state.latestNotification = null;
+  }
+}
+async function markNotificationsViewed({ notification = state.latestNotification, newest = null } = {}) {
   const now = new Date().toISOString();
-  state.runtime = { ...(state.runtime || {}), lastNotificationsViewedAt: now };
+  const resolved = notification || newest || state.overlayNotifications?.[0] || null;
+  const handledId = resolved?.id || state.runtime?.lastNotificationHandledId || null;
+  state.runtime = { ...(state.runtime || {}), lastNotificationsViewedAt: now, lastNotificationHandledId: handledId };
   state.unreadCount = 0;
   state.overlayNotifications = state.overlayNotifications.map(item => ({ ...item, unread: false }));
   renderNotificationsOverlay();
   updateNotificationsTrigger();
-  await api('/api/state', { method: 'PUT', body: JSON.stringify({ lastNotificationsViewedAt: now }) }).catch(debugError);
+  hideNotificationToast();
+  await api('/api/state', { method: 'PUT', body: JSON.stringify({ lastNotificationsViewedAt: now, lastNotificationHandledId: handledId, flush: true }) });
 }
+
 async function loadOverlayNotifications() {
   const result = await api('/api/notifications?page=1&limit=25');
   const lastViewed = Date.parse(state.runtime?.lastNotificationsViewedAt || '');
   state.overlayNotifications = (result.items || []).map(item => ({ ...item, unread: Number.isFinite(lastViewed) ? Date.parse(item.createdAt) > lastViewed : true }));
-  if (state.notificationSourceFilter !== 'all') {
-    const counts = notificationCounts(state.overlayNotifications);
-    if (!counts[state.notificationSourceFilter]) state.notificationSourceFilter = 'all';
-  }
   renderNotificationsOverlay();
+  return state.overlayNotifications;
 }
 async function openNotificationsOverlay({ markViewed = true } = {}) {
   if (state.privacyLocked) return;
+  const notificationBeforeOpen = state.latestNotification || state.overlayNotifications?.[0] || null;
   state.notificationsOverlayOpen = true;
   notificationsOverlay.hidden = false;
   notificationsOverlay.setAttribute('aria-hidden', 'false');
   document.body.classList.add('notifications-overlay-open');
+  hideNotificationToast();
 
-  // Show the panel immediately, then do the heavier notification work after paint.
   requestAnimationFrame(() => {
     loadOverlayNotifications()
-      .then(() => markViewed ? markNotificationsViewed() : null)
+      .then(items => markViewed ? markNotificationsViewed({ notification: notificationBeforeOpen, newest: items?.[0] }) : null)
       .catch(debugError);
   });
 }
+
 function closeNotificationsOverlay() {
   state.notificationsOverlayOpen = false;
   notificationsOverlay.hidden = true;
@@ -360,6 +354,19 @@ function updateNotificationsTrigger() {
   notificationsBadge.hidden = count < 1;
   notificationsBadge.textContent = count > 99 ? '99+' : String(count);
   notificationsTrigger.classList.toggle('notifications-trigger--unread', count > 0);
+}
+
+function restoreLatestUnreadNotification(notifications = []) {
+  const items = Array.isArray(notifications) ? notifications : [];
+  state.overlayNotifications = items.slice(0, 25).map(item => {
+    const lastViewed = Date.parse(state.runtime?.lastNotificationsViewedAt || '');
+    return { ...item, unread: Number.isFinite(lastViewed) ? Date.parse(item.createdAt) > lastViewed : true };
+  });
+  renderNotificationsOverlay();
+  const latest = state.overlayNotifications.find(item => item.unread);
+  if (!latest) return;
+  if (latest.id && latest.id === state.runtime?.lastNotificationHandledId) return;
+  requestAnimationFrame(() => showNotificationToast(latest));
 }
 
 function playNotificationSound() {
@@ -386,20 +393,32 @@ function playNotificationSound() {
 }
 function showActionToast({ title, subtitle = '', action = null, notification = null, item = null, force = false } = {}) {
   if (!force && !state.settings?.notifications?.toastEnabled) return;
+  if (notification?.id && notification.id === state.runtime?.lastNotificationHandledId) return;
+  const sequence = ++state.toastSequence;
+  clearTimeout(state.toastTimer);
+  toast.classList.remove('event-toast--visible');
+  toast.hidden = true;
+  toast.innerHTML = '';
   state.latestNotification = notification;
   state.latestToastAction = action;
-  if (item) state.latestToastItem = item;
-  clearTimeout(state.toastTimer);
+  state.latestToastItem = item || null;
   const poster = notification?.image || item?.poster || item?.cover || '/favicon.ico';
-  toast.hidden = false;
   toast.classList.remove('event-toast--small', 'event-toast--medium', 'event-toast--large');
   const size = state.settings?.notifications?.toastSize || 'medium';
   toast.classList.add(`event-toast--${['small','medium','large'].includes(size) ? size : 'medium'}`);
   toast.innerHTML = `<button type="button" class="event-toast__open" data-event-toast-open><img src="${escapeAttr(poster)}" alt=""><span><strong>${escapeHtml(title || 'Nueva notificación')}</strong><small>${escapeHtml(subtitle || '')}</small></span></button><button type="button" class="event-toast__close" data-event-toast-close aria-label="Cerrar y marcar como leída">×</button>`;
-  toast.classList.add('event-toast--visible');
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (sequence !== state.toastSequence) return;
+    toast.hidden = false;
+    toast.classList.add('event-toast--visible');
+  }));
   playNotificationSound();
   const seconds = Number(state.settings?.notifications?.toastDurationSeconds || 6);
-  state.toastTimer = setTimeout(() => toast.classList.remove('event-toast--visible'), seconds * 1000);
+  state.toastTimer = setTimeout(() => {
+    if (sequence !== state.toastSequence) return;
+    toast.classList.remove('event-toast--visible');
+    toast.hidden = true;
+  }, seconds * 1000);
 }
 function showNotificationToast(notification) {
   const canonicalId = notificationCanonicalId(notification);
@@ -407,9 +426,10 @@ function showNotificationToast(notification) {
     title: notification.title || 'Nueva notificación',
     subtitle: notificationSummary(notification),
     notification,
-    action: canonicalId ? () => openItemFromRoute(canonicalId, views.activeId || 'database').catch(debugError) : null
+    action: canonicalId ? () => openNotificationActivity(canonicalId).catch(debugError) : null
   });
 }
+
 function activityToastLabel(payload = {}) {
   const source = String(payload.source || '').toLowerCase();
   const eventType = String(payload.eventType || '').toLowerCase();
@@ -448,49 +468,10 @@ function showIngestionActivityToast(payload = {}) {
   });
 }
 
-function currentPoster(content = {}) {
-  return content.cover || content.poster || content.posterUrl || content.coverPath || content.background || content.backdrop || content.backdropUrl || '';
-}
-function currentSubtitle(content = {}) {
-  if (Array.isArray(content.platforms) && content.platforms.length) return content.platforms.join(' · ');
-  return content.subtitle || content.year || content.type || '';
-}
-function updateNowPlayingMini(content = state.currentContent, { highlight = false, forceOpen = false } = {}) {
+function updateNowPlayingMini(content = state.currentContent) {
+  // v7.4.1: el antiguo mini reproductor se retira. El toast persistente
+  // representa exclusivamente la última notificación no leída.
   state.currentContent = content || null;
-  if (!nowPlayingMini) return;
-  const shouldShow = Boolean(content) && (!state.nowPlayingDismissed || forceOpen);
-  nowPlayingMini.hidden = !shouldShow;
-  nowPlayingMini.classList.toggle('now-playing-mini--hidden', !shouldShow);
-  if (!content) return;
-
-  const title = content.title || 'Contenido actual';
-  const subtitle = currentSubtitle(content);
-  const poster = currentPoster(content);
-  if (nowPlayingTitle) nowPlayingTitle.textContent = title;
-  if (nowPlayingSubtitle) nowPlayingSubtitle.textContent = subtitle || (content.source === 'playnite' || content.kind === 'game' ? 'Jugando ahora' : 'Reproduciendo');
-  if (nowPlayingPoster) {
-    nowPlayingPoster.innerHTML = poster ? `<img src="${escapeAttr(poster)}" alt="">` : `<span>${escapeHtml(title.slice(0,1) || '▶')}</span>`;
-  }
-
-  if (highlight) {
-    nowPlayingMini.classList.add('now-playing-mini--highlight');
-    clearTimeout(state.nowPlayingHighlightTimer);
-    state.nowPlayingHighlightTimer = setTimeout(() => nowPlayingMini.classList.remove('now-playing-mini--highlight'), 4200);
-  }
-}
-async function openCurrentContentFromMini() {
-  if (!state.currentContent) return;
-  const result = await openItemDetail({
-    ui,
-    api,
-    item: state.currentContent,
-    context: 'current',
-    toast: message => ui.toast(message),
-    labels: { title: '' },
-    collectionGroups: state.collectionGroups,
-    settings: state.settings
-  });
-  if (result?.action === 'open-current') navigate('current-content', { reason: 'mini actual' });
 }
 
 
@@ -552,18 +533,7 @@ function toastGroupSuffix(item = {}) {
   return groups.length ? ` · ${groups.map(group => group.name).slice(0, 3).join(' · ')}` : '';
 }
 
-function shouldToastCurrent(content = {}) {
-  if (!content) return false;
-  if (content.source === 'playnite' || content.kind === 'game' || content.event === 'game_started') return true;
-  return ['play', 'start', 'playback_start'].includes(String(content.event || '').toLowerCase());
-}
-function showCurrentToast(content = {}) {
-  if (!shouldToastCurrent(content)) return;
-  state.nowPlayingDismissed = false;
-  updateNowPlayingMini(content, { highlight: true, forceOpen: true });
-  const groupSuffix = toastGroupSuffix(content);
-  if (groupSuffix) ui.toast(`${content.title || 'Contenido actual'}${groupSuffix}`);
-}
+
 /* legacy */
 
 views.register(createDatabaseView({ api, debug, ui, controlsRoot: viewControls }));
@@ -595,6 +565,7 @@ function applyState(payload = {}) {
   state.privacyLocked = Boolean(payload.state?.privacyLocked);
   state.unreadCount = Number(payload.unreadCount || 0);
   updateNotificationsTrigger();
+  restoreLatestUnreadNotification(payload.notifications?.items || payload.notifications || []);
   state.collectionGroups = payload.collectionGroups || [];
   state.backlog = payload.backlog || {};
   state.onDeck = payload.onDeck || [];
@@ -816,30 +787,11 @@ const socket = new SocketClient({
     if (message.type === 'current:update') { if (message.payload) refreshLatestToastItem(message.payload); views.update('current-content', { currentContent: message.payload }); if (!message.payload) updateNowPlayingMini(null); return; }
     if (message.type === 'plex:update') { const current = { ...(message.payload || {}), source: 'plex', kind: 'plex' }; views.update('current-content', { currentContent: current }); return; }
     if (message.type === 'game:update') { const current = { ...(message.payload || {}), source: 'playnite', kind: 'game' }; views.update('current-content', { currentContent: current }); return; }
-    if (message.type === 'activity:received') {
-      const activity = message.payload || {};
-      // Un inicio desde Playnite también representa el contenido actual. Así se
-      // conserva el comportamiento visual del antiguo webhook sin convertirlo
-      // de nuevo en una notificación persistente.
-      if (String(activity.source || '').toLowerCase() === 'playnite' && ['started', 'played'].includes(String(activity.eventType || '').toLowerCase())) {
-        const current = {
-          ...activity,
-          source: 'playnite',
-          kind: 'game',
-          event: 'game_started',
-          cover: activity.poster || '',
-          background: activity.backdrop || '',
-          subtitle: activity.detail || ''
-        };
-        state.nowPlayingDismissed = false;
-        updateNowPlayingMini(current, { highlight: true, forceOpen: true });
-      }
-      return;
-    }
+    if (message.type === 'activity:received') return;
     if (message.type === 'notifications:cleared') {
       state.overlayNotifications = [];
       state.unreadCount = 0;
-      state.notificationSourceFilter = 'all';
+      hideNotificationToast();
       renderNotificationsOverlay();
       updateNotificationsTrigger();
       return;
@@ -848,9 +800,13 @@ const socket = new SocketClient({
       state.unreadCount += 1;
       state.overlayNotifications.unshift({ ...message.payload, unread: true });
       state.overlayNotifications = state.overlayNotifications.slice(0, 25);
-      if (state.notificationsOverlayOpen) renderNotificationsOverlay();
-      updateNotificationsTrigger();
-      showNotificationToast(message.payload);
+      if (state.notificationsOverlayOpen) {
+        renderNotificationsOverlay();
+        markNotificationsViewed({ notification: message.payload }).catch(debugError);
+      } else {
+        updateNotificationsTrigger();
+        showNotificationToast(message.payload);
+      }
       return;
     }
     if (message.type === 'view:show') return; // navigation is local per browser/device
@@ -867,39 +823,24 @@ document.querySelector('.primary-navigation')?.addEventListener('click', event =
   navigate(btn.dataset.nav, { reason: 'dock' });
 });
 notificationsTrigger?.addEventListener('click', event => { event.stopPropagation(); openNotificationsOverlay().catch(debugError); });
-nowPlayingMini?.addEventListener('click', event => {
-  if (event.target.closest('[data-now-playing-close]')) {
-    state.nowPlayingDismissed = true;
-    nowPlayingMini.hidden = true;
-    nowPlayingMini.classList.add('now-playing-mini--hidden');
-    return;
-  }
-  if (event.target.closest('[data-now-playing-open]')) openCurrentContentFromMini();
-});
 toast.addEventListener('click', async event => {
   if (state.privacyLocked) return;
   const closing = event.target.closest('[data-event-toast-close]');
   const opening = event.target.closest('[data-event-toast-open]');
   if (!closing && !opening) return;
-  toast.classList.remove('event-toast--visible');
-  await markNotificationsViewed().catch(debugError);
-  if (opening) { const action = state.latestToastAction; state.latestToastAction = null; if (typeof action === 'function') action(); }
+  const action = state.latestToastAction;
+  const notification = state.latestNotification;
+  await markNotificationsViewed({ notification }).catch(debugError);
+  if (opening && typeof action === 'function') await action();
 });
 notificationsOverlay.addEventListener('click', event => {
   if (event.target.closest('[data-close-notifications]')) closeNotificationsOverlay();
   const notificationRow = event.target.closest('[data-notification-item]');
-  if (notificationRow) { const canonicalId = notificationRow.dataset.notificationItem; closeNotificationsOverlay(); openItemFromRoute(canonicalId, views.activeId || 'database').catch(debugError); return; }
-  const filterButton = event.target.closest('[data-notification-filter]');
-  if (filterButton) {
-    state.notificationSourceFilter = filterButton.dataset.notificationFilter || 'all';
-    renderNotificationsOverlay();
-    return;
-  }
+  if (notificationRow) { const canonicalId = notificationRow.dataset.notificationItem; closeNotificationsOverlay(); markNotificationsViewed().then(() => openNotificationActivity(canonicalId)).catch(debugError); return; }
   if (event.target.closest('[data-clear-notifications]')) {
     api('/api/notifications', { method: 'DELETE' }).then(() => {
       state.overlayNotifications = [];
       state.unreadCount = 0;
-      state.notificationSourceFilter = 'all';
       renderNotificationsOverlay();
       updateNotificationsTrigger();
     }).catch(debugError);

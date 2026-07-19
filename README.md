@@ -67,6 +67,11 @@ SQLite guarda datos estructurados y rutas. Las imágenes no deben almacenarse co
 - API genérica: `POST /api/v1/items/upsert` y `POST /api/v1/events`
 - Contrato de ingestión: `GET /api/v1/ingestion/schema`
 
+
+## Notificaciones
+
+El centro conserva hasta 25 notificaciones relacionadas con actividades. El toast inferior muestra exclusivamente la última notificación no leída. Abrirlo, cerrarlo o abrir el panel la marca como leída y ese estado se conserva tras recargar. El antiguo mini reproductor flotante fue retirado en v7.4.1 para evitar dos fuentes visuales distintas.
+
 ## Seguridad
 
 La interfaz puede protegerse mediante HTTP Basic:
