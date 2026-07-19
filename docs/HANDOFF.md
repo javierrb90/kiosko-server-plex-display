@@ -56,3 +56,7 @@ npm start
 ```
 
 Después abrir `/api/health`, cargar la interfaz y ejecutar el recorrido Base de datos → Backlog → On Deck → Colección.
+
+## Debug operativo desde v7.1.5
+
+La ficha de cada ítem expone su JSON mediante el botón `{ }`. Además, Datos y diagnóstico contiene simuladores para notificaciones, Plex/Tautulli y Playnite. Para reproducir un problema, reutiliza el identificador externo mostrado en el JSON; si se omite, se crea una entidad de prueba nueva. El historial del laboratorio es independiente de la actividad real y se puede borrar.

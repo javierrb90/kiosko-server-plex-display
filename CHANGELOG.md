@@ -34,3 +34,10 @@
 
 - SQLite se convirtió en la fuente de verdad de la biblioteca para instalaciones nuevas.
 - Los backups de Biblioteca y Configuración pasaron a ser el flujo oficial entre versiones mayores.
+
+## 7.1.5
+
+- Laboratorio de debug para notificaciones, Plex/Tautulli y Playnite.
+- Historial exclusivo de pruebas, borrable desde Opciones.
+- Corrección autoritativa de películas Plex almacenadas históricamente como series.
+- Documentación de pruebas simples y reutilización de identificadores.

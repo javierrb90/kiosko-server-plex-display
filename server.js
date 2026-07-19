@@ -55,7 +55,7 @@ function isProbablyDocker() {
 function printStartupDiagnostics(port, host = "0.0.0.0") {
   const addresses = getLocalAddresses();
   const firstLan = addresses[0]?.address;
-  console.log(`BBQ v7.0.22 escuchando en ${host}:${port}`);
+  console.log(`BBQ v7.1.5 escuchando en ${host}:${port}`);
   console.log(`Datos persistentes: ${DATA_DIR}`);
   if (firstLan) console.log(`Acceso local sugerido: http://${firstLan}:${port}`);
   console.log(`Diagnóstico: /api/health · /api/diagnostics`);
@@ -817,64 +817,122 @@ app.post("/api/notifications/test", async (req, res) => {
   res.json(notification);
 });
 
+const DEBUG_HISTORY_FILE = path.join(DATA_DIR, "debug-history.json");
+async function readDebugHistory() {
+  try { const rows = JSON.parse(await fs.readFile(DEBUG_HISTORY_FILE, "utf8")); return Array.isArray(rows) ? rows : []; }
+  catch { return []; }
+}
+async function writeDebugHistory(rows = []) {
+  await fs.mkdir(path.dirname(DEBUG_HISTORY_FILE), { recursive: true });
+  await fs.writeFile(DEBUG_HISTORY_FILE, JSON.stringify(rows.slice(0, 100), null, 2));
+}
+async function recordDebugRun(entry = {}) {
+  const rows = await readDebugHistory();
+  rows.unshift({ id: crypto.randomUUID(), at: new Date().toISOString(), ...entry });
+  await writeDebugHistory(rows);
+  return rows[0];
+}
+app.get("/api/debug/history", async (_req, res) => res.json({ items: await readDebugHistory() }));
+app.delete("/api/debug/history", async (_req, res) => { await writeDebugHistory([]); res.json({ ok: true }); });
+
 app.post("/api/simulate/:kind", async (req, res) => {
   const kind = String(req.params.kind || "notification");
+  const input = req.body || {};
   try {
-    if (kind === "plex") {
-      runtime.plex = {
-        event: "play",
-        title: req.body?.title || "Película de prueba",
-        subtitle: req.body?.subtitle || "Simulación Plex",
-        year: req.body?.year || "2026",
-        posterUrl: req.body?.posterUrl || null,
-        backdropUrl: req.body?.backdropUrl || null,
-        type: "movie",
-        ratingKey: "simulated"
-      };
-      runtime.currentContent = { ...runtime.plex, source: "plex", kind: "plex" };
-      await stateStore.update({ lastPlex: runtime.plex, lastCurrent: runtime.currentContent });
-      const plexItem = normalizePlexBacklogItem(runtime.plex);
-      await itemRegistryStore.upsert(plexItem, { charred: shouldClearCharred("plexPlayback") ? false : undefined, activity: { eventType: "plex_simulated", title: plexItem.title, subtitle: plexItem.subtitle, activityAt: new Date().toISOString() } });
-      await syncItemRegistryNow("simulate-plex");
-      hub.broadcast({ type: "current:update", payload: runtime.currentContent });
-      broadcastDelta("item:database-updated", fullStatePayload({ item: publicItem(itemRegistryStore.get(plexItem.canonicalId) || plexItem) }));
-      return res.json({ ok: true, kind, view: runtime.activeView });
+    let result;
+    if (kind === "notification") {
+      const notification = await store.add({
+        source: input.source || "system",
+        type: input.type || "test",
+        priority: input.priority || "normal",
+        title: input.title || "Notificación de prueba",
+        subtitle: input.subtitle || "Simulación desde Datos y diagnóstico",
+        image: input.image || "/favicon.ico",
+        backdrop: input.backdrop || null,
+        meta: { debug: true, debugId: input.debugId || null }
+      });
+      await publishNotification(notification);
+      result = { ok: true, kind, notification };
+    } else if (kind === "plex") {
+      const rawEvent = String(input.event || "play");
+      const eventName = rawEvent === "added" ? "recently_added" : rawEvent === "watched" ? "watched" : "play";
+      const debugId = String(input.debugId || input.ratingKey || crypto.randomUUID());
+      let metadata;
+      if (input.mode === "real" && input.ratingKey) {
+        metadata = await plex.getMetadata(String(input.ratingKey));
+        metadata = await cachePlexMetadataAssets(metadata);
+      } else {
+        const plexType = String(input.mediaType || "movie").toLowerCase();
+        const isSeries = ["episode", "season", "show", "series"].includes(plexType);
+        const entityKey = String(input.seriesId || debugId);
+        metadata = {
+          type: plexType === "series" ? "show" : plexType,
+          collectionType: isSeries ? "series" : "movies",
+          ratingKey: debugId,
+          canonicalRatingKey: isSeries ? entityKey : debugId,
+          grandparentRatingKey: isSeries ? entityKey : null,
+          canonicalId: isSeries ? `plex:series:${entityKey}` : `plex:movies:${debugId}`,
+          title: input.title || (isSeries ? "Serie Plex de prueba" : "Película Plex de prueba"),
+          showTitle: isSeries ? (input.showTitle || input.title || "Serie Plex de prueba") : null,
+          subtitle: input.detail || (plexType === "episode" ? `S${String(input.seasonNumber || 1).padStart(2,"0")}E${String(input.episodeNumber || 1).padStart(2,"0")}` : "Simulación Plex"),
+          year: input.year || "2026",
+          posterUrl: "/favicon.ico",
+          backdropUrl: "/favicon.ico",
+          showPosterUrl: isSeries ? "/favicon.ico" : null,
+          showBackdropUrl: isSeries ? "/favicon.ico" : null,
+          meta: { plexType, debug: true, debugId }
+        };
+      }
+      const fakePayload = { event: eventName, ratingKey: metadata.ratingKey, mediaType: input.mediaType || metadata.type, timestamp: input.timestamp || new Date().toISOString() };
+      const event = normalizeTautulliEvent(fakePayload, metadata);
+      let trackedItem = event.isLibraryAdded && metadata.type === "episode"
+        ? normalizePlexCreatedBacklogItem(metadata, event)
+        : normalizePlexBacklogItem({ ...metadata, meta: { ...(metadata.meta || {}), tautulliEvent: event.rawEvent, debug: true, debugId } });
+      trackedItem.lastActivityAt = fakePayload.timestamp;
+      trackedItem.subtitle = plexActivityDetail(metadata, event) || trackedItem.subtitle;
+      trackedItem.detail = trackedItem.subtitle;
+      trackedItem = canonicalizePlexSeriesItem(trackedItem);
+      const ingestion = await ingestExternalItem({
+        source: "plex", canonicalId: trackedItem.canonicalId, externalId: String(metadata.ratingKey || debugId),
+        entityType: trackedItem.collectionType, title: trackedItem.title, detail: trackedItem.subtitle,
+        eventType: event.isWatched ? "watched" : event.isLibraryAdded ? "added" : "played",
+        occurredAt: trackedItem.lastActivityAt, assets: { poster: trackedItem.poster || "/favicon.ico", backdrop: trackedItem.backdrop || "/favicon.ico" },
+        metadata: { ...(trackedItem.meta || {}), debug: true, debugId },
+        behavior: {
+          createIfMissing: input.createIfMissing !== false, updateMetadata: true, updateDetail: true,
+          updateActivity: input.updateActivity !== false, clearCharred: input.clearCharred === true,
+          showToast: input.showToast !== false
+        }
+      }, { integration: "debug-plex" });
+      result = { ok: true, kind, mode: input.mode || "synthetic", created: ingestion.created, item: publicItem(ingestion.item) };
+    } else if (kind === "game" || kind === "playnite") {
+      const debugId = String(input.debugId || input.gameId || crypto.randomUUID());
+      const title = input.title || "Juego de prueba";
+      const item = await ingestExternalItem({
+        source: "playnite", canonicalId: `playnite:${debugId}`, externalId: debugId, entityType: "games",
+        title, detail: input.detail || input.platform || "PC", eventType: input.event || "started",
+        occurredAt: input.timestamp || new Date().toISOString(),
+        assets: { poster: "/favicon.ico", backdrop: "/favicon.ico" },
+        metadata: {
+          debug: true, debugId, gameId: debugId,
+          platforms: [input.platform || "PC"], developers: input.developer ? [input.developer] : ["Debug"],
+          publishers: input.publisher ? [input.publisher] : [], genres: input.genres ? String(input.genres).split(",").map(v=>v.trim()).filter(Boolean) : ["Test"],
+          releaseYear: input.year || "2026", playtime: Number(input.playtime || 0)
+        },
+        behavior: {
+          createIfMissing: input.createIfMissing !== false, updateMetadata: true, updateDetail: true,
+          updateActivity: input.updateActivity !== false, clearCharred: input.clearCharred !== false,
+          showToast: input.showToast !== false
+        }
+      }, { integration: "debug-playnite" });
+      result = { ok: true, kind: "playnite", created: item.created, item: publicItem(item.item) };
+    } else {
+      throw new Error(`Simulador desconocido: ${kind}`);
     }
-    if (kind === "game") {
-      runtime.game = {
-        event: "game_started",
-        title: req.body?.title || "Juego de prueba",
-        platforms: ["PC"],
-        developers: ["Playnite Simulator"],
-        publishers: [],
-        genres: ["Test"],
-        releaseYear: "2026",
-        cover: null,
-        background: null
-      };
-      runtime.currentContent = { ...runtime.game, source: "playnite", kind: "game" };
-      await stateStore.update({ lastGame: runtime.game, lastCurrent: runtime.currentContent });
-      const playniteItem = normalizePlayniteBacklogItem(runtime.game);
-      await itemRegistryStore.upsert(playniteItem, { charred: shouldClearCharred("playniteStarted") ? false : undefined, activity: { eventType: "playnite_simulated", title: playniteItem.title, subtitle: playniteItem.subtitle, activityAt: new Date().toISOString() } });
-      await updateOnDeckActivityFromItem({ ...runtime.game, source: "playnite" });
-      await syncItemRegistryNow("simulate-playnite");
-      hub.broadcast({ type: "current:update", payload: runtime.currentContent });
-      broadcastDelta("item:database-updated", fullStatePayload({ item: publicItem(itemRegistryStore.get(playniteItem.canonicalId) || playniteItem) }));
-      return res.json({ ok: true, kind, view: runtime.activeView });
-    }
-
-    const samples = {
-      grab: { source: "radarr", type: "grab", title: "Descarga iniciada", subtitle: "Release de prueba capturado" },
-      movie: { source: "radarr", type: "movie_added", title: "Película monitorizada", subtitle: "Radarr · simulación" },
-      series: { source: "sonarr", type: "series_added", title: "Serie monitorizada", subtitle: "Sonarr · simulación" },
-      plex_added: { source: "plex", type: "library_added", title: "Nuevo contenido añadido a Plex", subtitle: "Tautulli · simulación" },
-      notification: { source: "system", type: "test", title: "Notificación de prueba", subtitle: "Simulación desde Admin" }
-    };
-    const base = samples[kind] || samples.notification;
-    const notification = await store.add({ ...base, priority: "normal", ...(req.body || {}) });
-    await publishNotification(notification);
-    return res.json({ ok: true, kind, notification });
+    await recordDebugRun({ kind, input: { ...input, token: undefined }, result: { ok: true, created: result.created ?? null, canonicalId: result.item?.canonicalId || result.notification?.id || null, title: result.item?.title || result.notification?.title || null } });
+    return res.json(result);
   } catch (error) {
+    await recordDebugRun({ kind, input: { ...input, token: undefined }, result: { ok: false, error: error.message } }).catch(() => null);
     return res.status(500).json({ ok: false, error: error.message });
   }
 });

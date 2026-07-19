@@ -156,6 +156,17 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
   if (patch.turnedAt !== undefined) states.turnedAt = patch.turnedAt || null;
   if (completedAt) states.completed = true;
   if (states.completed) states.charred = false;
+  const authoritativePlexType = source === "plex" ? String(meta.plexType || input.type || "").toLowerCase() : "";
+  const resolvedType = authoritativePlexType === "movie"
+    ? "movie"
+    : ["episode", "season", "show"].includes(authoritativePlexType)
+      ? "series"
+      : collectionType === "series"
+        ? "series"
+        : (input.type || existing.type || "item");
+  if (authoritativePlexType === "movie") {
+    for (const key of ["grandparentTitle", "showTitle", "showPoster", "showBackdrop", "grandparentRatingKey", "parentRatingKey"]) delete meta[key];
+  }
   return {
     ...(existing || {}),
     id: existing.id || input.registryId || crypto.randomUUID(),
@@ -163,7 +174,7 @@ function normalizeItem(input = {}, existing = {}, patch = {}) {
     entityId: entityIdFor(input, canonicalId),
     parentEntityId: plexSeriesKeyFor(input) && plexSeriesKeyFor(input) !== canonicalId ? plexSeriesKeyFor(input) : (existing.parentEntityId || null),
     source,
-    type: collectionType === "series" ? "series" : (input.type || existing.type || "item"),
+    type: resolvedType,
     collectionType,
     title: clean(input.meta?.grandparentTitle || input.showTitle || input.title || existing.title || "Sin título") || "Sin título",
     detail: effectiveDetail,

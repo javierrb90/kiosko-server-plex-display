@@ -5594,3 +5594,16 @@ button.kiosko-list__row:hover {
 .item-debug__toolbar{display:flex;align-items:center;justify-content:space-between;gap:1rem}
 .item-debug__toolbar p{margin:0;color:var(--muted,#aeb4c2)}
 .item-debug pre{margin:0;max-height:min(62vh,680px);overflow:auto;padding:1rem;border:1px solid rgba(255,255,255,.12);border-radius:14px;background:#070a10;color:#dbe7ff;font:500 .82rem/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+
+/* v7.1.5 · laboratorio de debug */
+.settings-form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem 1rem;align-items:end}
+.settings-section-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap}
+.settings-section-heading h4{margin:0}
+.debug-history{display:grid;gap:.55rem;margin-top:.75rem}
+.debug-history__entry{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.35rem .8rem;padding:.75rem .9rem;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.035)}
+.debug-history__entry>div{display:flex;gap:.65rem;align-items:baseline;min-width:0}
+.debug-history__entry strong{text-transform:capitalize}
+.debug-history__entry span,.debug-history__entry small{color:var(--muted,#aeb4c2);font-size:.78rem}
+.debug-history__entry p{grid-column:1/2;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e9edf5}
+.debug-history__entry small{grid-column:2;grid-row:1/3;align-self:center}
+@media(max-width:700px){.debug-history__entry{grid-template-columns:1fr}.debug-history__entry small{grid-column:1;grid-row:auto}}

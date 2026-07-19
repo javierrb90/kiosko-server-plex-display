@@ -71,3 +71,13 @@ El toast representa el último ítem introducido, actualizado o notificado segú
 ## Caché de imágenes Plex
 
 Plex aplica la misma canalización a todas las entidades: películas, series, temporadas y episodios. Se cachean y normalizan tanto la carátula y el fondo del evento como la carátula y el fondo de la serie principal (`posterUrl`, `backdropUrl`, `showPosterUrl` y `showBackdropUrl`). Las referencias resultantes apuntan a `/assets/plex/...`; SQLite no almacena el contenido binario. Cuando varios campos apuntan a la misma URL dentro de un evento, se reutiliza el mismo asset para evitar descargas y ficheros duplicados.
+
+## Laboratorio de debug
+
+La sección **Opciones → Datos y diagnóstico → Debug** permite probar las integraciones sin editar scripts externos.
+
+- **Notificación personalizada** prueba el centro de notificaciones y el toast.
+- **Plex / Tautulli** puede consultar un `ratingKey` real o generar una entidad sintética. El tipo devuelto por Plex es autoritativo.
+- **Playnite** genera eventos sintéticos usando un `gameId` estable.
+
+Dejar el ID vacío crea una entidad nueva. Reutilizar el mismo `ratingKey`, `gameId` o ID de debug actualiza la misma entidad. El historial solo registra pruebas lanzadas desde esta sección y puede borrarse.

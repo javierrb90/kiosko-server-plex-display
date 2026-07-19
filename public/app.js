@@ -1057,6 +1057,12 @@ async function openSettingsModal() {
   const itemBg = s.design?.itemBackground || {};
   const cards = s.design?.cards || {};
   const sourceColors = s.design?.sourceColors || {};
+  const debugNotificationTypes = [
+    ['test','Prueba'],['library_added','Contenido añadido'],['played','Reproducción'],['watched','Contenido visto'],
+    ['game_started','Juego iniciado'],['grab','Descarga iniciada'],['movie_added','Película añadida'],['series_added','Serie añadida'],
+    ...(s.itemTypes || []).map(type => [type.id, type.plural || type.singular || type.id])
+  ];
+  const debugTypeOptions = [...new Map(debugNotificationTypes.map(entry => [entry[0], entry])).values()].map(([value,label]) => `<option value="${escapeAttr(value)}">${escapeHtml(label)}</option>`).join('');
   const body = `<div class="settings-tabs" data-settings-tabs>
     <nav class="settings-tabs__nav" aria-label="Secciones de opciones">
       ${[
@@ -1147,9 +1153,26 @@ async function openSettingsModal() {
           <div class="settings-actions-grid"><button type="button" class="ui-action-button ui-action-button--danger" data-reset-library>Borrar biblioteca</button><button type="button" class="ui-action-button ui-action-button--danger" data-reset-settings>Restablecer configuración</button><button type="button" class="ui-action-button ui-action-button--danger" data-reset-all>Restablecer todo</button></div>
         </div>
       </section>
-      <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Debug</h3>
-        <div class="debug-actions"><button type="button" data-debug="notification">Notificación</button><button type="button" data-debug="plex">Plex</button><button type="button" data-debug="game">Playnite</button></div>
-        <p class="settings-help">Los botones lanzan eventos de prueba sin cerrar las opciones.</p>
+      <section data-settings-panel="advanced" class="settings-tab-panel"><h3>Laboratorio de debug</h3>
+        <p class="settings-help">Estas pruebas usan los mismos flujos de notificación e ingestión que las integraciones reales. El historial solo registra ejecuciones lanzadas desde este laboratorio.</p>
+        <div class="settings-fieldset"><h4>Notificación personalizada</h4>
+          <div class="settings-form-grid"><label class="ui-field"><span>Tipo</span><select data-debug-notification="type">${debugTypeOptions}</select></label><label class="ui-field"><span>Origen</span><input data-debug-notification="source" value="system"></label><label class="ui-field"><span>Prioridad</span><select data-debug-notification="priority"><option value="low">Baja</option><option value="normal" selected>Normal</option><option value="high">Alta</option></select></label><label class="ui-field"><span>ID de debug opcional</span><input data-debug-notification="debugId" placeholder="Vacío = nuevo"></label></div>
+          <label class="ui-field"><span>Título</span><input data-debug-notification="title" value="Notificación de prueba"></label><label class="ui-field"><span>Mensaje</span><input data-debug-notification="subtitle" value="Simulación desde BBQ"></label>
+          <button type="button" class="ui-action-button" data-debug-submit="notification">Enviar notificación</button>
+        </div>
+        <div class="settings-fieldset"><h4>Plex / Tautulli</h4>
+          <div class="settings-form-grid"><label class="ui-field"><span>Modo</span><select data-debug-plex="mode"><option value="real">Consultar Plex por ratingKey</option><option value="synthetic">Evento sintético</option></select></label><label class="ui-field"><span>RatingKey / ID de debug</span><input data-debug-plex="ratingKey" placeholder="Ej. 17975"></label><label class="ui-field"><span>Evento</span><select data-debug-plex="event"><option value="play">Reproducción</option><option value="watched">Visto</option><option value="added">Añadido</option></select></label><label class="ui-field"><span>Tipo sintético</span><select data-debug-plex="mediaType"><option value="movie">Película</option><option value="episode">Episodio</option><option value="show">Serie</option></select></label></div>
+          <div class="settings-form-grid"><label class="ui-field"><span>Título sintético</span><input data-debug-plex="title" value="Contenido Plex de prueba"></label><label class="ui-field"><span>ID de serie</span><input data-debug-plex="seriesId" placeholder="Solo episodios/series"></label><label class="ui-field"><span>Temporada</span><input type="number" min="0" data-debug-plex="seasonNumber" value="1"></label><label class="ui-field"><span>Episodio</span><input type="number" min="0" data-debug-plex="episodeNumber" value="1"></label></div>
+          <div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-debug-plex="updateActivity" checked> Actualizar actividad</label><label class="ui-check"><input type="checkbox" data-debug-plex="clearCharred"> Quitar Achicharrado</label><label class="ui-check"><input type="checkbox" data-debug-plex="showToast" checked> Mostrar toast</label></div>
+          <button type="button" class="ui-action-button" data-debug-submit="plex">Enviar evento Plex</button>
+        </div>
+        <div class="settings-fieldset"><h4>Playnite</h4>
+          <div class="settings-form-grid"><label class="ui-field"><span>ID de debug / gameId</span><input data-debug-playnite="debugId" placeholder="Vacío = nuevo"></label><label class="ui-field"><span>Evento</span><select data-debug-playnite="event"><option value="started">Juego iniciado</option><option value="updated">Actualización</option><option value="completed">Terminado</option></select></label><label class="ui-field"><span>Título</span><input data-debug-playnite="title" value="Juego de prueba"></label><label class="ui-field"><span>Plataforma</span><input data-debug-playnite="platform" value="PC (Windows)"></label></div>
+          <div class="settings-form-grid"><label class="ui-field"><span>Desarrollador</span><input data-debug-playnite="developer" value="Debug Studio"></label><label class="ui-field"><span>Editor</span><input data-debug-playnite="publisher"></label><label class="ui-field"><span>Géneros</span><input data-debug-playnite="genres" value="Test"></label><label class="ui-field"><span>Año</span><input data-debug-playnite="year" value="2026"></label></div>
+          <div class="settings-check-grid"><label class="ui-check"><input type="checkbox" data-debug-playnite="updateActivity" checked> Actualizar actividad</label><label class="ui-check"><input type="checkbox" data-debug-playnite="clearCharred" checked> Quitar Achicharrado</label><label class="ui-check"><input type="checkbox" data-debug-playnite="showToast" checked> Mostrar toast</label></div>
+          <button type="button" class="ui-action-button" data-debug-submit="playnite">Enviar evento Playnite</button>
+        </div>
+        <div class="settings-fieldset"><div class="settings-section-heading"><div><h4>Historial de pruebas</h4><p class="settings-help">Solo contiene ejecuciones del laboratorio de debug.</p></div><button type="button" class="ui-action-button ui-action-button--danger" data-debug-history-clear>Borrar historial</button></div><div data-debug-history class="debug-history"><p class="settings-help">Cargando…</p></div></div>
       </section>
       <section data-settings-panel="appearance" class="settings-tab-panel"><h3>CSS personalizado</h3>
         <label class="ui-field"><span>CSS global</span><textarea data-setting="customCss" rows="10" spellcheck="false">${escapeHtml(customCss)}</textarea></label>
@@ -1366,13 +1389,25 @@ async function openSettingsModal() {
       } catch (error) { ui.toast('No se pudieron cargar las claves', { detail: error.message || String(error) }); }
       finally { btn.disabled = false; }
     });
-    modalRoot.querySelectorAll('[data-debug]').forEach(btn => btn.addEventListener('click', async () => {
-      const kind = btn.dataset.debug === 'notification' ? 'notification' : btn.dataset.debug;
+    const readDebugFields = prefix => Object.fromEntries([...modalRoot.querySelectorAll(`[data-debug-${prefix}]`)].map(node => [node.dataset[`debug${prefix[0].toUpperCase()}${prefix.slice(1)}`], node.type === 'checkbox' ? node.checked : node.value]));
+    const renderDebugHistory = async () => {
+      const host = modalRoot.querySelector('[data-debug-history]'); if (!host) return;
+      try {
+        const response = await api('/api/debug/history'); const items = response.items || [];
+        host.innerHTML = items.length ? items.map(row => `<article class="debug-history__entry"><div><strong>${escapeHtml(row.kind || 'debug')}</strong><span>${escapeHtml(new Date(row.at).toLocaleString('es-ES'))}</span></div><p>${escapeHtml(row.result?.title || row.result?.canonicalId || row.result?.error || 'Sin detalle')}</p><small>${row.result?.ok === false ? 'Error' : row.result?.created ? 'Creado' : 'Actualizado / enviado'}</small></article>`).join('') : '<p class="settings-help">Todavía no hay pruebas registradas.</p>';
+      } catch (error) { host.innerHTML = `<p class="settings-help">No se pudo cargar el historial: ${escapeHtml(error.message || String(error))}</p>`; }
+    };
+    modalRoot.querySelectorAll('[data-debug-submit]').forEach(btn => btn.addEventListener('click', async () => {
+      const kind = btn.dataset.debugSubmit; const prefix = kind === 'notification' ? 'notification' : kind === 'plex' ? 'plex' : 'playnite';
+      const payload = readDebugFields(prefix);
+      if (kind === 'plex' && payload.mode === 'synthetic') payload.debugId = payload.ratingKey || '';
       btn.disabled = true;
-      try { await api(`/api/simulate/${kind}`, { method: 'POST', body: JSON.stringify({}) }); ui.toast('Evento de prueba enviado'); }
-      catch (error) { ui.toast('Error en debug', { detail: error.message || String(error) }); }
+      try { const result = await api(`/api/simulate/${kind}`, { method: 'POST', body: JSON.stringify(payload) }); ui.toast('Prueba enviada', { detail: result.item?.canonicalId || result.notification?.title || '' }); await renderDebugHistory(); }
+      catch (error) { ui.toast('Error en debug', { detail: error.message || String(error) }); await renderDebugHistory(); }
       finally { btn.disabled = false; }
     }));
+    modalRoot.querySelector('[data-debug-history-clear]')?.addEventListener('click', async event => { const btn=event.currentTarget; btn.disabled=true; try { await api('/api/debug/history',{method:'DELETE'}); await renderDebugHistory(); ui.toast('Historial borrado'); } catch(error){ ui.toast('No se pudo borrar',{detail:error.message||String(error)}); } finally{btn.disabled=false;} });
+    renderDebugHistory();
     modalRoot.querySelector('[data-export-library]')?.addEventListener('click', async event => { const btn=event.currentTarget; btn.disabled=true; try { await downloadBackup('/api/backups/library?assets=1','bbqueue-library.json'); ui.toast('Biblioteca exportada'); } catch(error){ ui.toast('No se pudo exportar',{detail:error.message||String(error)}); } finally{btn.disabled=false;} });
     modalRoot.querySelector('[data-export-settings]')?.addEventListener('click', async event => { const btn=event.currentTarget; btn.disabled=true; const secrets=modalRoot.querySelector('[data-export-secrets]')?.checked?'1':'0'; try { await downloadBackup(`/api/backups/settings?secrets=${secrets}`,'bbqueue-settings.json'); ui.toast('Configuración exportada'); } catch(error){ ui.toast('No se pudo exportar',{detail:error.message||String(error)}); } finally{btn.disabled=false;} });
     modalRoot.querySelector('[data-import-library]')?.addEventListener('change', async event => { const input=event.currentTarget; try { const mode=modalRoot.querySelector('[data-library-import-mode]')?.value||'replace'; const result=await importBackup('library',input.files?.[0],mode); ui.toast('Biblioteca importada',{detail:`${result.counts?.itemRegistry?.active || result.summary?.items || 0} ítems`}); setTimeout(()=>location.reload(),700); } catch(error){ ui.toast('No se pudo importar',{detail:error.message||String(error)}); } finally{input.value='';} });

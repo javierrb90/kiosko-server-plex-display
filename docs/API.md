@@ -122,3 +122,13 @@ Las imágenes se externalizan antes de guardar. `showToast` solicita feedback vi
 ## WebSocket
 
 El frontend recibe snapshots y deltas. Eventos relevantes incluyen actualizaciones de ítems, diario, actividad y `activity:received` para toast de actividad. No deben usarse las notificaciones persistentes como transporte genérico de integraciones.
+
+## API del laboratorio de debug
+
+- `POST /api/simulate/notification`
+- `POST /api/simulate/plex`
+- `POST /api/simulate/playnite`
+- `GET /api/debug/history`
+- `DELETE /api/debug/history`
+
+Estas rutas están destinadas a pruebas manuales desde la interfaz. El historial no contiene eventos reales de Plex, Playnite o Tautulli.
